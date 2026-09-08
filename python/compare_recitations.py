@@ -41,7 +41,7 @@ from pitch_engine import (
     extract_pitch_contour, clean_pitch_contour, smooth_pitch_contour, segment_notes,
     melodic_similarity, rhythm_similarity, loudness_similarity,
     freq_to_note_info, extract_pitch_contour_max_accuracy, compute_loudness_streaming,
-    dtw_align_cost_matrix, PLOT_LOCK, compute_waveform_peaks,
+    dtw_align_cost_matrix, PLOT_LOCK, compute_waveform_and_phrases,
 )
 
 try:
@@ -135,12 +135,18 @@ def analyze_single_file(path, label="فایل", progress_callback=None):
 
         loudness = compute_loudness_streaming(readable_path)
 
-        # موج صوتی فشرده — برای نمایش رنگی فراز-به-فراز در وب (تب مقایسه).
+        # موج صوتی فشرده + فرازهای مبتنی بر دامنهٔ واقعی صدا (RMS + آستانهٔ
+        # خودکار) — منبع مشترک برای رنگ‌آمیزی موج صوتی و برای تفکیک فراز در
+        # مقایسهٔ فراز-به-فراز، تا در تب مقایسه هم رنگ‌ها کاملاً همخوان باشند.
         waveform = None
+        amplitude_phrase_boundaries = None
         try:
-            waveform = compute_waveform_peaks(readable_path)
+            wf_result = compute_waveform_and_phrases(readable_path)
+            waveform = {"peaks": wf_result["peaks"], "duration_sec": wf_result["duration_sec"]}
+            amplitude_phrase_boundaries = wf_result["phrases"]
         except Exception:
             waveform = None
+            amplitude_phrase_boundaries = None
     finally:
         if tmp_wav and os.path.exists(tmp_wav):
             os.remove(tmp_wav)
@@ -148,6 +154,7 @@ def analyze_single_file(path, label="فایل", progress_callback=None):
     return {
         "label": label,
         "path": path,
+        "amplitude_phrase_boundaries": amplitude_phrase_boundaries,
         "times": times,
         "freqs": freqs,
         "notes": notes,
@@ -162,33 +169,40 @@ def analyze_single_file(path, label="فایل", progress_callback=None):
 # تقسیم به فراز (Phrase) و مقایسه فراز-به-فراز با DTW
 # ============================================================================
 
-def segment_phrases_from_notes(times, freqs, notes):
+def segment_phrases_from_notes(times, freqs, notes, phrase_boundaries=None):
     """
-    دنباله نت‌های یک فایل را بر اساس مکث‌های واقعی (نه صرفاً مرز نت) به
-    «فرازهای» طبیعی تقسیم می‌کند — دقیقاً همان منطقی که
-    quran_maqam_analyzer.build_phrase_breakdown برای تحلیل تک‌فایلی استفاده
-    می‌کند، اینجا برای گروه‌بندی نت‌ها پیش از تراز کردن فرازهای دو فایل
-    بازاستفاده شده است.
+    دنباله نت‌های یک فایل را به «فرازهای» طبیعی تقسیم می‌کند.
 
-    خروجی: لیستی از دیکشنری‌های {start, end, duration, num_notes, notes}
+    اگر phrase_boundaries داده شود (خروجی compute_waveform_and_phrases که
+    بر مبنای دامنهٔ واقعی صدا/RMS + آستانهٔ خودکار Otsu فراز را از مکث
+    تشخیص می‌دهد)، از همان مرزها استفاده می‌شود — تا فرازهایی که در وب
+    روی موج صوتی رنگی نمایش داده می‌شوند دقیقاً همان فرازهایی باشند که در
+    مقایسهٔ فراز-به-فراز گزارش می‌شوند. در غیر این صورت، به روش قدیمی‌تر
+    مبتنی بر مکث‌های خروجی Praat pitch-voicing برمی‌گردد (سازگاری عقب‌رو).
+
+    خروجی: لیستی از دیکشنری‌های {index, color_index, start, end, duration, num_notes, notes}
     """
     total_duration = float(times[-1]) if len(times) else 0.0
-    if detect_pauses is not None and len(times):
-        pauses = detect_pauses(times, freqs, min_pause=PHRASE_MIN_PAUSE_SEC)
-    else:
-        pauses = []
-    significant_pauses = [p for p in pauses if p["duration"] >= PHRASE_MIN_PAUSE_SEC]
 
-    boundaries = [0.0]
-    for p in significant_pauses:
-        boundaries.append(p["start"])
-        boundaries.append(p["end"])
-    boundaries.append(total_duration)
-    boundaries = sorted(set(round(b, 3) for b in boundaries))
+    if phrase_boundaries:
+        boundaries_pairs = [(b["start"], b["end"]) for b in phrase_boundaries]
+    else:
+        if detect_pauses is not None and len(times):
+            pauses = detect_pauses(times, freqs, min_pause=PHRASE_MIN_PAUSE_SEC)
+        else:
+            pauses = []
+        significant_pauses = [p for p in pauses if p["duration"] >= PHRASE_MIN_PAUSE_SEC]
+
+        boundaries = [0.0]
+        for p in significant_pauses:
+            boundaries.append(p["start"])
+            boundaries.append(p["end"])
+        boundaries.append(total_duration)
+        boundaries = sorted(set(round(b, 3) for b in boundaries))
+        boundaries_pairs = [(boundaries[i], boundaries[i + 1]) for i in range(len(boundaries) - 1)]
 
     phrases = []
-    for i in range(len(boundaries) - 1):
-        seg_start, seg_end = boundaries[i], boundaries[i + 1]
+    for boundary_idx, (seg_start, seg_end) in enumerate(boundaries_pairs):
         if seg_end - seg_start < 0.05:
             continue
         phrase_notes = [n for n in notes if n["start"] >= seg_start - 0.01 and n["start"] < seg_end + 0.01]
@@ -196,6 +210,10 @@ def segment_phrases_from_notes(times, freqs, notes):
             continue
         phrases.append({
             "index": len(phrases),
+            # color_index: اندیس فراز در مرزهای اصلی (پیش از فیلتر فرازهای
+            # خیلی‌کوتاه) — همان اندیسی که موج صوتی در وب برای رنگ‌آمیزی
+            # استفاده می‌کند.
+            "color_index": boundary_idx,
             "start": round(seg_start, 2),
             "end": round(seg_end, 2),
             "duration": round(seg_end - seg_start, 2),
@@ -209,6 +227,7 @@ def segment_phrases_from_notes(times, freqs, notes):
     if not phrases and notes:
         phrases.append({
             "index": 0,
+            "color_index": 0,
             "start": round(notes[0]["start"], 2),
             "end": round(notes[-1]["end"], 2),
             "duration": round(notes[-1]["end"] - notes[0]["start"], 2),
@@ -353,8 +372,14 @@ def compare_files(ref_path, perf_path, align_start=True):
 
     # --- مقایسه فراز-به-فراز (تراز خودکار با DTW در سطح فراز) ---
     print("در حال تفکیک فرازها و مقایسه فراز-به-فراز (DTW)...")
-    ref_phrases = segment_phrases_from_notes(ref["times"], ref["freqs"], ref["notes"])
-    perf_phrases = segment_phrases_from_notes(perf["times"], perf["freqs"], perf["notes"])
+    ref_phrases = segment_phrases_from_notes(
+        ref["times"], ref["freqs"], ref["notes"],
+        phrase_boundaries=ref.get("amplitude_phrase_boundaries"),
+    )
+    perf_phrases = segment_phrases_from_notes(
+        perf["times"], perf["freqs"], perf["notes"],
+        phrase_boundaries=perf.get("amplitude_phrase_boundaries"),
+    )
     phrase_cmp = phrase_level_comparison(ref_phrases, perf_phrases)
     phrase_cmp["summary"] = _phrase_comparison_summary(phrase_cmp)
     # برای رسم نمودار به مرزهای فراز هم نیاز داریم (بدون لیست کامل نت‌ها که حجیم است)

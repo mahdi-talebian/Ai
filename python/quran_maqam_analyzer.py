@@ -64,7 +64,7 @@ try:
         smooth_pitch_contour,
         extract_pitch_contour_max_accuracy,
         compute_loudness_streaming,
-        compute_waveform_peaks,
+        compute_waveform_and_phrases,
         PLOT_LOCK,
     )
 except ImportError:
@@ -72,7 +72,7 @@ except ImportError:
         return freqs
     extract_pitch_contour_max_accuracy = None
     compute_loudness_streaming = None
-    compute_waveform_peaks = None
+    compute_waveform_and_phrases = None
     import threading
     PLOT_LOCK = threading.Lock()
 
@@ -643,27 +643,37 @@ def _melody_trend(cents_sequence):
     return "ثابت / نوسان کوچک حول یک محور"
 
 
-def build_phrase_breakdown(times, freqs, notes, pauses, top_k_per_phrase=1):
+def build_phrase_breakdown(times, freqs, notes, pauses, top_k_per_phrase=1, phrase_boundaries=None):
     """
-    فایل را بر اساس مکث‌های واقعی به فرازهای طبیعی تقسیم کرده و برای هر
-    فراز، مقام/تونیک محلی، سولفژ دقیق هر نت، و روند ملودی را برمی‌گرداند.
-    خروجی به ترتیب زمانی است — یعنی همان چیزی که کاربر با آن می‌تواند
-    بگوید «در این لحظه از فایل، این لحن/فراز با این نت‌ها خوانده شده است».
+    فایل را به فرازهای طبیعی تقسیم کرده و برای هر فراز، مقام/تونیک محلی،
+    سولفژ دقیق هر نت، و روند ملودی را برمی‌گرداند. خروجی به ترتیب زمانی
+    است — یعنی همان چیزی که کاربر با آن می‌تواند بگوید «در این لحظه از
+    فایل، این لحن/فراز با این نت‌ها خوانده شده است».
+
+    اگر phrase_boundaries داده شود (لیستی از {"start", "end"}، معمولاً
+    خروجی compute_waveform_and_phrases که بر مبنای دامنهٔ واقعی صدا/RMS
+    فراز را از مکث تشخیص می‌دهد)، از همان مرزها استفاده می‌شود — تا
+    فرازهایی که در وب رنگی نمایش داده می‌شوند (روی موج صوتی) دقیقاً همان
+    فرازهایی باشند که در این تحلیل «لحن به لحن» گزارش می‌شوند. در غیر این
+    صورت (فراخوانی مستقیم/CLI بدون آن داده)، به روش قدیمی‌تر مبتنی بر
+    مکث‌های خروجی Praat pitch-voicing برمی‌گردد.
     """
     total_duration = float(times[-1]) if len(times) else 0.0
-    significant_pauses = [p for p in pauses if p["duration"] >= PHRASE_MIN_PAUSE_SEC]
 
-    # --- ساخت مرزهای فراز از روی نقاط پایان/شروع مکث‌های معنادار ---
-    boundaries = [0.0]
-    for p in significant_pauses:
-        boundaries.append(p["start"])
-        boundaries.append(p["end"])
-    boundaries.append(total_duration)
-    boundaries = sorted(set(round(b, 3) for b in boundaries))
+    if phrase_boundaries:
+        boundaries_pairs = [(b["start"], b["end"]) for b in phrase_boundaries]
+    else:
+        significant_pauses = [p for p in pauses if p["duration"] >= PHRASE_MIN_PAUSE_SEC]
+        boundaries = [0.0]
+        for p in significant_pauses:
+            boundaries.append(p["start"])
+            boundaries.append(p["end"])
+        boundaries.append(total_duration)
+        boundaries = sorted(set(round(b, 3) for b in boundaries))
+        boundaries_pairs = [(boundaries[i], boundaries[i + 1]) for i in range(len(boundaries) - 1)]
 
     phrases = []
-    for i in range(len(boundaries) - 1):
-        seg_start, seg_end = boundaries[i], boundaries[i + 1]
+    for boundary_idx, (seg_start, seg_end) in enumerate(boundaries_pairs):
         if seg_end - seg_start < 0.05:
             continue
 
@@ -698,6 +708,12 @@ def build_phrase_breakdown(times, freqs, notes, pauses, top_k_per_phrase=1):
         trend = _melody_trend(cents_sequence) if cents_sequence else "نامشخص"
 
         phrases.append({
+            # color_index: اندیس فراز در مرزهای اصلی (پیش از فیلتر فرازهای
+            # خیلی‌کوتاه) — همان اندیسی که در وب برای رنگ‌آمیزی موج صوتی
+            # استفاده می‌شود، تا حتی اگر برخی فرازهای مرزی این‌جا فیلتر شوند
+            # (تک‌نت/خیلی کوتاه)، رنگ فرازهای باقی‌مانده هنوز با موج صوتی
+            # همخوان بماند.
+            "color_index": boundary_idx,
             "start": round(seg_start, 2),
             "end": round(seg_end, 2),
             "duration": round(seg_end - seg_start, 2),
@@ -843,25 +859,34 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
             maqam_timeline = build_maqam_timeline(notes, duration_total)
         _progress("timeline", 0.86)
 
-        # --- تحلیل «لحن به لحن» بر اساس فرازهای طبیعی (برای همهٔ فایل‌ها) ---
-        print("در حال تفکیک فرازهای طبیعی و تحلیل سولفژ دقیق هر نت...")
-        phrase_breakdown = build_phrase_breakdown(times, freqs, notes, pauses)
-        _progress("phrase_breakdown", 0.9)
-
-        # --- موج صوتی فشرده (waveform peaks) برای نمایش رنگی فراز-به-فراز
-        #     در وب — بدون ارسال کل فایل صوتی خام به مرورگر، چون فایل‌های
-        #     تلاوت می‌توانند تا ۳۰-۶۰ دقیقه (صدها مگابایت) باشند.
+        # --- موج صوتی فشرده (waveform peaks) + فرازهای مبتنی بر دامنهٔ
+        #     واقعی صدا (RMS + آستانهٔ خودکار) — منبع مشترک برای رنگ‌آمیزی
+        #     موج صوتی در وب و برای تحلیل «لحن به لحن» زیر، تا این دو کاملاً
+        #     همخوان باشند (هر فراز دقیقاً همان بازه‌ای که در موج رنگی
+        #     دیده می‌شود، تحلیل شود).
         waveform = None
-        if compute_waveform_peaks is not None:
+        amplitude_phrase_boundaries = None
+        if compute_waveform_and_phrases is not None:
             try:
-                waveform = compute_waveform_peaks(wav_path)
+                wf_result = compute_waveform_and_phrases(wav_path)
+                waveform = {"peaks": wf_result["peaks"], "duration_sec": wf_result["duration_sec"]}
+                amplitude_phrase_boundaries = wf_result["phrases"]
             except Exception:
                 waveform = None
+                amplitude_phrase_boundaries = None
+
+        # --- تحلیل «لحن به لحن» بر اساس فرازهای طبیعی (برای همهٔ فایل‌ها) ---
+        print("در حال تفکیک فرازهای طبیعی و تحلیل سولفژ دقیق هر نت...")
+        phrase_breakdown = build_phrase_breakdown(
+            times, freqs, notes, pauses, phrase_boundaries=amplitude_phrase_boundaries,
+        )
+        _progress("phrase_breakdown", 0.9)
 
         report = {
             "meta": {
                 "file": os.path.basename(path),
                 "analyzed_at": datetime.now().isoformat(timespec="seconds"),
+
                 "engine": "Praat (parselmouth) pitch-ac, very_accurate=True, two-pass refine"
                           + (", پردازش پنجره‌ای برای فایل طولانی" if use_windowed and duration_total > 90 else ""),
             },

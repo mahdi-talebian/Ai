@@ -145,8 +145,19 @@
 
   .phrase-card {
     background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.08);
+    border-inline-start: 5px solid transparent;
     border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
   }
+  .phrase-color-dot {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    margin-inline-end: 6px; vertical-align: middle; box-shadow: 0 0 4px rgba(0,0,0,0.4);
+  }
+  .phrase-jump-btn {
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+    color: #eef0ff; border-radius: 8px; padding: 3px 10px; font-size: 0.75rem;
+    cursor: pointer; margin-inline-start: auto;
+  }
+  .phrase-jump-btn:hover { background: rgba(255,255,255,0.16); }
   .phrase-card .phrase-head {
     display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline;
     font-size: 0.86rem; color: #cfd1ee; margin-bottom: 8px;
@@ -316,6 +327,7 @@
 
           <div class="chart-title">🎼 مقایسه فراز-به-فراز (تراز خودکار)</div>
           <div id="cmpPhraseSummary" class="hint-text" style="border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:10px 14px;"></div>
+          <div id="cmpPairsList"></div>
 
           <div id="cmpWaveformSection" style="display:none; margin-top:14px;">
             <div class="hint-text" style="margin-bottom:8px;">🎨 موج صوتی رنگی فراز-به-فراز — فرازهای هم‌رنگ در دو فایل با هم متناظرند (تراز DTW). روی هر بخش کلیک کن تا از همان‌جا پخش شود.</div>
@@ -827,13 +839,17 @@ function renderQuranReport(report) {
         return `<span class="solfege-chip" title="${n.f0_hz ? n.f0_hz.toFixed(1) + ' Hz، انحراف ' + (n.cents_off_degree ?? 0) + '¢' : ''}">${n.solfege_name}</span>`;
       }).join('');
       const maqamLabel = ph.maqam ? `${ph.maqam}${ph.confidence_pct != null ? ' (' + ph.confidence_pct + '%)' : ''}` : 'نامشخص';
+      const colorIdx = (ph.color_index !== undefined && ph.color_index !== null) ? ph.color_index : idx;
+      const color = phraseColor(colorIdx);
       return `
-      <div class="phrase-card">
+      <div class="phrase-card" style="border-inline-start-color:${color};">
         <div class="phrase-head">
+          <span class="phrase-color-dot" style="background:${color};"></span>
           <span class="phrase-time">فراز ${idx + 1}: ${ph.start}s – ${ph.end}s</span>
           <span>مقام: <b>${maqamLabel}</b></span>
           <span class="phrase-trend">روند ملودی: ${ph.melody_trend}</span>
           <span style="color:#9294bd;">${ph.num_notes} نت</span>
+          <button class="phrase-jump-btn" onclick="qAudioPlayer.currentTime=${ph.start}; qAudioPlayer.play();">▶ پخش این فراز</button>
         </div>
         <div class="phrase-notes">${chips || '<span style="color:#9294bd;font-size:0.8rem;">نتی برای این فراز ثبت نشد.</span>'}</div>
       </div>`;
@@ -852,7 +868,11 @@ function renderQuranReport(report) {
       report.phrase_breakdown && report.phrase_breakdown.length) {
     wfSection.style.display = 'block';
     const phrasesForWf = report.phrase_breakdown.map((ph, idx) => ({
-      start: ph.start, end: ph.end, colorIndex: idx,
+      // color_index (اندیس مبتنی بر دامنهٔ واقعی صدا که سرور محاسبه کرده)
+      // به‌جای اندیس آرایه استفاده می‌شود — چون ممکن است برخی فرازهای
+      // خیلی‌کوتاه/تک‌نت از phrase_breakdown حذف شده باشند و اندیس آرایه
+      // دیگر با مرزهای موج صوتی یکی نباشد.
+      start: ph.start, end: ph.end, colorIndex: (ph.color_index !== undefined && ph.color_index !== null) ? ph.color_index : idx,
     }));
     initPhraseWaveform({
       canvas: document.getElementById('qWaveformCanvas'),
@@ -1048,6 +1068,27 @@ function renderCompareReport(result) {
     });
   } else {
     cmpWfSection.style.display = 'none';
+  }
+
+  // --- فهرست تحلیل هر جفت فراز، هرکدام با همان رنگی که در موج صوتی دیده می‌شود ---
+  const pairsListEl = document.getElementById('cmpPairsList');
+  if (phraseCmp && phraseCmp.pairs && phraseCmp.pairs.length) {
+    pairsListEl.innerHTML = phraseCmp.pairs.map((p) => {
+      const color = phraseColor(p.pair_index);
+      return `
+      <div class="phrase-card" style="border-inline-start-color:${color};">
+        <div class="phrase-head">
+          <span class="phrase-color-dot" style="background:${color};"></span>
+          <span class="phrase-time">جفت فراز ${p.pair_index + 1}</span>
+          <span>شباهت: <b>${p.similarity_pct}%</b></span>
+          <span style="color:#9294bd;">مرجع [${p.ref_start}s–${p.ref_end}s] &nbsp;|&nbsp; کاربر [${p.perf_start}s–${p.perf_end}s]</span>
+          <button class="phrase-jump-btn" onclick="document.getElementById('cmpRefAudio').currentTime=${p.ref_start}; document.getElementById('cmpRefAudio').play();">▶ مرجع</button>
+          <button class="phrase-jump-btn" onclick="document.getElementById('cmpPerfAudio').currentTime=${p.perf_start}; document.getElementById('cmpPerfAudio').play();">▶ کاربر</button>
+        </div>
+      </div>`;
+    }).join('');
+  } else {
+    pairsListEl.innerHTML = '';
   }
 }
 

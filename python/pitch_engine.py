@@ -300,18 +300,77 @@ def compute_loudness_streaming(wav_path, window_sec=DEFAULT_WINDOW_SEC,
     }
 
 
-def compute_waveform_peaks(wav_path, target_points=1200, window_sec=DEFAULT_WINDOW_SEC):
+def _otsu_threshold(values):
     """
-    یک نسخهٔ بسیار فشرده‌شدهٔ موج صوتی (min/max هر بازهٔ کوچک) را برای رسم
-    «waveform» در مرورگر تولید می‌کند — بدون این‌که کل فایل صوتی (که برای
-    تلاوت‌های ۳۰-۶۰ دقیقه‌ای می‌تواند صدها مگابایت باشد) به مرورگر فرستاده
-    یا در حافظهٔ آن با decodeAudioData بارگذاری شود؛ فقط چند هزار عدد کوچک
-    (peaks) که حجمی در حد چند کیلوبایت دارد از سرور برمی‌گردد.
+    آستانهٔ خودکار جداکنندهٔ «سکوت» از «صدادار» در توزیع مقادیر (اینجا:
+    دسی‌بل انرژی RMS) — بدون نیاز به هیچ تنظیم دستی/فایل‌به‌فایل، چه فایل
+    خیلی آرام ضبط شده باشد چه خیلی بلند.
 
-    مشابه compute_loudness_streaming، فایل به‌صورت پنجره‌ای (streaming) با
-    soundfile خوانده می‌شود — مصرف حافظه ثابت و مستقل از طول فایل است.
+    پیاده‌سازی: خوشه‌بندی K-means یک‌بعدی با ۲ خوشه (سکوت/صدا) به‌جای Otsu
+    مبتنی بر هیستوگرام کلاسیک — چون توزیع واقعی بلندی صدا در ضبط‌های گفتار/
+    تلاوت معمولاً به‌شدت دوقطبی و پراکنده است (اکثر انرژی یا در نویز کف
+    بسیار پایین است یا در محدودهٔ صدای فراز، با شکاف تقریباً خالی بین این
+    دو) و Otsu مبتنی بر بین‌های تهی در این حالت به‌اشتباه یک آستانهٔ مسطح/
+    نامعتبر انتخاب می‌کند. K-means روی چنین توزیع دوقطبی‌ای پایدار و دقیق
+    همگرا می‌شود، مستقل از تعداد بین‌های هیستوگرام.
+    """
+    finite = values[np.isfinite(values)]
+    if len(finite) < 4 or np.ptp(finite) < 1e-6:
+        return float(np.median(finite)) if len(finite) else 0.0
 
-    خروجی: {"peaks": [[min, max], ...] نرمال‌شده در بازهٔ [-1, 1], "duration_sec": float}
+    x = np.sort(finite)
+    # مقداردهی اولیه: دو مرکز در دو انتهای توزیع (کمینه/بیشینه) — همگرایی
+    # سریع‌تر و پایدارتر از مقداردهی تصادفی برای این توزیع دوقطبی.
+    c_low, c_high = float(x[0]), float(x[-1])
+    for _ in range(50):
+        mid = (c_low + c_high) / 2.0
+        low_mask = finite <= mid
+        high_mask = ~low_mask
+        if not np.any(low_mask) or not np.any(high_mask):
+            break
+        new_low = float(np.mean(finite[low_mask]))
+        new_high = float(np.mean(finite[high_mask]))
+        if abs(new_low - c_low) < 1e-6 and abs(new_high - c_high) < 1e-6:
+            c_low, c_high = new_low, new_high
+            break
+        c_low, c_high = new_low, new_high
+
+    return (c_low + c_high) / 2.0
+
+
+def compute_waveform_and_phrases(
+    wav_path,
+    window_sec=DEFAULT_WINDOW_SEC,
+    frame_ms=20.0,
+    min_phrase_sec=0.15,
+    min_gap_sec=0.35,
+    target_points=None,
+):
+    """
+    در یک عبور استریمی واحد روی فایل صوتی (بدون بارگذاری کل فایل در حافظه):
+
+      ۱) «peaks» فشرده (min/max هر بازهٔ ریز) برای رسم دقیق موج صوتی در
+         مرورگر تولید می‌کند — با وضوح متناسب با طول فایل (فایل‌های کوتاه
+         بسیار ریزبین، فایل‌های طولانی هم‌چنان کافی برای زوم معمول مرورگر).
+      ۲) پوش انرژی صدا (RMS هر ~۲۰ میلی‌ثانیه) را محاسبه می‌کند.
+      ۳) با آستانه‌گذاری خودکار Otsu روی مقیاس دسی‌بلِ همان پوش انرژی، فایل
+         را به نواحی «فراز» (دامنهٔ بالا) و «مکث/سکوت» (دامنهٔ پایین) تقسیم
+         می‌کند — دقیقاً بر همان مبنایی که چشم در موج صوتی می‌بیند، نه
+         voicing خروجی الگوریتم پرده‌یابی Praat (که می‌تواند وسط یک فراز
+         پرصدا هم به‌اشتباه «بی‌صدا» گزارش شود).
+      ۴) شکاف‌های کوتاه‌تر از min_gap_sec را با فراز اطرافش ادغام می‌کند
+         (تا نویز ریز/فرکانس پایین داخل یک نت کشیده، فراز را نشکند) و
+         فرازهای کوتاه‌تر از min_phrase_sec (بلیپ‌های نویزی) را حذف می‌کند.
+
+    خروجی:
+      {
+        "peaks": [[min, max], ...] در بازهٔ [-1, 1],
+        "duration_sec": float,
+        "phrases": [{"index": int, "start": float, "end": float}, ...],
+      }
+    مقدار "phrases" همان مرجع مشترکی است که هم برای رنگ‌آمیزی موج صوتی و
+    هم برای تحلیل «لحن به لحن» به‌کار می‌رود — تا رنگ‌ها بین این دو نمایش
+    دقیقاً یکی باشند.
     """
     import soundfile as sf
 
@@ -319,10 +378,23 @@ def compute_waveform_peaks(wav_path, target_points=1200, window_sec=DEFAULT_WIND
     sr = info.samplerate
     total_dur = info.frames / float(sr) if sr else 0.0
     if total_dur <= 0:
-        return {"peaks": [], "duration_sec": 0.0}
+        return {"peaks": [], "duration_sec": 0.0, "phrases": []}
 
+    if target_points is None:
+        # وضوح رسم موج صوتی را متناسب با طول فایل تنظیم کن: فایل‌های کوتاه
+        # (فرازهای مقایسه، چند ثانیه تا چند دقیقه) با تراکم ~۱۰۰ نقطه بر
+        # ثانیه رسم می‌شوند — یعنی به‌اندازهٔ کافی ریزبین که حتی با زوم
+        # نسبی مرورگر هم موج «بلوکی»/کم‌جزئیات به‌نظر نرسد. فایل‌های خیلی
+        # طولانی (۳۰-۶۰ دقیقه) به سقف ۲۰۰۰۰ نقطه محدود می‌شوند تا حجم
+        # payload معقول (چند صد کیلوبایت) بماند.
+        target_points = int(min(20000, max(2000, round(total_dur * 100))))
     samples_per_point = max(1, int(round((total_dur * sr) / target_points)))
+
+    frame_size = max(1, int(round((frame_ms / 1000.0) * sr)))
+
     peaks = []
+    envelope_chunks = []
+    leftover = np.zeros(0, dtype=np.float64)
 
     with sf.SoundFile(wav_path) as f:
         pos = 0.0
@@ -331,23 +403,97 @@ def compute_waveform_peaks(wav_path, target_points=1200, window_sec=DEFAULT_WIND
             start_frame = int(round(pos * sr))
             num_frames = int(round((end - pos) * sr))
             f.seek(start_frame)
-            block = f.read(num_frames, dtype="float32", always_2d=True)
+            block = f.read(num_frames, dtype="float64", always_2d=True)
             block = block.mean(axis=1)  # میکس به مونو در صورت چندکاناله بودن
 
-            # تقسیم این پنجره به زیر-بازه‌های samples_per_point‌تایی و
-            # استخراج min/max هر کدام (الگوریتم استاندارد رسم waveform).
-            n = len(block)
+            # --- ۱) peaks برای رسم موج (روی همین بلاک، بدون leftover) ---
+            block32 = block.astype(np.float32)
+            n = len(block32)
             for i in range(0, n, samples_per_point):
-                chunk = block[i:i + samples_per_point]
+                chunk = block32[i:i + samples_per_point]
                 if len(chunk) == 0:
                     continue
                 peaks.append([float(np.min(chunk)), float(np.max(chunk))])
+
+            # --- ۲) پوش انرژی RMS (با انتقال باقیماندهٔ فریم بین بلاک‌ها
+            #     تا هم‌ترازیِ فریم‌ها در مرز بلاک‌ها به‌هم نخورد) ---
+            combined = np.concatenate([leftover, block]) if len(leftover) else block
+            n_frames = len(combined) // frame_size
+            usable = n_frames * frame_size
+            if n_frames > 0:
+                frames = combined[:usable].reshape(n_frames, frame_size)
+                rms = np.sqrt(np.mean(frames * frames, axis=1))
+                envelope_chunks.append(rms)
+            leftover = combined[usable:]
 
             if end >= total_dur:
                 break
             pos += window_sec
 
-    return {"peaks": peaks, "duration_sec": round(total_dur, 3)}
+    if len(leftover) > 0:
+        rms_last = float(np.sqrt(np.mean(leftover * leftover)))
+        envelope_chunks.append(np.array([rms_last]))
+
+    envelope = np.concatenate(envelope_chunks) if envelope_chunks else np.zeros(0)
+    frame_sec = frame_size / float(sr)
+
+    phrases = []
+    if len(envelope) > 0:
+        eps = 1e-9
+        db = 20.0 * np.log10(envelope + eps)
+        threshold_db = _otsu_threshold(db)
+        # حاشیهٔ کوچک امن پایین‌تر از آستانهٔ Otsu — تا خودِ لبهٔ محو شدن
+        # صدا (fade-out طبیعی نت) به‌اشتباه به‌عنوان مکث حساب نشود.
+        is_loud = db > (threshold_db - 2.0)
+
+        min_gap_frames = max(1, int(round(min_gap_sec / frame_sec)))
+        min_phrase_frames = max(1, int(round(min_phrase_sec / frame_sec)))
+
+        # --- بستن شکاف‌های کوتاه (morphological closing) ---
+        i = 0
+        n_fr = len(is_loud)
+        while i < n_fr:
+            if not is_loud[i]:
+                j = i
+                while j < n_fr and not is_loud[j]:
+                    j += 1
+                gap_len = j - i
+                if gap_len < min_gap_frames and i > 0 and j < n_fr:
+                    is_loud[i:j] = True
+                i = j
+            else:
+                i += 1
+
+        # --- استخراج بازه‌های صدادار (فراز) و حذف فرازهای خیلی کوتاه ---
+        i = 0
+        while i < n_fr:
+            if is_loud[i]:
+                j = i
+                while j < n_fr and is_loud[j]:
+                    j += 1
+                if (j - i) >= min_phrase_frames:
+                    start_t = round(i * frame_sec, 3)
+                    end_t = round(min(j * frame_sec, total_dur), 3)
+                    phrases.append({"start": start_t, "end": end_t})
+                i = j
+            else:
+                i += 1
+
+        if not phrases:
+            phrases = [{"start": 0.0, "end": round(total_dur, 3)}]
+
+    for idx, ph in enumerate(phrases):
+        ph["index"] = idx
+
+    return {"peaks": peaks, "duration_sec": round(total_dur, 3), "phrases": phrases}
+
+
+def compute_waveform_peaks(wav_path, target_points=1200, window_sec=DEFAULT_WINDOW_SEC):
+    """(نگه‌داشته‌شده برای سازگاری عقب‌رو) فقط peaks را برمی‌گرداند — بدون
+    تشخیص فراز. کد جدید باید از compute_waveform_and_phrases استفاده کند."""
+    result = compute_waveform_and_phrases(wav_path, window_sec=window_sec, target_points=target_points)
+    return {"peaks": result["peaks"], "duration_sec": result["duration_sec"]}
+
 
 
 # ----------------------------------------------------------------------------
