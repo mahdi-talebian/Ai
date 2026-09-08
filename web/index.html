@@ -288,6 +288,10 @@
           <div class="grid" id="cmpMetricsGrid"></div>
           <div class="chart-title">📊 نتیجه مقایسه</div>
           <img id="cmpImg" style="width:100%;border-radius:12px;" />
+
+          <div class="chart-title">🎼 مقایسه فراز-به-فراز (تراز خودکار)</div>
+          <div id="cmpPhraseSummary" class="hint-text" style="border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:10px 14px;"></div>
+          <img id="cmpPhraseImg" style="width:100%;border-radius:12px; margin-top:10px;" />
         </div>
       </div>
 
@@ -779,6 +783,33 @@ function renderCompareReport(result) {
     </div>`).join('');
   if (result.meta && result.meta.visualization_url) {
     document.getElementById('cmpImg').src = result.meta.visualization_url;
+  }
+
+  const phraseCmp = result.phrase_level_comparison;
+  const summaryEl = document.getElementById('cmpPhraseSummary');
+  if (phraseCmp) {
+    let html = `<b>تعداد فراز مرجع:</b> ${phraseCmp.num_ref_phrases} &nbsp;|&nbsp; <b>تعداد فراز کاربر:</b> ${phraseCmp.num_perf_phrases}`;
+    if (phraseCmp.avg_phrase_similarity_pct !== null && phraseCmp.avg_phrase_similarity_pct !== undefined) {
+      html += `<br><b>میانگین شباهت فرازی:</b> ${phraseCmp.avg_phrase_similarity_pct}%`;
+    }
+    if (phraseCmp.best_matches && phraseCmp.best_matches.length) {
+      const b = phraseCmp.best_matches[0];
+      html += `<br>✅ <b>بهترین تطابق فرازی:</b> فراز مرجع [${b.ref_start}s - ${b.ref_end}s] با فراز کاربر [${b.perf_start}s - ${b.perf_end}s] — شباهت ${b.similarity_pct}%`;
+    }
+    if (phraseCmp.worst_matches && phraseCmp.worst_matches.length &&
+        phraseCmp.pairs && phraseCmp.pairs.length > 1) {
+      const w = phraseCmp.worst_matches[0];
+      html += `<br>⚠️ <b>ضعیف‌ترین تطابق فرازی:</b> فراز مرجع [${w.ref_start}s - ${w.ref_end}s] با فراز کاربر [${w.perf_start}s - ${w.perf_end}s] — شباهت ${w.similarity_pct}%`;
+    }
+    if (phraseCmp.detail) {
+      html += `<br>${phraseCmp.detail}`;
+    }
+    summaryEl.innerHTML = html;
+  } else {
+    summaryEl.innerHTML = '';
+  }
+  if (result.meta && result.meta.phrase_visualization_url) {
+    document.getElementById('cmpPhraseImg').src = result.meta.phrase_visualization_url;
   }
 }
 

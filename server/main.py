@@ -266,6 +266,10 @@ async def start_compare(
             cr.plot_comparison(ref, perf, result, plot_path)
             result["meta"]["visualization_url"] = f"/api/file/{job_id}/comparison_result.png"
 
+            phrase_plot_path = str(job_dir / "comparison_phrases.png")
+            cr.plot_phrase_comparison(ref, perf, result, phrase_plot_path)
+            result["meta"]["phrase_visualization_url"] = f"/api/file/{job_id}/comparison_phrases.png"
+
             with open(job_dir / "compare_report.json", "w", encoding="utf-8") as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
 

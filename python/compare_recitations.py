@@ -33,6 +33,7 @@ import warnings
 from datetime import datetime
 
 import numpy as np
+import librosa
 
 warnings.filterwarnings("ignore")
 
@@ -40,6 +41,7 @@ from pitch_engine import (
     extract_pitch_contour, clean_pitch_contour, smooth_pitch_contour, segment_notes,
     melodic_similarity, rhythm_similarity, loudness_similarity,
     freq_to_note_info, extract_pitch_contour_max_accuracy, compute_loudness_streaming,
+    dtw_align_cost_matrix,
 )
 
 try:
@@ -48,10 +50,55 @@ except ImportError:
     print("خطا: praat-parselmouth نصب نیست. اجرا کنید: pip install praat-parselmouth")
     sys.exit(1)
 
+try:
+    # برای استفاده از همان منطق تشخیص مکث/فراز که برای تحلیل تک‌فایلی
+    # (quran_maqam_analyzer.py) پیاده‌سازی شده — به‌جای بازنویسی مجدد آن،
+    # اینجا فقط دوباره استفاده می‌شود تا مرزبندی فرازها در هر دو ابزار
+    # همیشه یکسان و سازگار بماند.
+    from quran_maqam_analyzer import detect_pauses, PHRASE_MIN_PAUSE_SEC, PHRASE_MIN_NOTES
+except ImportError:
+    detect_pauses = None
+    PHRASE_MIN_PAUSE_SEC = 0.35
+    PHRASE_MIN_NOTES = 2
+
 
 # ============================================================================
 # استخراج پروفایل کامل یک فایل صوتی (برای مقایسه)
 # ============================================================================
+
+def _ensure_readable_wav(path):
+    """
+    اگر فایل ورودی از فرمتی باشد که parselmouth/libsndfile مستقیماً
+    نمی‌تواند بخواند (مثلاً OGG/Opus یا WebM که مرورگر هنگام ضبط از
+    میکروفون تولید می‌کند)، آن را با librosa (که روی ffmpeg/audioread
+    تکیه دارد و طیف وسیع‌تری از فرمت‌ها را می‌فهمد) به یک فایل WAV موقت
+    تبدیل می‌کند. اگر فایل از قبل WAV/فرمت پشتیبانی‌شده باشد، مسیر اصلی
+    بدون تغییر برگردانده می‌شود.
+
+    این دقیقاً همان تبدیلی است که quran_maqam_analyzer.analyze_recitation
+    برای آپلود تکی فایل انجام می‌دهد؛ بدون آن، مقایسهٔ دو فراز با فایل‌های
+    غیر-WAV (مثل ضبط زندهٔ مرورگر با فرمت .ogg/.webm) با خطای
+    «Not an audio file» از parselmouth متوقف می‌شد.
+
+    خروجی: (مسیر_قابل‌خواندن, مسیر_موقت_یا_None)
+    """
+    try:
+        # تست مستقیم با همان خوانندهٔ داخلی parselmouth (نه soundfile/libsndfile) —
+        # چون این دو کتابخانه پشتیبانی متفاوتی از فرمت‌ها دارند: مثلاً یک فایل
+        # OGG/Opus ممکن است با soundfile.info() بدون خطا خوانده شود اما
+        # parselmouth.Sound() روی همان فایل با خطای «Not an audio file» شکست
+        # بخورد. باید دقیقاً همان مسیری که بعداً استفاده می‌شود تست شود.
+        parselmouth.Sound(path)
+        return path, None
+    except Exception:
+        pass
+
+    y, sr = librosa.load(path, sr=44100, mono=True)
+    tmp_wav = path + "__tmp_compare.wav"
+    import soundfile as sf
+    sf.write(tmp_wav, y, sr)
+    return tmp_wav, tmp_wav
+
 
 def analyze_single_file(path, label="فایل", progress_callback=None):
     """
@@ -66,6 +113,8 @@ def analyze_single_file(path, label="فایل", progress_callback=None):
     """
     print(f"در حال تحلیل {label}: {path} ...")
 
+    readable_path, tmp_wav = _ensure_readable_wav(path)
+
     def _pp(done_sec, total_sec):
         if progress_callback:
             progress_callback(label, done_sec, total_sec)
@@ -73,17 +122,21 @@ def analyze_single_file(path, label="فایل", progress_callback=None):
             print(f"\r   [{label}] پیشرفت: {done_sec:6.1f}s / {total_sec:6.1f}s "
                   f"({100*done_sec/max(total_sec,1e-9):5.1f}%)", end="", flush=True)
 
-    times, freqs, sr, duration = extract_pitch_contour_max_accuracy(
-        path, progress_callback=_pp,
-    )
-    if duration > 60:
-        print()
+    try:
+        times, freqs, sr, duration = extract_pitch_contour_max_accuracy(
+            readable_path, progress_callback=_pp,
+        )
+        if duration > 60:
+            print()
 
-    freqs = clean_pitch_contour(freqs)
-    freqs = smooth_pitch_contour(freqs, median_window=5)
-    notes = segment_notes(times, freqs)
+        freqs = clean_pitch_contour(freqs)
+        freqs = smooth_pitch_contour(freqs, median_window=5)
+        notes = segment_notes(times, freqs)
 
-    loudness = compute_loudness_streaming(path)
+        loudness = compute_loudness_streaming(readable_path)
+    finally:
+        if tmp_wav and os.path.exists(tmp_wav):
+            os.remove(tmp_wav)
 
     return {
         "label": label,
@@ -94,6 +147,157 @@ def analyze_single_file(path, label="فایل", progress_callback=None):
         "loudness": loudness,
         "duration": duration,
     }
+
+
+
+# ============================================================================
+# تقسیم به فراز (Phrase) و مقایسه فراز-به-فراز با DTW
+# ============================================================================
+
+def segment_phrases_from_notes(times, freqs, notes):
+    """
+    دنباله نت‌های یک فایل را بر اساس مکث‌های واقعی (نه صرفاً مرز نت) به
+    «فرازهای» طبیعی تقسیم می‌کند — دقیقاً همان منطقی که
+    quran_maqam_analyzer.build_phrase_breakdown برای تحلیل تک‌فایلی استفاده
+    می‌کند، اینجا برای گروه‌بندی نت‌ها پیش از تراز کردن فرازهای دو فایل
+    بازاستفاده شده است.
+
+    خروجی: لیستی از دیکشنری‌های {start, end, duration, num_notes, notes}
+    """
+    total_duration = float(times[-1]) if len(times) else 0.0
+    if detect_pauses is not None and len(times):
+        pauses = detect_pauses(times, freqs, min_pause=PHRASE_MIN_PAUSE_SEC)
+    else:
+        pauses = []
+    significant_pauses = [p for p in pauses if p["duration"] >= PHRASE_MIN_PAUSE_SEC]
+
+    boundaries = [0.0]
+    for p in significant_pauses:
+        boundaries.append(p["start"])
+        boundaries.append(p["end"])
+    boundaries.append(total_duration)
+    boundaries = sorted(set(round(b, 3) for b in boundaries))
+
+    phrases = []
+    for i in range(len(boundaries) - 1):
+        seg_start, seg_end = boundaries[i], boundaries[i + 1]
+        if seg_end - seg_start < 0.05:
+            continue
+        phrase_notes = [n for n in notes if n["start"] >= seg_start - 0.01 and n["start"] < seg_end + 0.01]
+        if len(phrase_notes) < PHRASE_MIN_NOTES:
+            continue
+        phrases.append({
+            "index": len(phrases),
+            "start": round(seg_start, 2),
+            "end": round(seg_end, 2),
+            "duration": round(seg_end - seg_start, 2),
+            "num_notes": len(phrase_notes),
+            "notes": phrase_notes,
+        })
+
+    # اگر هیچ مکث معناداری پیدا نشد (مثلاً یک فراز کوتاه بدون سکوت داخلی)،
+    # کل فایل را به‌عنوان یک فراز واحد در نظر بگیر تا مقایسه فراز-به-فراز
+    # حداقل روی همان یک فراز انجام شود.
+    if not phrases and notes:
+        phrases.append({
+            "index": 0,
+            "start": round(notes[0]["start"], 2),
+            "end": round(notes[-1]["end"], 2),
+            "duration": round(notes[-1]["end"] - notes[0]["start"], 2),
+            "num_notes": len(notes),
+            "notes": notes,
+        })
+
+    return phrases
+
+
+def phrase_level_comparison(ref_phrases, perf_phrases):
+    """
+    فرازهای مرجع و کاربر را با DTW در سطح فراز (نه نت) تراز می‌کند — یعنی
+    برخلاف تطبیق ساده و ترتیبی (فراز اول با اول، دوم با دوم و...)، حتی اگر
+    تعداد فرازهای دو فایل متفاوت باشد (مثلاً کاربر یک تنفس اضافه یا کمتر
+    داشته)، بهترین ترازبندی احتمالی بین دو دنباله فراز پیدا می‌شود.
+
+    هزینه هر جفت (فراز مرجع i، فراز کاربر j) برابر «۱۰۰ - شباهت ملودیک
+    نت‌به‌نت آن دو فراز» است — یعنی هرچه دو فراز از نظر الگوی ملودیک به هم
+    نزدیک‌تر باشند، هزینه ترازبندی آن‌ها کمتر است و DTW ترجیح می‌دهد
+    آن‌ها را به هم متصل کند.
+    """
+    if not ref_phrases or not perf_phrases:
+        return {
+            "num_ref_phrases": len(ref_phrases),
+            "num_perf_phrases": len(perf_phrases),
+            "pairs": [],
+            "best_matches": [],
+            "worst_matches": [],
+            "avg_phrase_similarity_pct": None,
+            "detail": "تعداد فرازهای قابل‌تشخیص برای مقایسه فراز-به-فراز کافی نبود.",
+        }
+
+    n, m = len(ref_phrases), len(perf_phrases)
+    sim_matrix = np.zeros((n, m))
+    cost_matrix = np.zeros((n, m))
+    for i, rp in enumerate(ref_phrases):
+        for j, pp in enumerate(perf_phrases):
+            ms = melodic_similarity(rp["notes"], pp["notes"])
+            s = ms["similarity_pct"] or 0.0
+            sim_matrix[i, j] = s
+            cost_matrix[i, j] = 100.0 - s
+
+    _, path, _ = dtw_align_cost_matrix(cost_matrix)
+
+    pairs = []
+    seen = set()
+    for i, j in path:
+        if i >= n or j >= m or (i, j) in seen:
+            continue
+        seen.add((i, j))
+        pairs.append({
+            "ref_phrase_index": i,
+            "perf_phrase_index": j,
+            "ref_start": ref_phrases[i]["start"],
+            "ref_end": ref_phrases[i]["end"],
+            "perf_start": perf_phrases[j]["start"],
+            "perf_end": perf_phrases[j]["end"],
+            "similarity_pct": round(float(sim_matrix[i, j]), 1),
+        })
+
+    pairs.sort(key=lambda p: p["ref_phrase_index"])
+    best_matches = sorted(pairs, key=lambda p: -p["similarity_pct"])[:3]
+    worst_matches = sorted(pairs, key=lambda p: p["similarity_pct"])[:3]
+    avg_sim = float(np.mean([p["similarity_pct"] for p in pairs])) if pairs else None
+
+    return {
+        "num_ref_phrases": n,
+        "num_perf_phrases": m,
+        "pairs": pairs,
+        "best_matches": best_matches,
+        "worst_matches": worst_matches,
+        "avg_phrase_similarity_pct": round(avg_sim, 1) if avg_sim is not None else None,
+    }
+
+
+def _phrase_comparison_summary(phrase_cmp):
+    """یک خلاصه متنی خوانا از نتیجه مقایسه فراز-به-فراز می‌سازد."""
+    pairs = phrase_cmp.get("pairs") or []
+    if not pairs:
+        return "تحلیل فراز-به-فراز به دلیل نبود مکث‌های کافی برای تفکیک فراز در یکی از دو فایل امکان‌پذیر نبود."
+
+    best = phrase_cmp["best_matches"][0]
+    lines = [
+        f"بهترین تطابق فرازی: فراز مرجع [{best['ref_start']}s تا {best['ref_end']}s] "
+        f"با فراز کاربر [{best['perf_start']}s تا {best['perf_end']}s] — شباهت {best['similarity_pct']}٪"
+    ]
+
+    if len(pairs) > 1:
+        worst = phrase_cmp["worst_matches"][0]
+        if worst["similarity_pct"] < best["similarity_pct"]:
+            lines.append(
+                f"ضعیف‌ترین تطابق فرازی: فراز مرجع [{worst['ref_start']}s تا {worst['ref_end']}s] "
+                f"با فراز کاربر [{worst['perf_start']}s تا {worst['perf_end']}s] — شباهت {worst['similarity_pct']}٪"
+            )
+
+    return " — ".join(lines)
 
 
 # ============================================================================
@@ -134,6 +338,16 @@ def compare_files(ref_path, perf_path, align_start=True):
 
     verdict = _generate_verdict(overall, mel_sim, rhy_sim)
 
+    # --- مقایسه فراز-به-فراز (تراز خودکار با DTW در سطح فراز) ---
+    print("در حال تفکیک فرازها و مقایسه فراز-به-فراز (DTW)...")
+    ref_phrases = segment_phrases_from_notes(ref["times"], ref["freqs"], ref["notes"])
+    perf_phrases = segment_phrases_from_notes(perf["times"], perf["freqs"], perf["notes"])
+    phrase_cmp = phrase_level_comparison(ref_phrases, perf_phrases)
+    phrase_cmp["summary"] = _phrase_comparison_summary(phrase_cmp)
+    # برای رسم نمودار به مرزهای فراز هم نیاز داریم (بدون لیست کامل نت‌ها که حجیم است)
+    ref["phrases"] = [{k: v for k, v in p.items() if k != "notes"} for p in ref_phrases]
+    perf["phrases"] = [{k: v for k, v in p.items() if k != "notes"} for p in perf_phrases]
+
     result = {
         "meta": {
             "reference_file": os.path.basename(ref_path),
@@ -152,6 +366,7 @@ def compare_files(ref_path, perf_path, align_start=True):
         "note_level_deviations": note_diffs[:20],  # حداکثر ۲۰ نمونه برای خوانایی
         "num_notes_reference": len(ref["notes"]),
         "num_notes_performance": len(perf["notes"]),
+        "phrase_level_comparison": phrase_cmp,
     }
 
     return result, ref, perf, mel_sim
@@ -294,6 +509,101 @@ def plot_comparison(ref, perf, result, out_path):
     print(f"نمودار مقایسه ذخیره شد: {out_path}")
 
 
+def plot_phrase_comparison(ref, perf, result, out_path):
+    """
+    نمودار اختصاصی مقایسه فراز-به-فراز — شامل دو بخش:
+
+      ۱) نمودار میله‌ای شباهت هر جفت فراز (تراز شده با DTW فرازی) — سبز
+         برای تطابق بالا، قرمز/نارنجی برای تطابق پایین — تا مشخص شود دقیقاً
+         کدام فراز(ها) بهتر/بدتر از بقیه خوانده شده‌اند.
+      ۲) ملوگراف هم‌پوشانی (overlay) دو فایل با رنگ‌بندی و خط‌چین مرزهای
+         هر فراز، تا محل دقیق هر فراز روی محور زمان هم قابل مشاهده باشد.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    has_font = _setup_persian_font()
+    matplotlib.rcParams["axes.unicode_minus"] = False
+    T = (lambda s: _fa(s)) if has_font else (lambda s: s)
+
+    phrase_cmp = result.get("phrase_level_comparison") or {}
+    pairs = phrase_cmp.get("pairs") or []
+
+    fig, axes = plt.subplots(2, 1, figsize=(14, 11))
+
+    # --- نمودار بالا: میله‌ای شباهت هر جفت فراز ---
+    ax1 = axes[0]
+    if pairs:
+        labels = [f"{p['ref_phrase_index']+1}↔{p['perf_phrase_index']+1}" for p in pairs]
+        values = [p["similarity_pct"] for p in pairs]
+
+        def _color_for(v):
+            if v >= 80:
+                return "#16a34a"       # سبز: تطابق بالا
+            if v >= 55:
+                return "#f59e0b"       # نارنجی: تطابق متوسط
+            return "#dc2626"           # قرمز: تطابق پایین
+
+        colors = [_color_for(v) for v in values]
+        bars = ax1.bar(labels, values, color=colors)
+        ax1.set_ylim(0, 105)
+        ax1.set_ylabel(T("درصد شباهت فراز"))
+        ax1.set_xlabel(T("شماره فراز مرجع ↔ شماره فراز کاربر"))
+        ax1.set_title(T(f"شباهت فراز-به-فراز (تراز خودکار DTW) — میانگین: "
+                         f"{phrase_cmp.get('avg_phrase_similarity_pct', 0)}%"), fontsize=13)
+        for bar, v in zip(bars, values):
+            ax1.text(bar.get_x() + bar.get_width() / 2, v + 2, f"{v:.0f}%",
+                      ha="center", fontsize=10, fontweight="bold")
+        ax1.grid(True, axis="y", alpha=0.2)
+    else:
+        ax1.text(0.5, 0.5, T("فرازی برای مقایسه یافت نشد"), ha="center", va="center",
+                  transform=ax1.transAxes, fontsize=12)
+        ax1.set_axis_off()
+
+    # --- نمودار پایین: ملوگراف هم‌پوشانی با مرزهای فراز ---
+    ax2 = axes[1]
+
+    def to_relative_cents(times, freqs):
+        voiced = freqs > 0
+        if not np.any(voiced):
+            return times, freqs
+        mean_f0 = np.exp(np.mean(np.log(freqs[voiced])))
+        cents = np.full_like(freqs, np.nan)
+        cents[voiced] = 1200 * np.log2(freqs[voiced] / mean_f0)
+        return times, cents
+
+    ref_t, ref_c = to_relative_cents(ref["times"], ref["freqs"])
+    perf_t, perf_c = to_relative_cents(perf["times"], perf["freqs"])
+
+    ax2.plot(ref_t, ref_c, '.', color="#2563eb", markersize=2, label=T("فراز مرجع"))
+    ax2.plot(perf_t, perf_c, '.', color="#ef4444", markersize=2, label=T("فراز کاربر"), alpha=0.7)
+
+    y_lo, y_hi = ax2.get_ylim()
+    ref_phrases = ref.get("phrases") or []
+    perf_phrases = perf.get("phrases") or []
+
+    for idx, p in enumerate(ref_phrases):
+        ax2.axvline(p["start"], color="#2563eb", linestyle="--", alpha=0.35, linewidth=1)
+        ax2.text(p["start"], y_hi, f"R{idx+1}", color="#2563eb", fontsize=8,
+                  va="bottom", ha="left")
+    for idx, p in enumerate(perf_phrases):
+        ax2.axvline(p["start"], color="#ef4444", linestyle=":", alpha=0.35, linewidth=1)
+        ax2.text(p["start"], y_lo, f"U{idx+1}", color="#ef4444", fontsize=8,
+                  va="top", ha="left")
+
+    ax2.set_title(T("ملوگراف هم‌پوشانی با مرزهای فراز (R=مرجع، U=کاربر)"), fontsize=13)
+    ax2.set_xlabel(T("زمان (ثانیه)"))
+    ax2.set_ylabel(T("انحراف نسبی از میانگین (سنت)"))
+    ax2.legend(loc="upper right")
+    ax2.grid(True, alpha=0.2)
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=140)
+    plt.close(fig)
+    print(f"نمودار مقایسه فراز-به-فراز ذخیره شد: {out_path}")
+
+
 # ============================================================================
 # چاپ گزارش
 # ============================================================================
@@ -324,6 +634,15 @@ def print_report(result):
                   f"کاربر[{d['perf_time']:>6.2f}s] {d['perf_note']:>4}   "
                   f"اختلاف: {d['cents_diff']:+.1f}¢")
 
+    phrase_cmp = result.get("phrase_level_comparison")
+    if phrase_cmp:
+        print(f"\n🎼 مقایسه فراز-به-فراز (تراز خودکار DTW):")
+        print(f"   تعداد فراز مرجع: {phrase_cmp['num_ref_phrases']}   |   "
+              f"تعداد فراز کاربر: {phrase_cmp['num_perf_phrases']}")
+        if phrase_cmp.get("avg_phrase_similarity_pct") is not None:
+            print(f"   میانگین شباهت فرازی: {phrase_cmp['avg_phrase_similarity_pct']}%")
+        print(f"   {phrase_cmp.get('summary', '')}")
+
     print("\n" + "=" * 70 + "\n")
 
 
@@ -351,6 +670,10 @@ def main():
         plot_path = args.plot_path or "comparison_result.png"
         plot_comparison(ref, perf, result, plot_path)
         result["meta"]["visualization_file"] = plot_path
+
+        phrase_plot_path = os.path.splitext(plot_path)[0] + "_phrases.png"
+        plot_phrase_comparison(ref, perf, result, phrase_plot_path)
+        result["meta"]["phrase_visualization_file"] = phrase_plot_path
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:

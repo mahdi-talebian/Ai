@@ -499,6 +499,50 @@ def dtw_align(seq_a: np.ndarray, seq_b: np.ndarray, band_radius: int = None):
     return D, path, normalized_cost
 
 
+def dtw_align_cost_matrix(cost_matrix: np.ndarray):
+    """
+    مشابه dtw_align، اما به‌جای محاسبه هزینه از روی فاصلهٔ اقلیدسی بین دو
+    عدد اسکالر، یک ماتریس هزینهٔ از پیش‌محاسبه‌شده (n×m) می‌گیرد. این برای
+    تراز کردن دو *دنباله از اشیاء پیچیده* (مثلاً فرازها/phrases که هرکدام
+    خودشان دنباله‌ای از نت هستند) لازم است — هزینهٔ هر جفت (i, j) را خودِ
+    فراخوان (مثلاً با یک DTW نت‌به‌نت داخلی) از قبل حساب می‌کند و اینجا فقط
+    مسیر بهینهٔ ترازبندی روی این ماتریس هزینه پیدا می‌شود.
+
+    خروجی: D (ماتریس هزینهٔ تجمعی)، path (لیست تاپل (i, j))، normalized_cost
+    """
+    n, m = cost_matrix.shape
+    INF = np.inf
+    D = np.full((n + 1, m + 1), INF)
+    D[0, 0] = 0
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            c = cost_matrix[i - 1, j - 1]
+            D[i, j] = c + min(D[i - 1, j], D[i, j - 1], D[i - 1, j - 1])
+
+    path = []
+    i, j = n, m
+    while i > 0 or j > 0:
+        path.append((i - 1, j - 1))
+        if i == 0:
+            j -= 1
+        elif j == 0:
+            i -= 1
+        else:
+            choices = [D[i - 1, j - 1], D[i - 1, j], D[i, j - 1]]
+            idx = int(np.argmin(choices))
+            if idx == 0:
+                i, j = i - 1, j - 1
+            elif idx == 1:
+                i -= 1
+            else:
+                j -= 1
+    path.reverse()
+
+    total_cost = D[n, m]
+    normalized_cost = total_cost / len(path) if path else INF
+    return D, path, normalized_cost
+
+
 def melodic_similarity(notes_a, notes_b, use_relative_pitch=True):
     """
     شباهت ملودیک دو دنباله نت (خروجی segment_notes) را با DTW محاسبه می‌کند.
