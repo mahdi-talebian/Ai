@@ -1,0 +1,17 @@
+# هسته اصلی (ضروری برای همه ابزارها)
+numpy
+scipy
+matplotlib
+soundfile
+librosa
+praat-parselmouth
+
+# نمایش صحیح متن فارسی/عربی در نمودارهای matplotlib
+arabic-reshaper
+python-bidi
+
+# کاهش نویز (اختیاری، برای quran_maqam_analyzer.py --denoise)
+noisereduce
+
+# پیانوی زنده (piano_visualizer.py)
+sounddevice
