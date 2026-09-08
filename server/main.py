@@ -175,6 +175,10 @@ async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = F
                 png_name = Path(report["meta"]["visualization_file"]).name
                 report["meta"]["visualization_url"] = f"/api/file/{job_id}/{png_name}"
 
+            # مسیر فایل صوتی اصلی — برای پخش هم‌گام با نمایش waveform رنگی
+            # فراز-به-فراز در وب (تب «آپلود و تحلیل»).
+            report["meta"]["audio_url"] = f"/api/file/{job_id}/{Path(input_path).name}"
+
             with open(job_dir / "report.json", "w", encoding="utf-8") as f:
                 json.dump(report, f, ensure_ascii=False, indent=2)
 
@@ -270,6 +274,15 @@ async def start_compare(
             cr.plot_phrase_comparison(ref, perf, result, phrase_plot_path)
             result["meta"]["phrase_visualization_url"] = f"/api/file/{job_id}/comparison_phrases.png"
 
+            # مسیر فایل‌های صوتی نهایی (پس از برش در صورت وجود) — برای پخش
+            # هم‌گام با نمایش waveform رنگی فراز-به-فراز در تب مقایسه.
+            result["meta"]["reference_audio_url"] = f"/api/file/{job_id}/{Path(ref_final).name}"
+            result["meta"]["performance_audio_url"] = f"/api/file/{job_id}/{Path(perf_final).name}"
+            result["reference_waveform"] = ref.get("waveform")
+            result["performance_waveform"] = perf.get("waveform")
+            result["reference_phrases"] = ref.get("phrases")
+            result["performance_phrases"] = perf.get("phrases")
+
             with open(job_dir / "compare_report.json", "w", encoding="utf-8") as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
 
@@ -331,6 +344,13 @@ async def get_file(job_id: str, filename: str, download: bool = False):
         ".png": "image/png",
         ".json": "application/json",
         ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".ogg": "audio/ogg",
+        ".oga": "audio/ogg",
+        ".m4a": "audio/mp4",
+        ".webm": "audio/webm",
+        ".flac": "audio/flac",
+        ".aac": "audio/aac",
     }.get(ext)
 
     # FileResponse به‌صورت پیش‌فرض از HTTP Range requests پشتیبانی می‌کند

@@ -64,6 +64,7 @@ try:
         smooth_pitch_contour,
         extract_pitch_contour_max_accuracy,
         compute_loudness_streaming,
+        compute_waveform_peaks,
         PLOT_LOCK,
     )
 except ImportError:
@@ -71,6 +72,7 @@ except ImportError:
         return freqs
     extract_pitch_contour_max_accuracy = None
     compute_loudness_streaming = None
+    compute_waveform_peaks = None
     import threading
     PLOT_LOCK = threading.Lock()
 
@@ -846,6 +848,16 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
         phrase_breakdown = build_phrase_breakdown(times, freqs, notes, pauses)
         _progress("phrase_breakdown", 0.9)
 
+        # --- موج صوتی فشرده (waveform peaks) برای نمایش رنگی فراز-به-فراز
+        #     در وب — بدون ارسال کل فایل صوتی خام به مرورگر، چون فایل‌های
+        #     تلاوت می‌توانند تا ۳۰-۶۰ دقیقه (صدها مگابایت) باشند.
+        waveform = None
+        if compute_waveform_peaks is not None:
+            try:
+                waveform = compute_waveform_peaks(wav_path)
+            except Exception:
+                waveform = None
+
         report = {
             "meta": {
                 "file": os.path.basename(path),
@@ -866,6 +878,7 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
             "phrase_breakdown": phrase_breakdown,
             "notes": notes,
             "pauses_top5": sorted(pauses, key=lambda p: -p["duration"])[:5],
+            "waveform": waveform,
         }
 
         if make_plot:

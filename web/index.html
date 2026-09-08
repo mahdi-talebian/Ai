@@ -170,6 +170,23 @@
 
   .hint-text { color: #9294bd; font-size: 0.88rem; line-height: 1.7; margin-bottom: 16px; }
 
+  .waveform-wrap {
+    position: relative; width: 100%; border-radius: 12px; overflow: hidden;
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 16px; cursor: pointer; user-select: none;
+  }
+  .waveform-wrap canvas { display: block; width: 100%; height: 110px; }
+  .waveform-playhead {
+    position: absolute; top: 0; bottom: 0; width: 2px; background: #fff;
+    box-shadow: 0 0 6px rgba(255,255,255,0.9); pointer-events: none; left: 0;
+    display: none;
+  }
+  .waveform-phrase-tip {
+    position: absolute; top: 4px; padding: 2px 8px; border-radius: 6px; font-size: 0.7rem;
+    background: rgba(0,0,0,0.55); color: #fff; pointer-events: none; white-space: nowrap;
+    transform: translateX(50%); opacity: 0; transition: opacity .15s;
+  }
+
   .piano-keyboard-wrap { margin-top: 20px; text-align: center; }
   #pianoNoteLabel { margin-top: 10px; font-size: 1.3rem; font-weight: 800; color: #7c5cff; min-height: 30px; }
 
@@ -203,6 +220,14 @@
         <input type="file" id="qFileInput" accept="audio/*" />
         <div class="fileinfo" id="qFileInfo"></div>
         <audio id="qAudioPlayer" controls style="display:none;"></audio>
+
+        <div id="qWaveformSection" style="display:none;">
+          <div class="hint-text" style="margin-bottom:8px;">🎨 موج صوتی رنگی فراز-به-فراز — روی هر بخش رنگی کلیک کن تا پخش از همان‌جا شروع شود.</div>
+          <div class="waveform-wrap" id="qWaveformWrap">
+            <canvas id="qWaveformCanvas"></canvas>
+            <div class="waveform-playhead" id="qWaveformPlayhead"></div>
+          </div>
+        </div>
 
         <label class="checkbox-row"><input type="checkbox" id="qDenoise"> کاهش نویز پس‌زمینه (denoise)</label>
 
@@ -291,6 +316,23 @@
 
           <div class="chart-title">🎼 مقایسه فراز-به-فراز (تراز خودکار)</div>
           <div id="cmpPhraseSummary" class="hint-text" style="border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:10px 14px;"></div>
+
+          <div id="cmpWaveformSection" style="display:none; margin-top:14px;">
+            <div class="hint-text" style="margin-bottom:8px;">🎨 موج صوتی رنگی فراز-به-فراز — فرازهای هم‌رنگ در دو فایل با هم متناظرند (تراز DTW). روی هر بخش کلیک کن تا از همان‌جا پخش شود.</div>
+            <div class="chart-title" style="margin-top:0;">🔵 فراز مرجع</div>
+            <audio id="cmpRefAudio" controls style="width:100%; margin-bottom:8px;"></audio>
+            <div class="waveform-wrap" id="cmpRefWaveformWrap">
+              <canvas id="cmpRefWaveformCanvas"></canvas>
+              <div class="waveform-playhead" id="cmpRefWaveformPlayhead"></div>
+            </div>
+            <div class="chart-title">🔴 فراز کاربر</div>
+            <audio id="cmpPerfAudio" controls style="width:100%; margin-bottom:8px;"></audio>
+            <div class="waveform-wrap" id="cmpPerfWaveformWrap">
+              <canvas id="cmpPerfWaveformCanvas"></canvas>
+              <div class="waveform-playhead" id="cmpPerfWaveformPlayhead"></div>
+            </div>
+          </div>
+
           <img id="cmpPhraseImg" style="width:100%;border-radius:12px; margin-top:10px;" />
         </div>
       </div>
@@ -405,6 +447,118 @@ function switchQuranTab(which) {
   if (which === 'upload') { qTabUpload.classList.add('active'); qPanelUpload.classList.add('active'); }
   if (which === 'compare') { qTabCompare.classList.add('active'); qPanelCompare.classList.add('active'); }
   if (which === 'mic') { qTabLiveMic.classList.add('active'); qPanelLiveMic.classList.add('active'); }
+}
+
+// ==========================================================================
+// موج صوتی رنگی فراز-به-فراز (Audacity-style) — پخش‌کننده + canvas تعاملی
+// ==========================================================================
+// این ماژول کاملاً سمت-کاربر است و فقط برای «نمایش/پخش» به‌کار می‌رود؛
+// تحلیل پرده صدا/مقام/سولفژ همچنان به‌طور کامل در بک‌اند پایتون (Praat)
+// انجام می‌شود. داده‌های ورودی این ماژول («peaks» فشرده و مرزهای فراز)
+// از سرور می‌آیند، نه از پردازش صوتی سمت مرورگر.
+const PHRASE_COLOR_PALETTE = [
+  '#7c5cff', '#23e0c2', '#ff5cad', '#ffb703', '#3ddc97', '#ff595e',
+  '#4cc9f0', '#f77f00', '#b5179e', '#80ed99', '#ff9f1c', '#5390d9',
+];
+function phraseColor(idx) {
+  return PHRASE_COLOR_PALETTE[idx % PHRASE_COLOR_PALETTE.length];
+}
+
+/**
+ * یک waveform رنگی تعاملی می‌سازد.
+ * @param {Object} opts
+ *   canvas: عنصر <canvas>
+ *   wrapEl: عنصر والد (برای گرفتن اندازه و کلیک)
+ *   playheadEl: عنصر خط نشانگر پخش
+ *   audioEl: عنصر <audio> متناظر
+ *   peaks: آرایه [[min,max], ...] نرمال‌شده در [-1,1]
+ *   duration: مدت زمان کل صدا (ثانیه)
+ *   phrases: آرایه {start, end, colorIndex} — مرزهای فراز برای رنگ‌آمیزی
+ */
+function initPhraseWaveform(opts) {
+  const { canvas, wrapEl, playheadEl, audioEl, peaks, duration, phrases } = opts;
+  if (!canvas || !peaks || !peaks.length || !duration) {
+    if (wrapEl) wrapEl.style.display = 'none';
+    return null;
+  }
+  if (wrapEl) wrapEl.style.display = 'block';
+
+  function draw() {
+    const rect = wrapEl.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(50, rect.width);
+    const h = 110;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    const mid = h / 2;
+    const n = peaks.length;
+
+    // پس‌زمینهٔ رنگی نواحی فراز (رسم می‌شود قبل از خود موج تا موج رویش دیده شود)
+    (phrases || []).forEach((ph) => {
+      const x0 = (ph.start / duration) * w;
+      const x1 = (ph.end / duration) * w;
+      ctx.fillStyle = phraseColor(ph.colorIndex) + '33'; // شفافیت کم برای پس‌زمینه
+      ctx.fillRect(x0, 0, Math.max(1, x1 - x0), h);
+    });
+
+    // رسم خود موج صوتی — هر ستون پیکسلی متناظر با یک بازهٔ زمانی است؛
+    // رنگ آن ستون بر اساس این‌که در کدام فراز قرار دارد تعیین می‌شود.
+    for (let x = 0; x < w; x++) {
+      const t = (x / w) * duration;
+      let colIdx = null;
+      if (phrases && phrases.length) {
+        const ph = phrases.find(p => t >= p.start && t < p.end);
+        if (ph) colIdx = ph.colorIndex;
+      }
+      const color = colIdx !== null ? phraseColor(colIdx) : '#6f7196';
+      const peakIdx = Math.min(n - 1, Math.floor((x / w) * n));
+      const [mn, mx] = peaks[peakIdx];
+      const yTop = mid - mx * mid * 0.92;
+      const yBot = mid - mn * mid * 0.92;
+      ctx.fillStyle = color;
+      ctx.fillRect(x, yTop, 1, Math.max(1, yBot - yTop));
+    }
+
+    // خط وسط
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath();
+    ctx.moveTo(0, mid);
+    ctx.lineTo(w, mid);
+    ctx.stroke();
+  }
+
+  draw();
+  const resizeObs = new ResizeObserver(() => draw());
+  resizeObs.observe(wrapEl);
+
+  // کلیک روی موج → پخش از همان لحظه
+  wrapEl.onclick = (e) => {
+    const rect = wrapEl.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const frac = Math.min(1, Math.max(0, x / rect.width));
+    const t = frac * duration;
+    if (audioEl) {
+      audioEl.currentTime = t;
+      audioEl.play().catch(() => {});
+    }
+  };
+
+  // به‌روزرسانی نشانگر پخش
+  if (audioEl && playheadEl) {
+    playheadEl.style.display = 'block';
+    audioEl.addEventListener('timeupdate', () => {
+      const frac = duration ? (audioEl.currentTime / duration) : 0;
+      playheadEl.style.left = (frac * 100) + '%';
+    });
+  }
+
+  return { redraw: draw };
 }
 qTabUpload.onclick = () => switchQuranTab('upload');
 qTabCompare.onclick = () => switchQuranTab('compare');
@@ -691,6 +845,27 @@ function renderQuranReport(report) {
   if (report.meta && report.meta.visualization_url) {
     document.getElementById('qMelographImg').src = report.meta.visualization_url;
   }
+
+  // --- موج صوتی رنگی فراز-به-فراز (تعاملی) ---
+  const wfSection = document.getElementById('qWaveformSection');
+  if (report.waveform && report.waveform.peaks && report.waveform.peaks.length &&
+      report.phrase_breakdown && report.phrase_breakdown.length) {
+    wfSection.style.display = 'block';
+    const phrasesForWf = report.phrase_breakdown.map((ph, idx) => ({
+      start: ph.start, end: ph.end, colorIndex: idx,
+    }));
+    initPhraseWaveform({
+      canvas: document.getElementById('qWaveformCanvas'),
+      wrapEl: document.getElementById('qWaveformWrap'),
+      playheadEl: document.getElementById('qWaveformPlayhead'),
+      audioEl: qAudioPlayer,
+      peaks: report.waveform.peaks,
+      duration: report.waveform.duration_sec,
+      phrases: phrasesForWf,
+    });
+  } else {
+    wfSection.style.display = 'none';
+  }
 }
 
 // ==========================================================================
@@ -830,6 +1005,49 @@ function renderCompareReport(result) {
   }
   if (result.meta && result.meta.phrase_visualization_url) {
     document.getElementById('cmpPhraseImg').src = result.meta.phrase_visualization_url;
+  }
+
+  // --- موج‌های صوتی رنگی فراز-به-فراز (تعاملی، رنگ‌های متناظر بین دو فایل) ---
+  const cmpWfSection = document.getElementById('cmpWaveformSection');
+  const refWf = result.reference_waveform;
+  const perfWf = result.performance_waveform;
+  const refPhrases = result.reference_phrases;
+  const perfPhrases = result.performance_phrases;
+  const refAudioEl = document.getElementById('cmpRefAudio');
+  const perfAudioEl = document.getElementById('cmpPerfAudio');
+
+  if (refWf && refWf.peaks && refWf.peaks.length && perfWf && perfWf.peaks && perfWf.peaks.length) {
+    cmpWfSection.style.display = 'block';
+    if (result.meta && result.meta.reference_audio_url) refAudioEl.src = result.meta.reference_audio_url;
+    if (result.meta && result.meta.performance_audio_url) perfAudioEl.src = result.meta.performance_audio_url;
+
+    // pair_index (که سرور بر اساس تراز DTW فراز-به-فراز محاسبه کرده) به‌عنوان
+    // colorIndex مشترک استفاده می‌شود — یعنی فرازهای متناظر در دو فایل
+    // دقیقاً یک رنگ خواهند داشت، حتی اگر تعداد فرازها متفاوت باشد.
+    const toWfPhrases = (phraseList) => (phraseList || [])
+      .filter(ph => ph.pair_index !== null && ph.pair_index !== undefined)
+      .map(ph => ({ start: ph.start, end: ph.end, colorIndex: ph.pair_index }));
+
+    initPhraseWaveform({
+      canvas: document.getElementById('cmpRefWaveformCanvas'),
+      wrapEl: document.getElementById('cmpRefWaveformWrap'),
+      playheadEl: document.getElementById('cmpRefWaveformPlayhead'),
+      audioEl: refAudioEl,
+      peaks: refWf.peaks,
+      duration: refWf.duration_sec,
+      phrases: toWfPhrases(refPhrases),
+    });
+    initPhraseWaveform({
+      canvas: document.getElementById('cmpPerfWaveformCanvas'),
+      wrapEl: document.getElementById('cmpPerfWaveformWrap'),
+      playheadEl: document.getElementById('cmpPerfWaveformPlayhead'),
+      audioEl: perfAudioEl,
+      peaks: perfWf.peaks,
+      duration: perfWf.duration_sec,
+      phrases: toWfPhrases(perfPhrases),
+    });
+  } else {
+    cmpWfSection.style.display = 'none';
   }
 }
 

@@ -300,6 +300,56 @@ def compute_loudness_streaming(wav_path, window_sec=DEFAULT_WINDOW_SEC,
     }
 
 
+def compute_waveform_peaks(wav_path, target_points=1200, window_sec=DEFAULT_WINDOW_SEC):
+    """
+    یک نسخهٔ بسیار فشرده‌شدهٔ موج صوتی (min/max هر بازهٔ کوچک) را برای رسم
+    «waveform» در مرورگر تولید می‌کند — بدون این‌که کل فایل صوتی (که برای
+    تلاوت‌های ۳۰-۶۰ دقیقه‌ای می‌تواند صدها مگابایت باشد) به مرورگر فرستاده
+    یا در حافظهٔ آن با decodeAudioData بارگذاری شود؛ فقط چند هزار عدد کوچک
+    (peaks) که حجمی در حد چند کیلوبایت دارد از سرور برمی‌گردد.
+
+    مشابه compute_loudness_streaming، فایل به‌صورت پنجره‌ای (streaming) با
+    soundfile خوانده می‌شود — مصرف حافظه ثابت و مستقل از طول فایل است.
+
+    خروجی: {"peaks": [[min, max], ...] نرمال‌شده در بازهٔ [-1, 1], "duration_sec": float}
+    """
+    import soundfile as sf
+
+    info = sf.info(wav_path)
+    sr = info.samplerate
+    total_dur = info.frames / float(sr) if sr else 0.0
+    if total_dur <= 0:
+        return {"peaks": [], "duration_sec": 0.0}
+
+    samples_per_point = max(1, int(round((total_dur * sr) / target_points)))
+    peaks = []
+
+    with sf.SoundFile(wav_path) as f:
+        pos = 0.0
+        while pos < total_dur:
+            end = min(pos + window_sec, total_dur)
+            start_frame = int(round(pos * sr))
+            num_frames = int(round((end - pos) * sr))
+            f.seek(start_frame)
+            block = f.read(num_frames, dtype="float32", always_2d=True)
+            block = block.mean(axis=1)  # میکس به مونو در صورت چندکاناله بودن
+
+            # تقسیم این پنجره به زیر-بازه‌های samples_per_point‌تایی و
+            # استخراج min/max هر کدام (الگوریتم استاندارد رسم waveform).
+            n = len(block)
+            for i in range(0, n, samples_per_point):
+                chunk = block[i:i + samples_per_point]
+                if len(chunk) == 0:
+                    continue
+                peaks.append([float(np.min(chunk)), float(np.max(chunk))])
+
+            if end >= total_dur:
+                break
+            pos += window_sec
+
+    return {"peaks": peaks, "duration_sec": round(total_dur, 3)}
+
+
 # ----------------------------------------------------------------------------
 # استخراج F0 برای یک قطعه کوچک (real-time / streaming)
 # ----------------------------------------------------------------------------

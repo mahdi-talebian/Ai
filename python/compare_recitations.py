@@ -41,7 +41,7 @@ from pitch_engine import (
     extract_pitch_contour, clean_pitch_contour, smooth_pitch_contour, segment_notes,
     melodic_similarity, rhythm_similarity, loudness_similarity,
     freq_to_note_info, extract_pitch_contour_max_accuracy, compute_loudness_streaming,
-    dtw_align_cost_matrix, PLOT_LOCK,
+    dtw_align_cost_matrix, PLOT_LOCK, compute_waveform_peaks,
 )
 
 try:
@@ -134,6 +134,13 @@ def analyze_single_file(path, label="فایل", progress_callback=None):
         notes = segment_notes(times, freqs)
 
         loudness = compute_loudness_streaming(readable_path)
+
+        # موج صوتی فشرده — برای نمایش رنگی فراز-به-فراز در وب (تب مقایسه).
+        waveform = None
+        try:
+            waveform = compute_waveform_peaks(readable_path)
+        except Exception:
+            waveform = None
     finally:
         if tmp_wav and os.path.exists(tmp_wav):
             os.remove(tmp_wav)
@@ -146,6 +153,7 @@ def analyze_single_file(path, label="فایل", progress_callback=None):
         "notes": notes,
         "loudness": loudness,
         "duration": duration,
+        "waveform": waveform,
     }
 
 
@@ -253,6 +261,11 @@ def phrase_level_comparison(ref_phrases, perf_phrases):
             continue
         seen.add((i, j))
         pairs.append({
+            # pair_index: شناسهٔ مشترک برای این جفت فراز — واسط کاربری وب از
+            # این عدد برای نسبت‌دادن یک رنگ یکسان به دو فراز متناظر (یکی در
+            # موج صوتی مرجع، یکی در موج صوتی کاربر) استفاده می‌کند تا چشم
+            # به‌راحتی تطبیق را ببیند.
+            "pair_index": len(pairs),
             "ref_phrase_index": i,
             "perf_phrase_index": j,
             "ref_start": ref_phrases[i]["start"],
@@ -347,6 +360,18 @@ def compare_files(ref_path, perf_path, align_start=True):
     # برای رسم نمودار به مرزهای فراز هم نیاز داریم (بدون لیست کامل نت‌ها که حجیم است)
     ref["phrases"] = [{k: v for k, v in p.items() if k != "notes"} for p in ref_phrases]
     perf["phrases"] = [{k: v for k, v in p.items() if k != "notes"} for p in perf_phrases]
+
+    # هر فراز را به pair_index مشترکش (طبق تراز DTW) وصل می‌کنیم — تا واسط
+    # کاربری وب بتواند رنگ یکسانی به دو فراز متناظر (در موج صوتی مرجع و
+    # موج صوتی کاربر) بدهد. فرازهایی که در تراز DTW شرکت نکرده‌اند
+    # (نظری نباید پیش بیاید چون هر فراز حداقل یک‌بار در مسیر DTW ظاهر
+    # می‌شود، اما برای اطمینان) با pair_index=None مشخص می‌شوند.
+    ref_pair_map = {p["ref_phrase_index"]: p["pair_index"] for p in phrase_cmp.get("pairs", [])}
+    perf_pair_map = {p["perf_phrase_index"]: p["pair_index"] for p in phrase_cmp.get("pairs", [])}
+    for idx, ph in enumerate(ref["phrases"]):
+        ph["pair_index"] = ref_pair_map.get(idx)
+    for idx, ph in enumerate(perf["phrases"]):
+        ph["pair_index"] = perf_pair_map.get(idx)
 
     result = {
         "meta": {
