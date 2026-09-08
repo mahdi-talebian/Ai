@@ -41,7 +41,7 @@ from pitch_engine import (
     extract_pitch_contour, clean_pitch_contour, smooth_pitch_contour, segment_notes,
     melodic_similarity, rhythm_similarity, loudness_similarity,
     freq_to_note_info, extract_pitch_contour_max_accuracy, compute_loudness_streaming,
-    dtw_align_cost_matrix,
+    dtw_align_cost_matrix, PLOT_LOCK,
 )
 
 try:
@@ -451,6 +451,18 @@ def _fa(text):
 
 
 def plot_comparison(ref, perf, result, out_path):
+    """
+    قفل سراسری رسم نمودار (PLOT_LOCK) این تابع را در برابر اجرای هم‌زمان
+    چند job رسم نمودار (تحلیل تک‌فایلی، مقایسه، صادرات ویدیو در تردهای
+    جداگانه سرور) محافظت می‌کند — matplotlib.pyplot وضعیت سراسری (figure
+    جاری) دارد و بدون این قفل ممکن است نمودار یک job در فایل خروجی job
+    دیگر ذخیره شود.
+    """
+    with PLOT_LOCK:
+        _plot_comparison_impl(ref, perf, result, out_path)
+
+
+def _plot_comparison_impl(ref, perf, result, out_path):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -518,7 +530,14 @@ def plot_phrase_comparison(ref, perf, result, out_path):
          کدام فراز(ها) بهتر/بدتر از بقیه خوانده شده‌اند.
       ۲) ملوگراف هم‌پوشانی (overlay) دو فایل با رنگ‌بندی و خط‌چین مرزهای
          هر فراز، تا محل دقیق هر فراز روی محور زمان هم قابل مشاهده باشد.
+
+    محافظت‌شده با PLOT_LOCK سراسری (نگاه کنید به توضیح در plot_comparison).
     """
+    with PLOT_LOCK:
+        _plot_phrase_comparison_impl(ref, perf, result, out_path)
+
+
+def _plot_phrase_comparison_impl(ref, perf, result, out_path):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt

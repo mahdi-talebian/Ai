@@ -721,18 +721,38 @@ function checkCompareReady() {
 
 document.getElementById('compareBtn').onclick = async () => {
   const btn = document.getElementById('compareBtn');
-  btn.disabled = true;
   document.getElementById('cmpResults').style.display = 'none';
+  document.getElementById('cmpStatus').textContent = '';
+
+  const refStart = document.getElementById('refStart').value;
+  const refEnd = document.getElementById('refEnd').value;
+  const perfStart = document.getElementById('perfStart').value;
+  const perfEnd = document.getElementById('perfEnd').value;
+
+  // اعتبارسنجی بازهٔ برش پیش از ارسال — تا کاربر پیام خطای روشن ببیند،
+  // به‌جای این‌که سرور بی‌صدا یک کلیپ تقریباً خالی (کمتر از ۰.۱ ثانیه)
+  // تولید کند که نتیجهٔ مقایسه از آن بی‌معنا خواهد بود.
+  function validTrim(startStr, endStr, label) {
+    if (startStr && endStr) {
+      const s = parseFloat(startStr), e = parseFloat(endStr);
+      if (e <= s) {
+        document.getElementById('cmpStatus').textContent =
+          `❌ بازهٔ زمانی ${label} نامعتبر است: زمان پایان (${e}s) باید بزرگ‌تر از زمان شروع (${s}s) باشد.`;
+        return false;
+      }
+    }
+    return true;
+  }
+  if (!validTrim(refStart, refEnd, 'فراز مرجع')) return;
+  if (!validTrim(perfStart, perfEnd, 'فراز کاربر')) return;
+
+  btn.disabled = true;
   const progress = setupProgressUI('cmpProgressWrap', 'cmpProgressLabel', 'cmpProgressFill', 'cmpProgressPct');
   progress.update('در حال آپلود فایل‌ها...', 0.02);
 
   const form = new FormData();
   form.append('reference', refFile);
   form.append('performance', perfFile);
-  const refStart = document.getElementById('refStart').value;
-  const refEnd = document.getElementById('refEnd').value;
-  const perfStart = document.getElementById('perfStart').value;
-  const perfEnd = document.getElementById('perfEnd').value;
   if (refStart) form.append('ref_start', refStart);
   if (refEnd) form.append('ref_end', refEnd);
   if (perfStart) form.append('perf_start', perfStart);

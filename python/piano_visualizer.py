@@ -44,7 +44,7 @@ import matplotlib.animation as animation
 from pitch_engine import (
     freq_to_note_info, is_black_key, PIANO_MIDI_MIN, PIANO_MIDI_MAX,
     extract_pitch_chunk, extract_pitch_contour_max_accuracy,
-    clean_pitch_contour, smooth_pitch_contour,
+    clean_pitch_contour, smooth_pitch_contour, PLOT_LOCK,
 )
 
 
@@ -347,27 +347,35 @@ def export_video_from_file(file_path, out_path="piano_video.mp4", fps=VIDEO_EXPO
         # به فایل کاملاً کافی است و به‌صراحت اینجا انتخاب می‌شود.
         matplotlib.use("Agg", force=True)
 
-        fig, ax = plt.subplots(figsize=(14, 5))
-        fig.suptitle(T("پیانوی هم‌گام با تلاوت"), fontsize=14)
-        keyboard = PianoKeyboard(ax)
-        time_text = ax.text(
-            0.01, 0.02, "", transform=ax.transAxes, fontsize=10, color="#666666",
-        )
-        plt.tight_layout()
-
         tmp_video_only = out_path + "__video_only.mp4"
 
-        writer = animation.FFMpegWriter(fps=fps, codec="libx264",
-                                          extra_args=["-pix_fmt", "yuv420p"])
-        with writer.saving(fig, tmp_video_only, dpi=dpi):
-            for k, note_info in enumerate(note_infos):
-                keyboard.highlight_note(note_info)
-                time_text.set_text(f"{k * frame_dt:5.1f}s / {total_dur:5.1f}s")
-                writer.grab_frame()
-                if k % 20 == 0 or k == num_frames - 1:
-                    _progress("render", 0.5 + 0.4 * (k + 1) / max(num_frames, 1))
+        # --- قفل سراسری رسم نمودار (PLOT_LOCK) ---
+        # matplotlib.pyplot وضعیت سراسری (figure جاری) دارد که thread-safe
+        # نیست. چون سرور هر job (تحلیل، مقایسه، صادرات ویدیو) را در ترد
+        # جداگانه اجرا می‌کند، تمام رندر فریم‌به‌فریم این ویدیو (که ممکن است
+        # طول بکشد) باید داخل قفل باشد — در غیر این صورت اگر هم‌زمان یک job
+        # دیگر هم در حال رسم نمودار باشد، ممکن است فریم‌های این دو باهم قاطی
+        # شوند یا نمودار اشتباه در فایل نهایی ذخیره شود.
+        with PLOT_LOCK:
+            fig, ax = plt.subplots(figsize=(14, 5))
+            fig.suptitle(T("پیانوی هم‌گام با تلاوت"), fontsize=14)
+            keyboard = PianoKeyboard(ax)
+            time_text = ax.text(
+                0.01, 0.02, "", transform=ax.transAxes, fontsize=10, color="#666666",
+            )
+            plt.tight_layout()
 
-        plt.close(fig)
+            writer = animation.FFMpegWriter(fps=fps, codec="libx264",
+                                              extra_args=["-pix_fmt", "yuv420p"])
+            with writer.saving(fig, tmp_video_only, dpi=dpi):
+                for k, note_info in enumerate(note_infos):
+                    keyboard.highlight_note(note_info)
+                    time_text.set_text(f"{k * frame_dt:5.1f}s / {total_dur:5.1f}s")
+                    writer.grab_frame()
+                    if k % 20 == 0 or k == num_frames - 1:
+                        _progress("render", 0.5 + 0.4 * (k + 1) / max(num_frames, 1))
+
+            plt.close(fig)
 
         # --- مرحله ۳: مالتی‌پلکس صدا+تصویر با ffmpeg ---
         print("در حال ترکیب صدا و تصویر (ffmpeg mux)...")

@@ -286,6 +286,14 @@ def _maybe_trim(path, start, end, job_dir, out_name):
     """در صورتی که کاربر بازه زمانی مشخص کرده باشد، فایل را با ffmpeg برش می‌زند."""
     if start is None and end is None:
         return path
+    if start is not None and end is not None and end <= start:
+        # اعتبارسنجی سمت سرور (دفاع دوم، مستقل از اعتبارسنجی سمت مرورگر) —
+        # بدون این بررسی، ffmpeg بی‌صدا یک کلیپ تقریباً خالی (۰.۱ ثانیه)
+        # می‌سازد که نتیجهٔ تحلیل/مقایسهٔ روی آن کاملاً بی‌معنا خواهد بود.
+        raise ValueError(
+            f"بازهٔ زمانی نامعتبر برای «{out_name}»: زمان پایان ({end}s) باید "
+            f"بزرگ‌تر از زمان شروع ({start}s) باشد."
+        )
     import subprocess
     out_path = str(job_dir / f"{out_name}.wav")
     cmd = ["ffmpeg", "-y", "-i", path]

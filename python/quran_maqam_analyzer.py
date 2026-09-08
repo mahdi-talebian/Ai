@@ -64,12 +64,16 @@ try:
         smooth_pitch_contour,
         extract_pitch_contour_max_accuracy,
         compute_loudness_streaming,
+        PLOT_LOCK,
     )
 except ImportError:
     def smooth_pitch_contour(freqs, median_window=5):
         return freqs
     extract_pitch_contour_max_accuracy = None
     compute_loudness_streaming = None
+    import threading
+    PLOT_LOCK = threading.Lock()
+
 
 
 # ============================================================================
@@ -911,6 +915,19 @@ def _fa(text):
 
 
 def _make_melograph(times, freqs, notes, best_maqam, out_path, maqam_timeline=None, ambitus=None):
+    """
+    نسخهٔ محافظت‌شده با قفل سراسری رسم نمودار — چون سرور هر job (تحلیل،
+    مقایسه، صادرات ویدیو) را در یک ترد جداگانه اجرا می‌کند و matplotlib.pyplot
+    وضعیت سراسری (figure جاری) دارد که thread-safe نیست، بدون این قفل ممکن
+    است هنگام اجرای هم‌زمان دو job، نمودار یک job در فایل خروجی job دیگر
+    ذخیره شود.
+    """
+    with PLOT_LOCK:
+        return _make_melograph_impl(times, freqs, notes, best_maqam, out_path,
+                                     maqam_timeline=maqam_timeline, ambitus=ambitus)
+
+
+def _make_melograph_impl(times, freqs, notes, best_maqam, out_path, maqam_timeline=None, ambitus=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
