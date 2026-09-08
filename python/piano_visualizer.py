@@ -80,7 +80,8 @@ def T(text):
 
 try:
     import sounddevice as sd
-except ImportError:
+except (ImportError, OSError):
+    # OSError زمانی رخ می‌دهد که کتابخانه سیستمی PortAudio نصب نیست
     sd = None
 
 try:
