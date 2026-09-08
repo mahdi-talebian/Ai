@@ -521,7 +521,22 @@ function initPhraseWaveform(opts) {
 
     // رسم خود موج صوتی — هر ستون پیکسلی متناظر با یک بازهٔ زمانی است؛
     // رنگ آن ستون بر اساس این‌که در کدام فراز قرار دارد تعیین می‌شود.
-    for (let x = 0; x < w; x++) {
+    //
+    // نکتهٔ دقت مهم: وقتی تعداد نقاط peak دریافتی از سرور (n) از عرض
+    // canvas بر حسب پیکسل واقعی (w * dpr) بیشتر باشد (مثلاً فایل‌های
+    // طولانی‌تر یا نمایشگرهای کم‌تراکم)، نگاشت «نزدیک‌ترین نمونه»
+    // (nearest-neighbor) باعث می‌شود بسیاری از نقاط peak — از جمله
+    // قله‌های واقعی دامنه — به‌کلی نادیده گرفته شوند و شکل موج به‌اشتباه
+    // صاف/کم‌دقت به‌نظر برسد. به‌جای آن، مثل ادیتورهای صوتی حرفه‌ای
+    // (Audacity) برای هر ستون *بازه‌ای* از نقاط peak که به آن ستون
+    // نگاشت می‌شوند را min/max-reduce می‌کنیم — یعنی min واقعی و max واقعی
+    // آن بازهٔ زمانی را نشان می‌دهیم، نه فقط یک نمونهٔ دلخواه از وسط آن.
+    // وقتی برعکس، peaks کمتر از پیکسل‌هاست (زوم داخلی/فایل خیلی کوتاه)،
+    // درون‌یابی خطی بین دو نقطهٔ مجاور انجام می‌شود تا موج هم‌چنان پیوسته
+    // و صاف رسم شود، نه پله‌ای.
+    const wPx = Math.max(1, Math.round(w * dpr)); // دقت واقعی پیکسلی صفحه
+    for (let xi = 0; xi < wPx; xi++) {
+      const x = xi / dpr;
       const t = (x / w) * duration;
       let colIdx = null;
       if (phrases && phrases.length) {
@@ -529,12 +544,36 @@ function initPhraseWaveform(opts) {
         if (ph) colIdx = ph.colorIndex;
       }
       const color = colIdx !== null ? phraseColor(colIdx) : '#6f7196';
-      const peakIdx = Math.min(n - 1, Math.floor((x / w) * n));
-      const [mn, mx] = peaks[peakIdx];
+
+      // بازهٔ نقاط peak متناظر با این ستون پیکسلی
+      const idxStartF = (xi / wPx) * n;
+      const idxEndF = ((xi + 1) / wPx) * n;
+      let mn, mx;
+      if (idxEndF - idxStartF >= 1) {
+        // چند نقطهٔ peak به این ستون نگاشت می‌شود → min/max-reduce (Audacity-style)
+        const i0 = Math.max(0, Math.floor(idxStartF));
+        const i1 = Math.min(n, Math.max(i0 + 1, Math.ceil(idxEndF)));
+        mn = Infinity; mx = -Infinity;
+        for (let k = i0; k < i1; k++) {
+          const [kmn, kmx] = peaks[k];
+          if (kmn < mn) mn = kmn;
+          if (kmx > mx) mx = kmx;
+        }
+      } else {
+        // کمتر از یک نقطهٔ peak به این ستون می‌رسد (زوم داخلی) → درون‌یابی خطی
+        const iFloor = Math.max(0, Math.min(n - 1, Math.floor(idxStartF)));
+        const iCeil = Math.min(n - 1, iFloor + 1);
+        const frac = idxStartF - iFloor;
+        const [mn0, mx0] = peaks[iFloor];
+        const [mn1, mx1] = peaks[iCeil];
+        mn = mn0 + (mn1 - mn0) * frac;
+        mx = mx0 + (mx1 - mx0) * frac;
+      }
+
       const yTop = mid - mx * mid * 0.92;
       const yBot = mid - mn * mid * 0.92;
       ctx.fillStyle = color;
-      ctx.fillRect(x, yTop, 1, Math.max(1, yBot - yTop));
+      ctx.fillRect(x, yTop, 1 / dpr, Math.max(1 / dpr, yBot - yTop));
     }
 
     // خط وسط
