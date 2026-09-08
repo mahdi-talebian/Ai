@@ -828,7 +828,11 @@ function renderQuranReport(report) {
     metrics.push({ label: 'بلندی صدا (میانگین)', value: `${report.loudness.mean_db} dB`, sub: `اوج: ${report.loudness.max_db} dB` });
   }
   if (report.ambitus) {
-    metrics.push({ label: 'دامنه ملودیک', value: `${report.ambitus.range_semitones} نیم‌پرده`, sub: `${report.ambitus.lowest_note} تا ${report.ambitus.highest_note}` });
+    const ds = report.ambitus.degree_span;
+    const ambitusSub = ds
+      ? `${report.ambitus.lowest_note} تا ${report.ambitus.highest_note} — ${ds.span_degrees} درجه (از «${ds.low_absolute_fa}» تا «${ds.high_absolute_fa}»)`
+      : `${report.ambitus.lowest_note} تا ${report.ambitus.highest_note}`;
+    metrics.push({ label: 'دامنه ملودیک', value: ds ? `${ds.span_degrees} درجه` : `${report.ambitus.range_semitones} نیم‌پرده`, sub: ambitusSub });
   }
   grid.innerHTML = metrics.map(m => `
     <div class="metric">

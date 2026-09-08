@@ -563,7 +563,8 @@ def absolute_degree_name(cents_from_tonic: float, tonic_ladder_cents: int):
     خروجی: (fa, en, register) — register موقعیت اکتاوی نسبت به اکتاو تونیک است.
     """
     pos = float(cents_from_tonic) + tonic_ladder_cents
-    register = int(np.floor(pos / 1200.0))
+    # +۲۵ = نصف شبکهٔ ۵۰ سنتی — تا سنت‌های منفیِ ریز به اکتاو قبلی سرریز نکنند
+    register = int(np.floor((pos + 25.0) / 1200.0))
     # نتِ واقعیِ خوانده‌شده دقیقاً روی شبکهٔ ۵۰ سنتی نیست؛ نام درجه = نزدیک‌ترین
     # موقعیت شبکه (خطای واقعی نت جداگانه در cents_off_degree گزارش می‌شود)
     base = int(round((pos - register * 1200.0) / 50.0) * 50) % 1200
@@ -641,7 +642,9 @@ def note_to_solfege(f0_hz: float, tonic_hz: float, maqam_cents,
         return None
 
     cents_from_tonic = 1200.0 * np.log2(f0_hz / tonic_hz)
-    register = int(np.floor(cents_from_tonic / 1200.0))
+    # +۲۵ = نصف شبکهٔ ۵۰ سنتی — تا نتِ هم‌سایهٔ تونیک با خطای ریزِ Praat
+    # (مثل ‎−۰٫۱¢‎) به اشتباه اکتاو «قرار» گرفته نشود
+    register = int(np.floor((cents_from_tonic + 25.0) / 1200.0))
     cents_in_octave = cents_from_tonic - register * 1200.0
 
     scale = scale_cents if scale_cents is not None else maqam_cents
@@ -1304,10 +1307,14 @@ def build_phrase_breakdown(times, freqs, notes, pauses, top_k_per_phrase=1, phra
         if best:
             tonic_hz = best["tonic_freq_hz"]
             maqam_cents = MAQAMAT[best["maqam"]]["cents"]
-            # تونیک را به نزدیک‌ترین اکتاو به محدودهٔ صدای واقعی این فراز منتقل کن
-            phrase_freqs = np.array([n["f0_hz"] for n in phrase_notes])
-            center_freq = np.exp(np.mean(np.log(phrase_freqs)))
-            octave_shift = round(np.log2(center_freq / tonic_hz))
+            # تونیک را به اکتاو «وقف» (آخرین نت فراز — جایی که قاری می‌نشیند)
+            # منتقل می‌کنیم؛ اگر نت پایانی نبود، به مرکز صدا برمی‌گردیم
+            if phrase_notes[-1]["f0_hz"] > 0:
+                octave_shift = round(np.log2(phrase_notes[-1]["f0_hz"] / tonic_hz))
+            else:
+                phrase_freqs = np.array([n["f0_hz"] for n in phrase_notes if n["f0_hz"] > 0])
+                center_freq = np.exp(np.mean(np.log(phrase_freqs))) if len(phrase_freqs) else tonic_hz
+                octave_shift = round(np.log2(center_freq / tonic_hz))
             tonic_hz *= (2 ** octave_shift)
 
             # --- پالایش دقیق تونیک (زیر شبکهٔ ۵۰ سنتی) ---
@@ -1404,6 +1411,57 @@ def build_phrase_breakdown(times, freqs, notes, pauses, top_k_per_phrase=1, phra
         })
 
     return phrases
+
+
+def maqam_degree_span(f_low: float, f_high: float, tonic_hz: float, maqam_name):
+    """
+    فاصلهٔ ملودیک دو نت را با «شمارش موسیقایی درجات مقام» می‌گوید — همان‌طور
+    که در آموزش تلاوت گفته می‌شود: از دوگاه تا نوا «چهار درجه» فاصله است
+    (دوگاه ۱، سیکاه ۲، جهارکاه ۳، نوا ۴).
+
+    خروجی: {span_degrees, low_absolute_fa, high_absolute_fa, description_fa}
+    یا None اگر محاسبه ممکن نباشد.
+    """
+    if not maqam_name or maqam_name not in MAQAMAT or tonic_hz <= 0:
+        return None
+    if not f_low or not f_high or f_low <= 0 or f_high <= 0:
+        return None
+
+    info = MAQAMAT[maqam_name]
+    ladder = info["tonic_ladder_cents"]
+    scale = info["scale_ascending"]
+    n_deg = len(scale) - 1  # ۷ درجه در هر اکتاو (درجهٔ ۸ = درجهٔ ۱ اکتاو بعد)
+
+    def _position(f):
+        """شمارهٔ ردیفی درجه (۰=درجهٔ ۱ تونیک) با گسترش اکتاوی."""
+        c = 1200.0 * np.log2(f / tonic_hz)
+        # +۱۰۰ = وسط فاصلهٔ ۱۰۰۰→۱۲۰۰ (بزرگ‌ترین گپ بین درجات) — تا سنت‌های
+        # منفیِ ریز (مثل ‎−۰٫۱¢‎ ناشی از خطای Praat) به اکتاو قبلی سرریز نشوند
+        octave = int(np.floor((c + 100.0) / 1200.0))
+        cents_in = c - octave * 1200.0
+        diffs = [abs(cents_in - dc) for dc in scale[:-1]]
+        d = int(np.argmin(diffs))
+        # نام مطلق با «سنتِ کامل» (شامل اکتاو) محاسبه می‌شود تا رجیستر
+        # (قرار/جواب) درست بیاید — absolute_degree_name خودش اکتاو را می‌فهمد
+        return octave * n_deg + d, absolute_degree_name(c, ladder)[0]
+
+    pos_low, low_fa = _position(f_low)
+    pos_high, high_fa = _position(f_high)
+    span = pos_high - pos_low + 1
+    range_cents = 1200.0 * np.log2(f_high / f_low)
+    quarter_steps = int(round(range_cents / 50.0))
+    return {
+        "span_degrees": int(span),
+        "low_absolute_fa": low_fa,
+        "high_absolute_fa": high_fa,
+        "range_cents": round(range_cents, 1),
+        "range_semitones": round(range_cents / 100.0, 1),
+        "quarter_steps": quarter_steps,
+        "description_fa": (
+            f"از «{low_fa}» تا «{high_fa}» — {span} درجه فاصله "
+            f"({round(range_cents/100.0, 1)} نیم‌پرده)"
+        ),
+    }
 
 
 def compute_ambitus(notes):
@@ -1516,6 +1574,7 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
         hist = build_qtet_histogram(notes)
         # قرار (فرود) تلاوت: از نت‌های انتهایی — نتی که تلاوت روی آن می‌نشیند
         finalis_cents = None
+        tail_freqs = []
         if notes:
             tail = notes[-max(1, len(notes) // 20):]  # ۵٪ انتهایی
             tail_freqs = [n["f0_hz"] for n in tail if n["f0_hz"] > 0]
@@ -1524,15 +1583,20 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
         maqam_candidates = detect_tonic_and_maqam(hist, top_k=top_k, finalis_cents=finalis_cents)
 
         # --- پالایش دقیق تونیک برای همهٔ نامزدها (زیر شبکهٔ ۵۰ سنتی) ---
+        # رجیستر تونیک با «قرار» (نت فرود تلاوت) تنظیم می‌شود، نه مرکز صدا —
+        # چون قرارِ مقام جایی است که قاری روی آن می‌نشیند (اغلب پایین‌تر از
+        # مرکز ملودی است) و نام‌گذاری درجات باید با همان ثبت شود.
+        finalis_hz = tail_freqs[-1] if (finalis_cents is not None and tail_freqs) else None
         for cand in maqam_candidates:
             try:
                 refined_hz, delta = refine_tonic_hz(notes, cand["tonic_bin"], cand["maqam"])
-                # تونیک پالایش‌شده را به نزدیک‌ترین اکتاو به محدودهٔ واقعی صدا ببر
-                voiced = [n["f0_hz"] for n in notes if n["f0_hz"] > 0]
-                if voiced:
-                    center = float(np.exp(np.mean(np.log(voiced))))
+                if finalis_hz:
+                    octave_shift = round(np.log2(finalis_hz / refined_hz))
+                else:
+                    voiced = [n["f0_hz"] for n in notes if n["f0_hz"] > 0]
+                    center = float(np.exp(np.mean(np.log(voiced)))) if voiced else refined_hz
                     octave_shift = round(np.log2(center / refined_hz))
-                    refined_hz *= (2 ** octave_shift)
+                refined_hz *= (2 ** octave_shift)
                 cand["tonic_freq_hz"] = round(refined_hz, 2)
                 cand["tonic_delta_cents"] = delta
             except Exception:
@@ -1551,6 +1615,19 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
         pauses = detect_pauses(times, freqs)
         ambitus = compute_ambitus(notes)
         voiced_ratio = float(np.mean(freqs > 0)) if len(freqs) else 0.0
+
+        # --- فاصلهٔ درجه‌ای پایین‌ترین تا بالاترین نت (چند نت فاصله؟) ---
+        # با شمارش موسیقایی درجات مقام تشخیصی: «از دوگاه تا نوا = ۴ درجه»
+        if ambitus and maqam_candidates:
+            try:
+                span = maqam_degree_span(
+                    ambitus.get("lowest_hz"), ambitus.get("highest_hz"),
+                    maqam_candidates[0]["tonic_freq_hz"],
+                    maqam_candidates[0]["maqam"])
+                if span:
+                    ambitus["degree_span"] = span
+            except Exception:
+                pass
 
         # --- ردیابی تغییر مقام در طول زمان (فقط برای فایل‌های نسبتاً طولانی) ---
         maqam_timeline = None
@@ -1816,11 +1893,22 @@ def _make_melograph_impl(times, freqs, notes, best_maqam, out_path, maqam_timeli
         tonic_hz_adj = best_maqam["tonic_freq_hz"]
         maqam_name = best_maqam["maqam"]
         maqam_cents = MAQAMAT[maqam_name]["cents"]
-        voiced_freqs = freqs[freqs > 0]
-        if len(voiced_freqs) > 0:
-            center_freq = np.exp(np.mean(np.log(voiced_freqs)))
-            octave_shift = round(np.log2(center_freq / tonic_hz_adj))
+        # رجیستر تونیک با قرار (آخرین نت) — همان استدلال تحلیل کلی
+        finalis_note = None
+        if notes:
+            for n in reversed(notes):
+                if n["f0_hz"] > 0:
+                    finalis_note = n["f0_hz"]
+                    break
+        if finalis_note:
+            octave_shift = round(np.log2(finalis_note / tonic_hz_adj))
             tonic_hz_adj *= (2 ** octave_shift)
+        else:
+            voiced_freqs = freqs[freqs > 0]
+            if len(voiced_freqs) > 0:
+                center_freq = np.exp(np.mean(np.log(voiced_freqs)))
+                octave_shift = round(np.log2(center_freq / tonic_hz_adj))
+                tonic_hz_adj *= (2 ** octave_shift)
 
     # --- بم‌ترین و زیرترین نت خوانده‌شده در کل فایل ---
     #
@@ -1884,6 +1972,35 @@ def _make_melograph_impl(times, freqs, notes, best_maqam, out_path, maqam_timeli
         ax.annotate(T(f"{high_note} — {high_hz:.1f} Hz"), xy=(x1, high_hz), xytext=(-6, 3),
                     textcoords="offset points", fontsize=8, color="#a855f7",
                     va="bottom", ha="right", zorder=7, alpha=0.85)
+
+        # --- فاصلهٔ ملودیک دو نت (چند درجه/نت فاصله است؟) ---
+        # فلش دوطرفهٔ عمودی در لبهٔ چپ نمودار بین دو نت + برچسب وسط آن.
+        span_info = None
+        if tonic_hz_adj and maqam_name:
+            span_info = maqam_degree_span(low_hz, high_hz, tonic_hz_adj, maqam_name)
+        arrow_x = x0 + (x1 - x0) * 0.012
+        if span_info:
+            span_text = T(
+                f"فاصله: {span_info['span_degrees']} درجه\n"
+                f"از «{span_info['low_absolute_fa']}» تا «{span_info['high_absolute_fa']}»\n"
+                f"({span_info['range_semitones']} نیم‌پرده)"
+            )
+        else:
+            span_text = T(f"فاصله: {ambitus.get('range_semitones', '?')} نیم‌پرده")
+        mid_hz_log = 0.5 * (np.log(low_hz) + np.log(high_hz))
+        mid_hz = float(np.exp(mid_hz_log))
+        # لبهٔ عمودی فلش
+        ax.annotate("", xy=(arrow_x, low_hz), xytext=(arrow_x, high_hz),
+                    arrowprops=dict(arrowstyle="<|-|>", color="#e5e7eb", lw=1.8,
+                                    shrinkA=8, shrinkB=8, mutation_scale=14),
+                    zorder=6)
+        # برچسب وسط فلش
+        ax.annotate(span_text, xy=(arrow_x, mid_hz), xytext=(10, 0),
+                    textcoords="offset points", fontsize=10.5, fontweight="bold",
+                    color="white", va="center", ha="left", zorder=9,
+                    bbox=dict(boxstyle="round,pad=0.4", fc="#1f2937",
+                              ec="#9ca3af", lw=1.2, alpha=0.93))
+        ax.set_xlim(x0, x1)  # حفظ محدودهٔ زمانی بعد از افزودن فلش
 
     if best_maqam:
         tonic_hz = tonic_hz_adj
