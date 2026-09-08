@@ -39,7 +39,7 @@ warnings.filterwarnings("ignore")
 from pitch_engine import (
     extract_pitch_contour, clean_pitch_contour, smooth_pitch_contour, segment_notes,
     melodic_similarity, rhythm_similarity, loudness_similarity,
-    freq_to_note_info,
+    freq_to_note_info, extract_pitch_contour_max_accuracy, compute_loudness_streaming,
 )
 
 try:
@@ -53,22 +53,37 @@ except ImportError:
 # استخراج پروفایل کامل یک فایل صوتی (برای مقایسه)
 # ============================================================================
 
-def analyze_single_file(path, label="فایل"):
+def analyze_single_file(path, label="فایل", progress_callback=None):
+    """
+    یک فایل (مرجع یا اجرای کاربر) را با بالاترین دقت ممکن تحلیل می‌کند.
+
+    از extract_pitch_contour_max_accuracy استفاده می‌شود که برای فایل‌های
+    کوتاه (فرازهای معمولاً کوتاه مقایسه) بدون هیچ سربار اضافه مسیر مستقیم
+    را طی می‌کند، اما برای فایل‌های مرجع/کاربر طولانی‌تر (که کاربر ممکن است
+    یک تلاوت کامل را به‌عنوان مرجع بدهد)، به‌صورت خودکار پردازش پنجره‌ای
+    با همان تنظیمات حداکثر دقت (very_accurate=True) به کار می‌رود — بدون
+    افت کیفیت و بدون خطر اتمام حافظه.
+    """
     print(f"در حال تحلیل {label}: {path} ...")
-    times, freqs, snd = extract_pitch_contour(path)
+
+    def _pp(done_sec, total_sec):
+        if progress_callback:
+            progress_callback(label, done_sec, total_sec)
+        if total_sec > 60:
+            print(f"\r   [{label}] پیشرفت: {done_sec:6.1f}s / {total_sec:6.1f}s "
+                  f"({100*done_sec/max(total_sec,1e-9):5.1f}%)", end="", flush=True)
+
+    times, freqs, sr, duration = extract_pitch_contour_max_accuracy(
+        path, progress_callback=_pp,
+    )
+    if duration > 60:
+        print()
+
     freqs = clean_pitch_contour(freqs)
     freqs = smooth_pitch_contour(freqs, median_window=5)
     notes = segment_notes(times, freqs)
 
-    intensity = snd.to_intensity()
-    values = intensity.values[0]
-    values = values[~np.isnan(values)]
-    loudness = {
-        "mean_db": round(float(np.mean(values)), 1) if len(values) else None,
-        "max_db": round(float(np.max(values)), 1) if len(values) else None,
-    }
-
-    duration = float(times[-1]) if len(times) else 0
+    loudness = compute_loudness_streaming(path)
 
     return {
         "label": label,

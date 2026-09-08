@@ -20,7 +20,9 @@ piano) که در نرم‌افزارهای آموزش موسیقی رایج اس
 """
 
 import argparse
+import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -41,7 +43,8 @@ import matplotlib.animation as animation
 
 from pitch_engine import (
     freq_to_note_info, is_black_key, PIANO_MIDI_MIN, PIANO_MIDI_MAX,
-    extract_pitch_chunk,
+    extract_pitch_chunk, extract_pitch_contour_max_accuracy,
+    clean_pitch_contour, smooth_pitch_contour,
 )
 
 
@@ -247,6 +250,156 @@ def run_from_file(file_path, chunk_ms=100):
 
 
 # ============================================================================
+# حالت ۳: صادرات ویدیو (Video Export) — پیانوی هایلایت‌شده هم‌گام با فایل صوتی
+# ============================================================================
+#
+# برخلاف run_from_file (که یک پنجرهٔ زندهٔ matplotlib همراه پخش صدا از
+# بلندگو نشان می‌دهد و برای محیط‌های بدون سخت‌افزار صدا/نمایشگر قابل اجرا
+# نیست)، این تابع یک فایل mp4 مستقل و قابل‌پخش در هر مرورگر/پخش‌کنندهٔ
+# رسانه تولید می‌کند: کلاویهٔ پیانو برای هر فریم بازرسم می‌شود (بدون نیاز
+# به پخش هم‌زمان صدا در حین رندر)، سپس با ffmpeg به فایل صوتی اصلی مالتی‌
+# پلکس (mux) می‌شود تا صدا و تصویر کاملاً هم‌گام باشند.
+#
+# تحلیل پرده صدا از extract_pitch_contour_max_accuracy استفاده می‌کند —
+# یعنی همان تنظیمات حداکثر دقت (very_accurate=True) که برای گزارش تحلیل
+# استفاده می‌شود، صرف‌نظر از طول فایل (طبق سیاست «دقت، همیشه در بالاترین
+# سطح» که کاربر درخواست کرده است).
+
+VIDEO_EXPORT_FPS = 12  # کافی برای همگام‌سازی بصری قابل‌قبول با گفتار/آواز انسانی
+
+
+def _render_piano_frame_to_note_sequence(times, freqs, fps, total_dur):
+    """
+    منحنی F0 پیوسته را به یک دنبالهٔ گسسته از note_info (یکی برای هر فریم
+    ویدیو) نگاشت می‌کند — برای هر فریم، میانهٔ F0 در بازهٔ زمانی آن فریم را
+    محاسبه می‌کند (پایدارتر از نزدیک‌ترین‌نمونه‌بودن خام).
+    """
+    frame_dt = 1.0 / fps
+    num_frames = max(1, int(np.ceil(total_dur / frame_dt)))
+    voiced_mask = freqs > 0
+
+    note_infos = []
+    for k in range(num_frames):
+        t0 = k * frame_dt
+        t1 = t0 + frame_dt
+        mask = voiced_mask & (times >= t0) & (times < t1)
+        if np.any(mask):
+            f0 = float(np.median(freqs[mask]))
+            note_infos.append(freq_to_note_info(f0))
+        else:
+            note_infos.append(None)
+    return note_infos, frame_dt
+
+
+def export_video_from_file(file_path, out_path="piano_video.mp4", fps=VIDEO_EXPORT_FPS,
+                             progress_callback=None, dpi=110):
+    """
+    یک ویدیوی mp4 تولید می‌کند که کلاویهٔ پیانو را هم‌زمان با پخش فایل صوتی
+    اصلی، با هایلایت نت جاری، نشان می‌دهد. مناسب دانلود/اشتراک‌گذاری یا
+    پخش در هر مرورگر/پخش‌کنندهٔ رسانه (بدون نیاز به سخت‌افزار صدا/نمایشگر
+    در حین تولید).
+
+    مراحل:
+      ۱) استخراج منحنی F0 با دقت حداکثری (پردازش پنجره‌ای برای فایل‌های
+         طولانی — بدون افت کیفیت، طبق سیاست دقت‌محور پروژه).
+      ۲) رندر فریم‌به‌فریم کلاویهٔ پیانو (بدون صدا) با نویسندهٔ FFMpegWriter
+         مربوط به matplotlib، به یک فایل ویدیوی موقت.
+      ۳) مالتی‌پلکس (mux) ویدیوی تولیدشده با فایل صوتی اصلی از طریق ffmpeg
+         خط‌فرمان، تا خروجی نهایی صدا و تصویر را با هم داشته باشد.
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"فایل پیدا نشد: {file_path}")
+
+    def _progress(stage, frac):
+        if progress_callback:
+            progress_callback(stage, frac)
+
+    # --- مرحله ۱: تبدیل به wav موقت (در صورت نیاز) برای خواندن دقیق با soundfile/Praat ---
+    import librosa
+    import soundfile as sf
+
+    tmp_wav = None
+    wav_path = file_path
+    if not file_path.lower().endswith(".wav"):
+        y, sr = librosa.load(file_path, sr=44100, mono=True)
+        tmp_wav = file_path + "__tmp_video_src.wav"
+        sf.write(tmp_wav, y, sr)
+        wav_path = tmp_wav
+
+    try:
+        print("در حال استخراج دقیق پرده صدا (حداکثر دقت، پردازش پنجره‌ای در صورت فایل طولانی)...")
+
+        def _pitch_progress(done_sec, total_sec):
+            _progress("pitch", done_sec / max(total_sec, 1e-9) * 0.5)  # نیمه اول پیشرفت کلی
+
+        times, freqs, sr, total_dur = extract_pitch_contour_max_accuracy(
+            wav_path, progress_callback=_pitch_progress,
+        )
+        freqs = clean_pitch_contour(freqs)
+        freqs = smooth_pitch_contour(freqs, median_window=5)
+
+        print(f"در حال رندر فریم‌های ویدیو ({fps} فریم بر ثانیه، مدت {total_dur:.1f}s)...")
+        note_infos, frame_dt = _render_piano_frame_to_note_sequence(times, freqs, fps, total_dur)
+        num_frames = len(note_infos)
+
+        # صادرات ویدیو نیازی به بک‌اند تعاملی (TkAgg) ندارد و باید در محیط‌های
+        # بدون نمایشگر (headless / سرور) هم کار کند — Agg برای رندر آفلاین
+        # به فایل کاملاً کافی است و به‌صراحت اینجا انتخاب می‌شود.
+        matplotlib.use("Agg", force=True)
+
+        fig, ax = plt.subplots(figsize=(14, 5))
+        fig.suptitle(T("پیانوی هم‌گام با تلاوت"), fontsize=14)
+        keyboard = PianoKeyboard(ax)
+        time_text = ax.text(
+            0.01, 0.02, "", transform=ax.transAxes, fontsize=10, color="#666666",
+        )
+        plt.tight_layout()
+
+        tmp_video_only = out_path + "__video_only.mp4"
+
+        writer = animation.FFMpegWriter(fps=fps, codec="libx264",
+                                          extra_args=["-pix_fmt", "yuv420p"])
+        with writer.saving(fig, tmp_video_only, dpi=dpi):
+            for k, note_info in enumerate(note_infos):
+                keyboard.highlight_note(note_info)
+                time_text.set_text(f"{k * frame_dt:5.1f}s / {total_dur:5.1f}s")
+                writer.grab_frame()
+                if k % 20 == 0 or k == num_frames - 1:
+                    _progress("render", 0.5 + 0.4 * (k + 1) / max(num_frames, 1))
+
+        plt.close(fig)
+
+        # --- مرحله ۳: مالتی‌پلکس صدا+تصویر با ffmpeg ---
+        print("در حال ترکیب صدا و تصویر (ffmpeg mux)...")
+        _progress("mux", 0.92)
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", tmp_video_only,
+            "-i", file_path,
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-shortest",
+            out_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"خطای ffmpeg در مالتی‌پلکس صدا/تصویر:\n{result.stderr[-2000:]}")
+
+        if os.path.exists(tmp_video_only):
+            os.remove(tmp_video_only)
+
+        _progress("done", 1.0)
+        print(f"ویدیوی نهایی ذخیره شد: {out_path}")
+        return out_path
+
+    finally:
+        if tmp_wav and os.path.exists(tmp_wav):
+            os.remove(tmp_wav)
+
+
+# ============================================================================
 # حالت ۲: ورودی زنده میکروفون
 # ============================================================================
 
@@ -300,10 +453,33 @@ def main():
     group.add_argument("--file", help="مسیر فایل صوتی برای پخش + نمایش هم‌زمان پیانو")
     group.add_argument("--mic", action="store_true", help="استفاده از میکروفون زنده")
     parser.add_argument("--chunk-ms", type=int, default=120, help="اندازه هر قطعه تحلیل (میلی‌ثانیه)")
+    parser.add_argument("--export-video", action="store_true",
+                         help="به‌جای نمایش پنجرهٔ زنده، یک فایل mp4 (پیانو + صدای اصلی هم‌گام) تولید کن")
+    parser.add_argument("--output", "-o", default="piano_video.mp4",
+                         help="مسیر فایل mp4 خروجی (فقط با --export-video)")
+    parser.add_argument("--fps", type=int, default=VIDEO_EXPORT_FPS,
+                         help="فریم بر ثانیه ویدیوی خروجی (فقط با --export-video)")
 
     args = parser.parse_args()
 
-    if args.file:
+    if args.export_video:
+        if not args.file:
+            print("خطا: --export-video فقط با --file قابل استفاده است.")
+            sys.exit(1)
+
+        def _cli_progress(stage, frac):
+            bar_len = 30
+            filled = int(bar_len * frac)
+            bar = "#" * filled + "-" * (bar_len - filled)
+            stage_fa = {"pitch": "استخراج پرده صدا", "render": "رندر فریم‌ها",
+                        "mux": "ترکیب صدا/تصویر", "done": "پایان"}.get(stage, stage)
+            print(f"\r[{bar}] {frac*100:5.1f}%  ({stage_fa})", end="", flush=True)
+            if stage == "done":
+                print()
+
+        export_video_from_file(args.file, out_path=args.output, fps=args.fps,
+                                 progress_callback=_cli_progress)
+    elif args.file:
         run_from_file(args.file, chunk_ms=args.chunk_ms)
     else:
         run_from_mic(chunk_ms=args.chunk_ms)

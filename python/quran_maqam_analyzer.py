@@ -60,10 +60,16 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from pitch_engine import smooth_pitch_contour
+    from pitch_engine import (
+        smooth_pitch_contour,
+        extract_pitch_contour_max_accuracy,
+        compute_loudness_streaming,
+    )
 except ImportError:
     def smooth_pitch_contour(freqs, median_window=5):
         return freqs
+    extract_pitch_contour_max_accuracy = None
+    compute_loudness_streaming = None
 
 
 # ============================================================================
@@ -434,6 +440,93 @@ def detect_pauses(times, freqs, min_pause=0.25):
     return pauses
 
 
+# ============================================================================
+# مرحله ۴ (فایل‌های طولانی): ردیابی تغییر مقام در طول زمان (Maqam Timeline)
+# ============================================================================
+#
+# رفتار قبلی این ابزار فقط «یک مقام غالب برای کل فایل» گزارش می‌کرد. اما در
+# تلاوت‌های طولانی (۱۰ تا ۳۰ دقیقه یا بیشتر) قاری معمولاً در میانهٔ تلاوت
+# بین چند مقام حرکت می‌کند (مدولاسیون/انتقال مقام) — بنابراین به درخواست
+# صریح کاربر، فایل به پنجره‌های ۳۰ تا ۶۰ ثانیه‌ای تقسیم می‌شود، مقام هر
+# پنجره جداگانه تشخیص داده می‌شود، و نقاط گذار (transition) بین مقام‌های
+# متوالی گزارش می‌شود.
+
+MAQAM_TIMELINE_MIN_DURATION_SEC = 480.0  # ۸ دقیقه: کمترین طول فایل که تحلیل تایم‌لاین برایش معنادار است
+MAQAM_TIMELINE_WINDOW_SEC = 45.0          # اندازه هر پنجرهٔ تحلیل مقام (بین ۳۰ تا ۶۰ ثانیهٔ درخواستی)
+MAQAM_TIMELINE_MIN_NOTES_PER_WINDOW = 4   # کمترین تعداد نت لازم برای تشخیص معتبر مقام در یک پنجره
+
+
+def build_maqam_timeline(notes, total_duration, window_sec=MAQAM_TIMELINE_WINDOW_SEC):
+    """
+    فایل را به پنجره‌های زمانی متوالی (پیش‌فرض ۴۵ ثانیه) تقسیم می‌کند، برای
+    هر پنجره نمایهٔ ربع‌پرده‌ای و بهترین مقام تخمینی را حساب می‌کند، سپس
+    فهرست نقاط «گذار مقام» (جایی که مقام غالب پنجرهٔ بعدی با پنجرهٔ قبلی
+    فرق می‌کند) را برمی‌گرداند.
+
+    خروجی:
+      {
+        "windows": [ {start, end, top_maqam, confidence_pct, num_notes}, ... ],
+        "transitions": [ {time, from_maqam, to_maqam}, ... ],
+        "dominant_maqam_overall": نام رایج‌ترین مقام در کل تایم‌لاین
+      }
+    """
+    if total_duration <= 0:
+        return {"windows": [], "transitions": [], "dominant_maqam_overall": None}
+
+    windows = []
+    pos = 0.0
+    while pos < total_duration:
+        end = min(pos + window_sec, total_duration)
+        window_notes = [n for n in notes if n["start"] >= pos and n["start"] < end]
+
+        entry = {
+            "start": round(pos, 1),
+            "end": round(end, 1),
+            "num_notes": len(window_notes),
+            "top_maqam": None,
+            "confidence_pct": None,
+            "tonic_freq_hz": None,
+        }
+
+        if len(window_notes) >= MAQAM_TIMELINE_MIN_NOTES_PER_WINDOW:
+            hist = build_qtet_histogram(window_notes)
+            candidates = detect_tonic_and_maqam(hist, top_k=1)
+            if candidates:
+                best = candidates[0]
+                entry["top_maqam"] = best["maqam"]
+                entry["confidence_pct"] = best["confidence_pct"]
+                entry["tonic_freq_hz"] = best["tonic_freq_hz"]
+
+        windows.append(entry)
+        pos += window_sec
+
+    # --- استخراج نقاط گذار: هرجا مقام غالب پنجرهٔ فعلی با قبلی فرق کند ---
+    transitions = []
+    prev_maqam = None
+    for w in windows:
+        if w["top_maqam"] is None:
+            continue
+        if prev_maqam is not None and w["top_maqam"] != prev_maqam:
+            transitions.append({
+                "time": w["start"],
+                "from_maqam": prev_maqam,
+                "to_maqam": w["top_maqam"],
+            })
+        prev_maqam = w["top_maqam"]
+
+    # --- مقام غالب کل تایم‌لاین (رایج‌ترین مقام از نظر تعداد پنجره‌ها) ---
+    from collections import Counter
+    maqam_counts = Counter(w["top_maqam"] for w in windows if w["top_maqam"] is not None)
+    dominant = maqam_counts.most_common(1)[0][0] if maqam_counts else None
+
+    return {
+        "window_sec": window_sec,
+        "windows": windows,
+        "transitions": transitions,
+        "dominant_maqam_overall": dominant,
+    }
+
+
 def compute_ambitus(notes):
     """دامنه ملودیک (فاصله بین بم‌ترین و زیرترین نت) را بر حسب سنت و نام نت گزارش می‌دهد."""
     if not notes:
@@ -457,11 +550,33 @@ def compute_ambitus(notes):
 # تابع اصلی تحلیل
 # ============================================================================
 
-def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=None):
+def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=None,
+                         progress_callback=None):
+    """
+    تحلیل کامل یک فایل تلاوت.
+
+    سیاست دقت (به‌درخواست صریح کاربر): این تابع همیشه از بالاترین سطح دقت
+    ممکن در استخراج پرده صدا استفاده می‌کند (Praat very_accurate=True،
+    two-pass refine) — صرف‌نظر از طول فایل. برای فایل‌های طولانی (که
+    بارگذاری یک‌جای کل فایل می‌تواند باعث اتمام حافظه شود)، استخراج پرده
+    صدا به‌صورت پنجره‌ای انجام می‌شود (extract_pitch_contour_max_accuracy)
+    که دقیقاً همان تنظیمات حداکثر دقت را حفظ می‌کند، فقط با مصرف حافظهٔ
+    ثابت. کاربر آگاهانه پذیرفته که این ممکن است ۲ تا ۳ برابر کندتر از یک
+    پردازش «سریع و کم‌دقت» باشد؛ progress_callback برای اطلاع از پیشرفت
+    فایل‌های طولانی فراهم شده است.
+
+    اگر progress_callback داده شود، با (stage: str, frac: float 0..1) صدا
+    زده می‌شود تا واسط کاربری بتواند نوار پیشرفت نمایش دهد.
+    """
     if not os.path.exists(path):
         raise FileNotFoundError(f"فایل پیدا نشد: {path}")
 
+    def _progress(stage, frac):
+        if progress_callback:
+            progress_callback(stage, frac)
+
     print(f"در حال بارگذاری فایل: {path} ...")
+    _progress("loading", 0.0)
 
     wav_path = path
     tmp_wav = None
@@ -479,62 +594,106 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
         sf.write(tmp_wav, y, sr)
         wav_path = tmp_wav
 
-    print("در حال استخراج دقیق پرده صدا (pitch) با Praat...")
-    times, freqs, snd = extract_pitch_praat(wav_path)
-    freqs = clean_pitch_contour(times, freqs)
-    freqs = smooth_pitch_contour(freqs, median_window=5)
+    try:
+        print("در حال استخراج دقیق پرده صدا (pitch) با Praat — دقت حداکثری، صرف‌نظر از طول فایل...")
 
-    print("در حال تفکیک نت‌ها...")
-    notes = segment_notes(times, freqs)
+        use_windowed = extract_pitch_contour_max_accuracy is not None
 
-    print("در حال تحلیل ویبراتو...")
-    for note in notes:
-        vib = detect_vibrato(times, freqs, note)
-        note["vibrato"] = vib
+        if use_windowed:
+            def _pitch_progress(done_sec, total_sec):
+                frac = done_sec / max(total_sec, 1e-9)
+                _progress("pitch_extraction", frac * 0.55)
+                if total_sec > 60:
+                    print(f"\r   پیشرفت استخراج پرده صدا: {done_sec:6.1f}s / {total_sec:6.1f}s "
+                          f"({frac*100:5.1f}%)", end="", flush=True)
 
-    print("در حال ساخت نمایه ربع‌پرده‌ای و تشخیص مقام...")
-    hist = build_qtet_histogram(notes)
-    maqam_candidates = detect_tonic_and_maqam(hist, top_k=top_k)
+            times, freqs, sr_used, duration_total = extract_pitch_contour_max_accuracy(
+                wav_path, progress_callback=_pitch_progress,
+            )
+            if duration_total > 60:
+                print()  # خط جدید بعد از نوار پیشرفت درون‌خطی
+            # snd کامل فقط برای فایل‌های کوتاه لازم است (برای محاسبه بلندی صدا)؛
+            # برای فایل‌های طولانی از مسیر استریم/پنجره‌ای compute_loudness_streaming استفاده می‌شود.
+            snd = None
+        else:
+            times, freqs, snd = extract_pitch_praat(wav_path)
+            duration_total = float(times[-1]) if len(times) else 0
 
-    loudness = compute_loudness(snd)
-    pauses = detect_pauses(times, freqs)
-    ambitus = compute_ambitus(notes)
+        freqs = clean_pitch_contour(times, freqs)
+        freqs = smooth_pitch_contour(freqs, median_window=5)
+        _progress("cleaning", 0.58)
 
-    duration_total = float(times[-1]) if len(times) else 0
-    voiced_ratio = float(np.mean(freqs > 0))
+        print("در حال تفکیک نت‌ها...")
+        notes = segment_notes(times, freqs)
+        _progress("segmentation", 0.65)
 
-    report = {
-        "meta": {
-            "file": os.path.basename(path),
-            "analyzed_at": datetime.now().isoformat(timespec="seconds"),
-            "engine": "Praat (parselmouth) pitch-ac, very_accurate=True, two-pass refine",
-        },
-        "basic": {
-            "duration_sec": round(duration_total, 2),
-            "voiced_ratio_pct": round(voiced_ratio * 100, 1),
-            "num_notes_detected": len(notes),
-            "num_pauses_detected": len(pauses),
-        },
-        "loudness": loudness,
-        "ambitus": ambitus,
-        "maqam_candidates": maqam_candidates,
-        "notes": notes,
-        "pauses_top5": sorted(pauses, key=lambda p: -p["duration"])[:5],
-    }
+        print("در حال تحلیل ویبراتو...")
+        for note in notes:
+            vib = detect_vibrato(times, freqs, note)
+            note["vibrato"] = vib
+        _progress("vibrato", 0.72)
 
-    if make_plot:
-        plot_dir = plot_dir or os.path.dirname(os.path.abspath(path)) or "."
-        os.makedirs(plot_dir, exist_ok=True)
-        base_name = os.path.splitext(os.path.basename(path))[0]
-        plot_path = os.path.join(plot_dir, f"{base_name}_maqam_analysis.png")
-        best_maqam = maqam_candidates[0] if maqam_candidates else None
-        _make_melograph(times, freqs, notes, best_maqam, plot_path)
-        report["meta"]["visualization_file"] = plot_path
+        print("در حال ساخت نمایه ربع‌پرده‌ای و تشخیص مقام...")
+        hist = build_qtet_histogram(notes)
+        maqam_candidates = detect_tonic_and_maqam(hist, top_k=top_k)
+        _progress("maqam_detection", 0.78)
 
-    if tmp_wav and os.path.exists(tmp_wav):
-        os.remove(tmp_wav)
+        print("در حال محاسبه بلندی صدا...")
+        if snd is not None:
+            loudness = compute_loudness(snd)
+        elif compute_loudness_streaming is not None:
+            loudness = compute_loudness_streaming(wav_path)
+        else:
+            loudness = {"mean_db": None, "max_db": None}
+        _progress("loudness", 0.84)
 
-    return report
+        pauses = detect_pauses(times, freqs)
+        ambitus = compute_ambitus(notes)
+        voiced_ratio = float(np.mean(freqs > 0)) if len(freqs) else 0.0
+
+        # --- ردیابی تغییر مقام در طول زمان (فقط برای فایل‌های نسبتاً طولانی) ---
+        maqam_timeline = None
+        if duration_total >= MAQAM_TIMELINE_MIN_DURATION_SEC:
+            print(f"فایل طولانی است ({duration_total/60:.1f} دقیقه) — در حال ساخت تایم‌لاین تغییر مقام...")
+            maqam_timeline = build_maqam_timeline(notes, duration_total)
+        _progress("timeline", 0.88)
+
+        report = {
+            "meta": {
+                "file": os.path.basename(path),
+                "analyzed_at": datetime.now().isoformat(timespec="seconds"),
+                "engine": "Praat (parselmouth) pitch-ac, very_accurate=True, two-pass refine"
+                          + (", پردازش پنجره‌ای برای فایل طولانی" if use_windowed and duration_total > 90 else ""),
+            },
+            "basic": {
+                "duration_sec": round(duration_total, 2),
+                "voiced_ratio_pct": round(voiced_ratio * 100, 1),
+                "num_notes_detected": len(notes),
+                "num_pauses_detected": len(pauses),
+            },
+            "loudness": loudness,
+            "ambitus": ambitus,
+            "maqam_candidates": maqam_candidates,
+            "maqam_timeline": maqam_timeline,
+            "notes": notes,
+            "pauses_top5": sorted(pauses, key=lambda p: -p["duration"])[:5],
+        }
+
+        if make_plot:
+            plot_dir_eff = plot_dir or os.path.dirname(os.path.abspath(path)) or "."
+            os.makedirs(plot_dir_eff, exist_ok=True)
+            base_name = os.path.splitext(os.path.basename(path))[0]
+            plot_path = os.path.join(plot_dir_eff, f"{base_name}_maqam_analysis.png")
+            best_maqam = maqam_candidates[0] if maqam_candidates else None
+            _make_melograph(times, freqs, notes, best_maqam, plot_path, maqam_timeline=maqam_timeline)
+            report["meta"]["visualization_file"] = plot_path
+
+        _progress("done", 1.0)
+        return report
+
+    finally:
+        if tmp_wav and os.path.exists(tmp_wav):
+            os.remove(tmp_wav)
 
 
 # ============================================================================
@@ -565,7 +724,7 @@ def _fa(text):
         return text
 
 
-def _make_melograph(times, freqs, notes, best_maqam, out_path):
+def _make_melograph(times, freqs, notes, best_maqam, out_path, maqam_timeline=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -574,7 +733,15 @@ def _make_melograph(times, freqs, notes, best_maqam, out_path):
     matplotlib.rcParams["axes.unicode_minus"] = False
     T = (lambda s: _fa(s)) if has_font else (lambda s: s)
 
-    fig, ax = plt.subplots(figsize=(14, 6))
+    has_timeline = bool(maqam_timeline and maqam_timeline.get("windows"))
+
+    if has_timeline:
+        fig, (ax, ax_tl) = plt.subplots(
+            2, 1, figsize=(14, 8.5), gridspec_kw={"height_ratios": [3, 1]}, sharex=True,
+        )
+    else:
+        fig, ax = plt.subplots(figsize=(14, 6))
+        ax_tl = None
 
     voiced_mask = freqs > 0
     ax.plot(times[voiced_mask], freqs[voiced_mask], '.', color="#2563eb",
@@ -599,16 +766,48 @@ def _make_melograph(times, freqs, notes, best_maqam, out_path):
         for c in maqam_cents:
             grid_freq = tonic_hz * (2 ** (c / 1200.0))
             ax.axhline(grid_freq, color="#22c55e", linestyle="--", alpha=0.35, linewidth=0.8)
-        ax.set_title(T(f"ملوگراف تلاوت — مقام تخمینی: {maqam_name} (تونیک ≈ {tonic_hz:.1f} Hz)"),
-                     fontsize=13)
+
+        title = f"ملوگراف تلاوت — مقام غالب: {maqam_name} (تونیک ≈ {tonic_hz:.1f} Hz)"
+        if has_timeline:
+            title += f"  |  {len(maqam_timeline['transitions'])} گذار مقام شناسایی شد"
+        ax.set_title(T(title), fontsize=13)
     else:
         ax.set_title(T("ملوگراف تلاوت (منحنی دقیق پرده صدا)"), fontsize=13)
 
-    ax.set_xlabel(T("زمان (ثانیه)"))
+    ax.set_xlabel(T("زمان (ثانیه)") if not has_timeline else "")
     ax.set_ylabel(T("فرکانس (هرتز)"))
     ax.set_yscale("log")
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.15)
+
+    # --- زیرنمودار تایم‌لاین تغییر مقام (برای فایل‌های طولانی) ---
+    if has_timeline:
+        windows = maqam_timeline["windows"]
+        maqam_names = sorted({w["top_maqam"] for w in windows if w["top_maqam"]})
+        color_cycle = plt.cm.tab10(np.linspace(0, 1, max(len(maqam_names), 1)))
+        maqam_color = {name: color_cycle[i] for i, name in enumerate(maqam_names)}
+
+        for w in windows:
+            if w["top_maqam"] is None:
+                continue
+            conf = (w["confidence_pct"] or 0) / 100.0
+            ax_tl.barh(0, w["end"] - w["start"], left=w["start"], height=0.8,
+                       color=maqam_color[w["top_maqam"]], alpha=0.35 + 0.55 * conf,
+                       edgecolor="white", linewidth=0.5)
+
+        for tr in maqam_timeline["transitions"]:
+            ax_tl.axvline(tr["time"], color="#111827", linestyle=":", linewidth=1.2)
+
+        # راهنمای رنگ‌ها
+        handles = [plt.Rectangle((0, 0), 1, 1, color=maqam_color[name]) for name in maqam_names]
+        ax_tl.legend(handles, [T(n) for n in maqam_names], loc="upper right",
+                     fontsize=8, ncol=min(len(maqam_names), 4))
+
+        ax_tl.set_yticks([])
+        ax_tl.set_xlabel(T("زمان (ثانیه)"))
+        ax_tl.set_title(T(f"تایم‌لاین تغییر مقام (پنجره‌های {maqam_timeline['window_sec']:.0f} ثانیه‌ای)"),
+                        fontsize=11)
+        ax_tl.set_xlim(ax.get_xlim())
 
     plt.tight_layout()
     plt.savefig(out_path, dpi=140)
@@ -650,6 +849,18 @@ def print_report(report):
         print(f"      تونیک تخمینی: {cand['tonic_freq_hz']} Hz")
         print(f"      حال‌وهوا: {cand['mood']}")
 
+    tl = report.get("maqam_timeline")
+    if tl:
+        print(f"\n🕐 تایم‌لاین تغییر مقام (فایل طولانی — پنجره‌های {tl['window_sec']:.0f} ثانیه‌ای):")
+        print(f"   مقام غالب کل فایل: {tl['dominant_maqam_overall']}")
+        if tl["transitions"]:
+            print(f"   تعداد گذارهای مقام شناسایی‌شده: {len(tl['transitions'])}")
+            for tr in tl["transitions"]:
+                print(f"      ⇄ در ثانیه {tr['time']:.0f}s: {tr['from_maqam']}  →  {tr['to_maqam']}")
+        else:
+            print("   در طول فایل، تغییر مقام قابل‌توجهی شناسایی نشد (مقام ثابت باقی مانده).")
+        print(f"   جزئیات کامل هر پنجره در فیلد \"maqam_timeline.windows\" گزارش JSON موجود است.")
+
     print(f"\n🎵 نمونه‌ای از نت‌های دقیق شناسایی‌شده (۱۰ نت اول):")
     for note in report["notes"][:10]:
         note_name, dev = freq_to_note_and_deviation(note["f0_hz"])
@@ -689,8 +900,13 @@ def main():
     parser.add_argument("--top-k", type=int, default=3, help="تعداد مقام‌های پیشنهادی")
     parser.add_argument("--no-plot", action="store_true", help="عدم رسم ملوگراف")
     parser.add_argument("--plot-dir", default=None, help="پوشه ذخیره نمودار")
+    parser.add_argument("--quiet-progress", action="store_true",
+                         help="عدم نمایش نوار پیشرفت درون‌خطی (برای فایل‌های طولانی)")
 
     args = parser.parse_args()
+
+    def _cli_progress(stage, frac):
+        pass  # پیام‌های تفصیلی پیشرفت همین حالا با print مستقیم در حین پردازش چاپ می‌شوند
 
     report = analyze_recitation(
         args.audio_path,
@@ -698,6 +914,7 @@ def main():
         top_k=args.top_k,
         make_plot=not args.no_plot,
         plot_dir=args.plot_dir,
+        progress_callback=None if args.quiet_progress else _cli_progress,
     )
 
     print_report(report)

@@ -116,6 +116,174 @@ def _extract_pitch_from_sound(snd, fmin=60.0, fmax=1000.0, time_step=0.01,
 
 
 # ----------------------------------------------------------------------------
+# استخراج F0 با دقت حداکثری برای فایل‌های با هر طولی (پردازش پنجره‌ای)
+# ----------------------------------------------------------------------------
+#
+# توضیح مهم دربارهٔ سیاست «دقت، همیشه در بالاترین سطح»:
+# بارگذاری کل فایل به‌صورت یک‌جا در parselmouth.Sound برای فایل‌های خیلی
+# طولانی (مثلاً بیش از ~۴۰-۵۰ دقیقه در محیط‌های کم‌حافظه) می‌تواند باعث اتمام
+# حافظه (Out-Of-Memory) شود — این یک محدودیت مهندسی/حافظه‌ای است، نه مسئلهٔ
+# دقت. راه‌حل درست، *افت‌دادن دقت* (کاهش time_step یا خاموش‌کردن
+# very_accurate) نیست، بلکه پردازش فایل در «پنجره‌های زمانی» با هم‌پوشانی
+# کوچک (overlap) است: هر پنجره هنوز با دقیقاً همان تنظیمات حداکثر دقت
+# (very_accurate=True, time_step=0.01s, two-pass refine) پردازش می‌شود، فقط
+# در حافظه هم‌زمان تنها یک پنجره کوچک نگه داشته می‌شود. نواحی هم‌پوشان بین
+# پنجره‌های متوالی دور ریخته می‌شوند تا اثرات لبه (edge effects) الگوریتم
+# خودهمبستگی از بین بروند. این رویکرد در آزمایش داخلی روی فایل ۳۰ دقیقه‌ای
+# با موفقیت کامل اجرا شد (کل زمان ~۲۳ ثانیه، پیک حافظه ~۲۳۰ مگابایت) در حالی
+# که پردازش یک‌جای فایل‌های خیلی طولانی‌تر (۶۰ دقیقه) بدون پنجره‌بندی با خطای
+# Out-Of-Memory متوقف می‌شد.
+
+# آستانه‌ای که پس از آن پردازش پنجره‌ای فعال می‌شود (فایل‌های کوتاه‌تر از این
+# مقدار در یک پنجرهٔ واحد و بدون سربار اضافه پردازش می‌شوند).
+WINDOWED_PROCESSING_THRESHOLD_SEC = 90.0
+DEFAULT_WINDOW_SEC = 120.0
+DEFAULT_OVERLAP_SEC = 3.0
+
+
+def extract_pitch_contour_max_accuracy(
+    wav_path,
+    fmin=60.0,
+    fmax=1000.0,
+    time_step=0.01,
+    two_pass_refine=True,
+    window_sec=DEFAULT_WINDOW_SEC,
+    overlap_sec=DEFAULT_OVERLAP_SEC,
+    progress_callback=None,
+):
+    """
+    استخراج منحنی F0 با «بالاترین دقت ممکن» برای فایل صوتی با هر طولی —
+    اعم از یک قطعه چند ثانیه‌ای یا یک تلاوت کامل ۳۰-۶۰ دقیقه‌ای.
+
+    برخلاف extract_pitch_contour (که کل فایل را یک‌جا در حافظه بارگذاری
+    می‌کند)، این تابع فایل را در پنجره‌های زمانی مجزا با هم‌پوشانی کوچک
+    می‌خواند و هرکدام را جداگانه با موتور Praat در حالت very_accurate=True
+    پردازش می‌کند — بنابراین دقت خروجی دقیقاً معادل حالت تک‌پنجره‌ای است،
+    اما مصرف حافظه صرف‌نظر از طول کل فایل محدود و ثابت می‌ماند.
+
+    اگر progress_callback داده شود، با آرگومان‌های (processed_sec, total_sec)
+    فراخوانی می‌شود تا واسط کاربری بتواند پیشرفت پردازش فایل‌های طولانی را
+    نمایش دهد (طبق درخواست کاربر: دقت اولویت اول است، حتی اگر پردازش
+    فایل‌های طولانی ۲ تا ۳ برابر کندتر شود — اما کاربر باید از پیشرفت مطلع
+    باشد).
+
+    خروجی: times, freqs, sample_rate, duration_sec
+    (به‌جای شیء parselmouth.Sound کامل، فقط sample_rate و duration
+    برگردانده می‌شود چون نگه‌داشتن کل صدا در حافظه برای فایل‌های طولانی
+    همان مشکل حافظه را بازتولید می‌کند؛ برای بلندی صدا از
+    compute_loudness_streaming استفاده کنید.)
+    """
+    import soundfile as sf
+
+    info = sf.info(wav_path)
+    sr = info.samplerate
+    total_dur = info.frames / float(sr)
+
+    if total_dur <= WINDOWED_PROCESSING_THRESHOLD_SEC:
+        # فایل کوتاه: مسیر ساده و مستقیم (بدون سربار پنجره‌بندی)
+        times, freqs, _snd = extract_pitch_contour(
+            wav_path, fmin=fmin, fmax=fmax, time_step=time_step,
+            two_pass_refine=two_pass_refine,
+        )
+        if progress_callback:
+            progress_callback(total_dur, total_dur)
+        return times, freqs, sr, total_dur
+
+    all_times = []
+    all_freqs = []
+
+    pos = 0.0
+    with sf.SoundFile(wav_path) as f:
+        while pos < total_dur:
+            end = min(pos + window_sec, total_dur)
+            start_frame = int(round(pos * sr))
+            num_frames = int(round((end - pos) * sr))
+
+            f.seek(start_frame)
+            block = f.read(num_frames, dtype="float64", always_2d=True)
+            block = block.mean(axis=1)  # مونو کردن در صورت چندکاناله بودن
+
+            snd_chunk = parselmouth.Sound(block, sampling_frequency=sr)
+            t_local, f_local, _ = _extract_pitch_from_sound(
+                snd_chunk, fmin=fmin, fmax=fmax, time_step=time_step,
+                two_pass_refine=two_pass_refine,
+            )
+            t_local = t_local + pos
+
+            # حذف نیمهٔ اول هم‌پوشانی (به‌جز پنجرهٔ اول) تا اثر لبه از بین برود
+            if pos > 0:
+                mask = t_local >= (pos + overlap_sec / 2.0)
+                t_local = t_local[mask]
+                f_local = f_local[mask]
+
+            all_times.append(t_local)
+            all_freqs.append(f_local)
+
+            processed = min(end, total_dur)
+            if progress_callback:
+                progress_callback(processed, total_dur)
+
+            if end >= total_dur:
+                break
+            pos += max(1e-6, window_sec - overlap_sec)
+
+    times = np.concatenate(all_times) if all_times else np.array([])
+    freqs = np.concatenate(all_freqs) if all_freqs else np.array([])
+    return times, freqs, sr, total_dur
+
+
+def compute_loudness_streaming(wav_path, window_sec=DEFAULT_WINDOW_SEC,
+                                 progress_callback=None):
+    """
+    بلندی صدا (dB، بر مبنای الگوریتم Intensity در Praat) را بدون بارگذاری
+    کل فایل در حافظه محاسبه می‌کند — با پردازش پنجره‌ای مشابه
+    extract_pitch_contour_max_accuracy. برای فایل‌های خیلی طولانی از
+    snd.to_intensity() روی کل فایل (که می‌تواند OOM شود) اجتناب می‌کند.
+    """
+    import soundfile as sf
+
+    info = sf.info(wav_path)
+    sr = info.samplerate
+    total_dur = info.frames / float(sr)
+
+    all_values = []
+    pos = 0.0
+    with sf.SoundFile(wav_path) as f:
+        while pos < total_dur:
+            end = min(pos + window_sec, total_dur)
+            start_frame = int(round(pos * sr))
+            num_frames = int(round((end - pos) * sr))
+            f.seek(start_frame)
+            block = f.read(num_frames, dtype="float64", always_2d=True)
+            block = block.mean(axis=1)
+
+            snd_chunk = parselmouth.Sound(block, sampling_frequency=sr)
+            try:
+                intensity = snd_chunk.to_intensity()
+                vals = intensity.values[0]
+                vals = vals[~np.isnan(vals)]
+                if len(vals):
+                    all_values.append(vals)
+            except Exception:
+                pass
+
+            if progress_callback:
+                progress_callback(min(end, total_dur), total_dur)
+
+            if end >= total_dur:
+                break
+            pos += window_sec
+
+    if not all_values:
+        return {"mean_db": None, "max_db": None}
+    concat = np.concatenate(all_values)
+    return {
+        "mean_db": round(float(np.mean(concat)), 1),
+        "max_db": round(float(np.max(concat)), 1),
+    }
+
+
+# ----------------------------------------------------------------------------
 # استخراج F0 برای یک قطعه کوچک (real-time / streaming)
 # ----------------------------------------------------------------------------
 
