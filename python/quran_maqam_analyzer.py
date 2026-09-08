@@ -937,17 +937,40 @@ def _make_melograph(times, freqs, notes, best_maqam, out_path, maqam_timeline=No
         ax.hlines(note["f0_hz"], note["start"], note["end"],
                    color="#ef4444", linewidth=2.5, alpha=0.8)
 
+    # --- تونیک را زودتر (پیش از رسم برچسب‌های ambitus) به نزدیک‌ترین اکتاو
+    #     به محدودهٔ صدای واقعی منتقل می‌کنیم تا بتوان درجهٔ سولفژ هر نت را
+    #     هم روی برچسب بالاترین/پایین‌ترین نت نمایش داد ---
+    tonic_hz_adj, maqam_name, maqam_cents = None, None, None
+    if best_maqam:
+        tonic_hz_adj = best_maqam["tonic_freq_hz"]
+        maqam_name = best_maqam["maqam"]
+        maqam_cents = MAQAMAT[maqam_name]["cents"]
+        voiced_freqs = freqs[freqs > 0]
+        if len(voiced_freqs) > 0:
+            center_freq = np.exp(np.mean(np.log(voiced_freqs)))
+            octave_shift = round(np.log2(center_freq / tonic_hz_adj))
+            tonic_hz_adj *= (2 ** octave_shift)
+
     # --- بم‌ترین و زیرترین نت خوانده‌شده در کل فایل ---
     if ambitus and ambitus.get("lowest_hz") and ambitus.get("highest_hz"):
         x0, x1 = float(times[0]), float(times[-1]) if len(times) else 0.0
         low_hz, high_hz = ambitus["lowest_hz"], ambitus["highest_hz"]
         low_note, high_note = ambitus.get("lowest_note"), ambitus.get("highest_note")
 
+        low_sol_str = high_sol_str = ""
+        if tonic_hz_adj and maqam_cents:
+            low_sol = note_to_solfege(low_hz, tonic_hz_adj, maqam_cents)
+            high_sol = note_to_solfege(high_hz, tonic_hz_adj, maqam_cents)
+            if low_sol:
+                low_sol_str = f" — {low_sol['solfege_name']}"
+            if high_sol:
+                high_sol_str = f" — {high_sol['solfege_name']}"
+
         ax.axhline(low_hz, color="#f59e0b", linestyle=":", linewidth=1.6, zorder=5)
         ax.axhline(high_hz, color="#a855f7", linestyle=":", linewidth=1.6, zorder=5)
 
-        low_label = T(f"پایین‌ترین نت: {low_note} — {low_hz:.1f} Hz")
-        high_label = T(f"بالاترین نت: {high_note} — {high_hz:.1f} Hz")
+        low_label = T(f"پایین‌ترین نت: {low_note} — {low_hz:.1f} Hz{low_sol_str}")
+        high_label = T(f"بالاترین نت: {high_note} — {high_hz:.1f} Hz{high_sol_str}")
 
         ax.annotate(low_label, xy=(x1, low_hz), xytext=(-8, -9), textcoords="offset points",
                     fontsize=9, color="#f59e0b", va="top", ha="right", zorder=7,
@@ -960,16 +983,7 @@ def _make_melograph(times, freqs, notes, best_maqam, out_path, maqam_timeline=No
         ax.plot(x0, high_hz, marker="^", color="#a855f7", markersize=8, zorder=6, clip_on=False)
 
     if best_maqam:
-        tonic_hz = best_maqam["tonic_freq_hz"]
-        maqam_name = best_maqam["maqam"]
-        maqam_cents = MAQAMAT[maqam_name]["cents"]
-
-        # تونیک را به نزدیک‌ترین اکتاو به محدوده صدای واقعی منتقل کن
-        voiced_freqs = freqs[freqs > 0]
-        if len(voiced_freqs) > 0:
-            center_freq = np.exp(np.mean(np.log(voiced_freqs)))
-            octave_shift = round(np.log2(center_freq / tonic_hz))
-            tonic_hz *= (2 ** octave_shift)
+        tonic_hz = tonic_hz_adj
 
         for c in maqam_cents:
             grid_freq = tonic_hz * (2 ** (c / 1200.0))
@@ -983,6 +997,7 @@ def _make_melograph(times, freqs, notes, best_maqam, out_path, maqam_timeline=No
         ax.set_title(T("ملوگراف تلاوت (منحنی دقیق پرده صدا)"), fontsize=13)
 
     ax.set_xlabel(T("زمان (ثانیه)") if not has_timeline else "")
+
     ax.set_ylabel(T("فرکانس (هرتز)"))
     ax.set_yscale("log")
     ax.legend(loc="upper left")
