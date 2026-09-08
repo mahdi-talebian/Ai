@@ -870,7 +870,8 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
             base_name = os.path.splitext(os.path.basename(path))[0]
             plot_path = os.path.join(plot_dir_eff, f"{base_name}_maqam_analysis.png")
             best_maqam = maqam_candidates[0] if maqam_candidates else None
-            _make_melograph(times, freqs, notes, best_maqam, plot_path, maqam_timeline=maqam_timeline)
+            _make_melograph(times, freqs, notes, best_maqam, plot_path, maqam_timeline=maqam_timeline,
+                             ambitus=ambitus)
             report["meta"]["visualization_file"] = plot_path
 
         _progress("done", 1.0)
@@ -909,7 +910,7 @@ def _fa(text):
         return text
 
 
-def _make_melograph(times, freqs, notes, best_maqam, out_path, maqam_timeline=None):
+def _make_melograph(times, freqs, notes, best_maqam, out_path, maqam_timeline=None, ambitus=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -935,6 +936,28 @@ def _make_melograph(times, freqs, notes, best_maqam, out_path, maqam_timeline=No
     for note in notes:
         ax.hlines(note["f0_hz"], note["start"], note["end"],
                    color="#ef4444", linewidth=2.5, alpha=0.8)
+
+    # --- بم‌ترین و زیرترین نت خوانده‌شده در کل فایل ---
+    if ambitus and ambitus.get("lowest_hz") and ambitus.get("highest_hz"):
+        x0, x1 = float(times[0]), float(times[-1]) if len(times) else 0.0
+        low_hz, high_hz = ambitus["lowest_hz"], ambitus["highest_hz"]
+        low_note, high_note = ambitus.get("lowest_note"), ambitus.get("highest_note")
+
+        ax.axhline(low_hz, color="#f59e0b", linestyle=":", linewidth=1.6, zorder=5)
+        ax.axhline(high_hz, color="#a855f7", linestyle=":", linewidth=1.6, zorder=5)
+
+        low_label = T(f"پایین‌ترین نت: {low_note} — {low_hz:.1f} Hz")
+        high_label = T(f"بالاترین نت: {high_note} — {high_hz:.1f} Hz")
+
+        ax.annotate(low_label, xy=(x1, low_hz), xytext=(-8, -9), textcoords="offset points",
+                    fontsize=9, color="#f59e0b", va="top", ha="right", zorder=7,
+                    bbox=dict(boxstyle="round,pad=0.25", fc="#111827", ec="#f59e0b", alpha=0.9))
+        ax.annotate(high_label, xy=(x1, high_hz), xytext=(-8, 9), textcoords="offset points",
+                    fontsize=9, color="#a855f7", va="bottom", ha="right", zorder=7,
+                    bbox=dict(boxstyle="round,pad=0.25", fc="#111827", ec="#a855f7", alpha=0.9))
+
+        ax.plot(x0, low_hz, marker="v", color="#f59e0b", markersize=8, zorder=6, clip_on=False)
+        ax.plot(x0, high_hz, marker="^", color="#a855f7", markersize=8, zorder=6, clip_on=False)
 
     if best_maqam:
         tonic_hz = best_maqam["tonic_freq_hz"]
@@ -962,7 +985,7 @@ def _make_melograph(times, freqs, notes, best_maqam, out_path, maqam_timeline=No
     ax.set_xlabel(T("زمان (ثانیه)") if not has_timeline else "")
     ax.set_ylabel(T("فرکانس (هرتز)"))
     ax.set_yscale("log")
-    ax.legend(loc="upper right")
+    ax.legend(loc="upper left")
     ax.grid(True, alpha=0.15)
 
     # --- زیرنمودار تایم‌لاین تغییر مقام (برای فایل‌های طولانی) ---
@@ -995,7 +1018,7 @@ def _make_melograph(times, freqs, notes, best_maqam, out_path, maqam_timeline=No
         ax_tl.set_xlim(ax.get_xlim())
 
     plt.tight_layout()
-    plt.savefig(out_path, dpi=140)
+    plt.savefig(out_path, dpi=140, bbox_inches="tight")
     plt.close(fig)
     print(f"ملوگراف ذخیره شد: {out_path}")
 
