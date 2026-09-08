@@ -131,14 +131,93 @@
 
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-thumb { background: rgba(124,92,255,0.4); border-radius: 4px; }
+
+  /* ==================== تب‌های اصلی (موسیقی عمومی / تلاوت قرآن) ==================== */
+  .main-tabs { display: flex; gap: 10px; margin-bottom: 22px; }
+  .main-tab {
+    flex: 1; padding: 14px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.03); color: #cfd1ee; cursor: pointer; font-family: inherit;
+    font-size: 1rem; font-weight: 700; transition: all .2s;
+  }
+  .main-tab.active {
+    background: linear-gradient(135deg, #23e0c2, #14a085); color: #04231c; border-color: transparent;
+    box-shadow: 0 4px 18px rgba(35,224,194,0.35);
+  }
+  .page { display: none; }
+  .page.active { display: block; }
+
+  .dropzone.small { padding: 22px 12px; font-size: 0.85rem; }
+
+  .checkbox-row { display: block; margin: 14px 0; color: #cfd1ee; font-size: 0.9rem; cursor: pointer; }
+  .checkbox-row input { margin-inline-end: 6px; }
+
+  .primary-btn, .secondary-btn {
+    display: block; width: 100%; margin-top: 12px; padding: 14px;
+    border: none; border-radius: 12px; font-family: inherit; font-size: 1.05rem; font-weight: 700;
+    cursor: pointer; transition: filter .2s;
+  }
+  .primary-btn {
+    background: linear-gradient(135deg, #23e0c2, #14a085); color: #04231c;
+  }
+  .secondary-btn {
+    background: linear-gradient(135deg, #7c5cff, #4b2fd6); color: white;
+  }
+  .primary-btn:disabled, .secondary-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .primary-btn:not(:disabled):hover, .secondary-btn:not(:disabled):hover { filter: brightness(1.1); }
+
+  .progress-wrap { margin-top: 16px; }
+  .progress-label { font-size: 0.85rem; color: #a7a9c9; margin-bottom: 6px; }
+  .progress-bar { height: 10px; border-radius: 6px; background: rgba(255,255,255,0.08); overflow: hidden; }
+  .progress-fill {
+    height: 100%; width: 0%; border-radius: 6px;
+    background: linear-gradient(90deg, #7c5cff, #23e0c2); transition: width .25s;
+  }
+  .progress-pct { text-align: center; font-size: 0.8rem; color: #9294bd; margin-top: 4px; }
+
+  .maqam-card {
+    background: rgba(255,255,255,0.05); border-radius: 14px; padding: 14px 18px;
+    border: 1px solid rgba(255,255,255,0.07); margin-bottom: 10px;
+  }
+  .maqam-card .rank1 { color: #23e0c2; font-weight: 800; }
+  .maqam-conf-bar { height: 6px; border-radius: 4px; background: rgba(255,255,255,0.08); margin-top: 6px; overflow: hidden; }
+  .maqam-conf-fill { height: 100%; background: linear-gradient(90deg, #7c5cff, #23e0c2); }
+
+  .timeline-window {
+    display: inline-block; height: 28px; border-radius: 4px; margin-inline-end: 1px;
+    vertical-align: middle; position: relative;
+  }
+  .timeline-transition { color: #ff5cad; font-size: 0.85rem; margin: 4px 0; }
+
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .compare-col h4 { margin: 0 0 10px; color: #cfd1ee; }
+  .trim-row { display: flex; gap: 10px; margin-top: 10px; }
+  .trim-row label { flex: 1; font-size: 0.78rem; color: #9294bd; display: block; }
+  .trim-row input { width: 100%; margin-top: 4px; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.04); color: #eef0ff; font-family: inherit; }
+
+  .hint-text { color: #9294bd; font-size: 0.88rem; line-height: 1.7; margin-bottom: 16px; }
+
+  .piano-keyboard-wrap { margin-top: 20px; text-align: center; }
+  #pianoNoteLabel { margin-top: 10px; font-size: 1.3rem; font-weight: 800; color: #7c5cff; min-height: 30px; }
+
+  @media (max-width: 700px) {
+    .compare-grid { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>🎧 تحلیلگر هوشمند صوت</h1>
-    <p>ضرب‌آهنگ (BPM)، کلید موسیقی، طیف صدا و بلندی را مستقیم در مرورگر تحلیل کن — بدون نیاز به سرور</p>
+    <p>ضرب‌آهنگ (BPM)، کلید موسیقی، طیف صدا و بلندی — و تحلیل تخصصی تلاوت قرآن با تشخیص مقام</p>
   </header>
+
+  <div class="main-tabs">
+    <button id="mainTabGeneral" class="main-tab active">🎵 تحلیل موسیقی عمومی</button>
+    <button id="mainTabQuran" class="main-tab">🕌 تحلیل تلاوت قرآن (AI)</button>
+  </div>
+
+  <div id="pageGeneral" class="page active">
 
   <div class="card">
     <div class="source-tabs">
@@ -186,6 +265,122 @@
   </div>
 
   <footer>ساخته‌شده با Web Audio API — تمام پردازش‌ها محلی و در همان مرورگر انجام می‌شود</footer>
+  </div><!-- /pageGeneral -->
+
+  <div id="pageQuran" class="page">
+    <div class="card">
+      <div class="source-tabs">
+        <button id="qTabUpload" class="active">📁 آپلود و تحلیل کامل</button>
+        <button id="qTabCompare">🔍 مقایسه دو فراز</button>
+        <button id="qTabLiveMic">🎙️ پیانوی زنده (میکروفون)</button>
+      </div>
+
+      <!-- ================= پنل ۱: آپلود و تحلیل کامل ================= -->
+      <div id="qPanelUpload" class="panel active">
+        <div class="dropzone" id="qDropzone">
+          <span class="icon">🕌</span>
+          فایل تلاوت را اینجا رها کن یا کلیک کن برای انتخاب
+          <br><small>پشتیبانی از MP3, WAV, OGG, M4A — هر طولی، حتی ۳۰-۶۰ دقیقه</small>
+        </div>
+        <input type="file" id="qFileInput" accept="audio/*" />
+        <div class="fileinfo" id="qFileInfo"></div>
+        <audio id="qAudioPlayer" controls style="display:none;"></audio>
+
+        <label class="checkbox-row"><input type="checkbox" id="qDenoise"> کاهش نویز پس‌زمینه (denoise)</label>
+
+        <button id="qAnalyzeBtn" class="primary-btn" disabled>🔍 تحلیل دقیق تلاوت</button>
+        <button id="qVideoBtn" class="secondary-btn" disabled>🎬 ساخت ویدیوی پیانوی هم‌گام (mp4)</button>
+
+        <div class="progress-wrap" id="qProgressWrap" style="display:none;">
+          <div class="progress-label" id="qProgressLabel">در حال پردازش...</div>
+          <div class="progress-bar"><div class="progress-fill" id="qProgressFill"></div></div>
+          <div class="progress-pct" id="qProgressPct">0%</div>
+        </div>
+
+        <div id="qStatus"></div>
+
+        <div id="qResults" style="display:none;">
+          <div class="grid" id="qMetricsGrid"></div>
+
+          <div class="chart-title">🕌 مقام‌های محتمل</div>
+          <div id="qMaqamList"></div>
+
+          <div id="qTimelineSection" style="display:none;">
+            <div class="chart-title">🕐 تایم‌لاین تغییر مقام</div>
+            <div id="qTimelineInfo"></div>
+          </div>
+
+          <div class="chart-title">📈 ملوگراف (منحنی پرده صدا + مقام)</div>
+          <img id="qMelographImg" style="width:100%;border-radius:12px;" />
+
+          <div id="qVideoSection" style="display:none;">
+            <div class="chart-title">🎬 ویدیوی پیانوی هم‌گام</div>
+            <video id="qVideoPlayer" controls style="width:100%;border-radius:12px;"></video>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= پنل ۲: مقایسه دو فراز ================= -->
+      <div id="qPanelCompare" class="panel">
+        <div class="compare-grid">
+          <div class="compare-col">
+            <h4>🔵 فراز مرجع</h4>
+            <div class="dropzone small" id="refDropzone">
+              <span class="icon">🎵</span> انتخاب فایل مرجع
+            </div>
+            <input type="file" id="refFileInput" accept="audio/*" />
+            <div class="fileinfo" id="refFileInfo"></div>
+            <div class="trim-row">
+              <label>شروع (ثانیه): <input type="number" id="refStart" min="0" step="0.1" placeholder="اختیاری"></label>
+              <label>پایان (ثانیه): <input type="number" id="refEnd" min="0" step="0.1" placeholder="اختیاری"></label>
+            </div>
+          </div>
+          <div class="compare-col">
+            <h4>🔴 فراز کاربر</h4>
+            <div class="dropzone small" id="perfDropzone">
+              <span class="icon">🎵</span> انتخاب فایل کاربر
+            </div>
+            <input type="file" id="perfFileInput" accept="audio/*" />
+            <div class="fileinfo" id="perfFileInfo"></div>
+            <div class="trim-row">
+              <label>شروع (ثانیه): <input type="number" id="perfStart" min="0" step="0.1" placeholder="اختیاری"></label>
+              <label>پایان (ثانیه): <input type="number" id="perfEnd" min="0" step="0.1" placeholder="اختیاری"></label>
+            </div>
+          </div>
+        </div>
+
+        <button id="compareBtn" class="primary-btn" disabled>🔍 مقایسه دو فراز</button>
+
+        <div class="progress-wrap" id="cmpProgressWrap" style="display:none;">
+          <div class="progress-label" id="cmpProgressLabel">در حال پردازش...</div>
+          <div class="progress-bar"><div class="progress-fill" id="cmpProgressFill"></div></div>
+          <div class="progress-pct" id="cmpProgressPct">0%</div>
+        </div>
+
+        <div id="cmpStatus"></div>
+
+        <div id="cmpResults" style="display:none;">
+          <div class="grid" id="cmpMetricsGrid"></div>
+          <div class="chart-title">📊 نتیجه مقایسه</div>
+          <img id="cmpImg" style="width:100%;border-radius:12px;" />
+        </div>
+      </div>
+
+      <!-- ================= پنل ۳: پیانوی زنده با میکروفون ================= -->
+      <div id="qPanelLiveMic" class="panel">
+        <p class="hint-text">صدای میکروفون شما به‌صورت زنده به سرور ارسال می‌شود و با موتور دقیق Praat
+          (همان موتور نسخه پایتونی) تحلیل می‌شود تا نت دقیق (از جمله ربع‌پرده‌های مقامی) روی کلاویه هایلایت شود.</p>
+        <div class="mic-area">
+          <button id="liveMicBtn">🎤</button>
+          <div id="liveMicStatus">برای شروع کلیک کن</div>
+        </div>
+        <div class="piano-keyboard-wrap">
+          <svg id="pianoSvg" viewBox="0 0 880 180" style="width:100%;"></svg>
+          <div id="pianoNoteLabel">—</div>
+        </div>
+      </div>
+    </div>
+  </div><!-- /pageQuran -->
 </div>
 
 <script>
@@ -877,6 +1072,486 @@ function hookSpectrumAnimation() {
     }
   }
   draw();
+}
+</script>
+
+<script>
+/* ==========================================================================
+   بخش تحلیل تلاوت قرآن — رابط کاربری برای موتور بک‌اند پایتون (Praat/DTW)
+   تمام محاسبات سنگین (pitch دقیق، تشخیص مقام، DTW) در سرور انجام می‌شود؛
+   این اسکریپت فقط رابط کاربری (آپلود، نمایش پیشرفت زنده، نمایش نتیجه) است.
+   ========================================================================== */
+
+const API_BASE = ''; // همان مبدأ (سرور FastAPI هم API و هم فایل‌های وب را سرو می‌کند)
+
+// ---- تب‌های اصلی ----
+const mainTabGeneral = document.getElementById('mainTabGeneral');
+const mainTabQuran = document.getElementById('mainTabQuran');
+const pageGeneral = document.getElementById('pageGeneral');
+const pageQuran = document.getElementById('pageQuran');
+
+mainTabGeneral.onclick = () => {
+  mainTabGeneral.classList.add('active'); mainTabQuran.classList.remove('active');
+  pageGeneral.classList.add('active'); pageQuran.classList.remove('active');
+};
+mainTabQuran.onclick = () => {
+  mainTabQuran.classList.add('active'); mainTabGeneral.classList.remove('active');
+  pageQuran.classList.add('active'); pageGeneral.classList.remove('active');
+};
+
+// ---- زیرتب‌های صفحه قرآن ----
+const qTabUpload = document.getElementById('qTabUpload');
+const qTabCompare = document.getElementById('qTabCompare');
+const qTabLiveMic = document.getElementById('qTabLiveMic');
+const qPanelUpload = document.getElementById('qPanelUpload');
+const qPanelCompare = document.getElementById('qPanelCompare');
+const qPanelLiveMic = document.getElementById('qPanelLiveMic');
+
+function switchQuranTab(which) {
+  [qTabUpload, qTabCompare, qTabLiveMic].forEach(b => b.classList.remove('active'));
+  [qPanelUpload, qPanelCompare, qPanelLiveMic].forEach(p => p.classList.remove('active'));
+  if (which === 'upload') { qTabUpload.classList.add('active'); qPanelUpload.classList.add('active'); }
+  if (which === 'compare') { qTabCompare.classList.add('active'); qPanelCompare.classList.add('active'); }
+  if (which === 'mic') { qTabLiveMic.classList.add('active'); qPanelLiveMic.classList.add('active'); }
+}
+qTabUpload.onclick = () => switchQuranTab('upload');
+qTabCompare.onclick = () => switchQuranTab('compare');
+qTabLiveMic.onclick = () => switchQuranTab('mic');
+
+// ==========================================================================
+// پنل ۱: آپلود و تحلیل کامل
+// ==========================================================================
+
+const qDropzone = document.getElementById('qDropzone');
+const qFileInput = document.getElementById('qFileInput');
+const qFileInfo = document.getElementById('qFileInfo');
+const qAudioPlayer = document.getElementById('qAudioPlayer');
+const qAnalyzeBtn = document.getElementById('qAnalyzeBtn');
+const qVideoBtn = document.getElementById('qVideoBtn');
+const qStatus = document.getElementById('qStatus');
+
+let currentJobId = null;
+
+qDropzone.onclick = () => qFileInput.click();
+qDropzone.ondragover = (e) => { e.preventDefault(); qDropzone.classList.add('dragover'); };
+qDropzone.ondragleave = () => qDropzone.classList.remove('dragover');
+qDropzone.ondrop = (e) => {
+  e.preventDefault(); qDropzone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleQuranFile(e.dataTransfer.files[0]);
+};
+qFileInput.onchange = (e) => { if (e.target.files.length) handleQuranFile(e.target.files[0]); };
+
+async function handleQuranFile(file) {
+  qFileInfo.textContent = `${file.name} — ${(file.size/1024/1024).toFixed(2)} مگابایت`;
+  qAudioPlayer.src = URL.createObjectURL(file);
+  qAudioPlayer.style.display = 'block';
+  qStatus.textContent = 'در حال آپلود فایل...';
+
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: form });
+    const data = await res.json();
+    currentJobId = data.job_id;
+    qStatus.textContent = 'فایل آپلود شد. آماده تحلیل.';
+    qAnalyzeBtn.disabled = false;
+    qVideoBtn.disabled = false;
+  } catch (err) {
+    qStatus.textContent = '❌ خطا در آپلود: ' + err.message + ' (آیا سرور بک‌اند در حال اجراست؟)';
+  }
+}
+
+function setupProgressUI(wrapId, labelId, fillId, pctId) {
+  const wrap = document.getElementById(wrapId);
+  const label = document.getElementById(labelId);
+  const fill = document.getElementById(fillId);
+  const pct = document.getElementById(pctId);
+  wrap.style.display = 'block';
+  return {
+    update(stageFa, frac) {
+      label.textContent = stageFa;
+      fill.style.width = `${Math.round(frac * 100)}%`;
+      pct.textContent = `${Math.round(frac * 100)}%`;
+    },
+    hide() { wrap.style.display = 'none'; }
+  };
+}
+
+const STAGE_LABELS_FA = {
+  loading: 'در حال بارگذاری فایل',
+  pitch_extraction: 'استخراج دقیق پرده صدا (Praat، حداکثر دقت)',
+  cleaning: 'پاک‌سازی نویز پرده صدا',
+  segmentation: 'تفکیک نت‌ها',
+  vibrato: 'تحلیل ویبراتو',
+  maqam_detection: 'تشخیص مقام',
+  loudness: 'محاسبه بلندی صدا',
+  timeline: 'ساخت تایم‌لاین تغییر مقام',
+  done: 'پایان',
+  pitch: 'استخراج پرده صدا',
+  render: 'رندر فریم‌های ویدیو',
+  mux: 'ترکیب صدا و تصویر',
+};
+
+function subscribeJobProgress(jobId, onUpdate) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws/job/${jobId}`);
+  ws.onmessage = (ev) => {
+    const data = JSON.parse(ev.data);
+    onUpdate(data);
+  };
+  ws.onerror = () => { /* در صورت خطای وب‌سوکت، UI با پیام خطای نهایی به‌روزرسانی می‌شود */ };
+  return ws;
+}
+
+qAnalyzeBtn.onclick = async () => {
+  if (!currentJobId) return;
+  qAnalyzeBtn.disabled = true;
+  document.getElementById('qResults').style.display = 'none';
+  const progress = setupProgressUI('qProgressWrap', 'qProgressLabel', 'qProgressFill', 'qProgressPct');
+  progress.update('در حال شروع تحلیل...', 0);
+  qStatus.textContent = '';
+
+  const form = new FormData();
+  form.append('denoise', document.getElementById('qDenoise').checked ? 'true' : 'false');
+  form.append('top_k', '3');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/analyze/${currentJobId}`, { method: 'POST', body: form });
+    if (!res.ok) throw new Error((await res.json()).error || 'خطای سرور');
+
+    subscribeJobProgress(currentJobId, (data) => {
+      if (data.status === 'running' || data.status === 'pending') {
+        const label = STAGE_LABELS_FA[data.stage] || data.stage || 'در حال پردازش...';
+        progress.update(label, data.progress || 0);
+      } else if (data.status === 'done') {
+        progress.update('پایان', 1);
+        setTimeout(() => progress.hide(), 600);
+        renderQuranReport(data.result);
+        qAnalyzeBtn.disabled = false;
+      } else if (data.status === 'error') {
+        progress.hide();
+        qStatus.textContent = '❌ خطا در تحلیل: ' + data.error;
+        qAnalyzeBtn.disabled = false;
+      }
+    });
+  } catch (err) {
+    progress.hide();
+    qStatus.textContent = '❌ خطا: ' + err.message;
+    qAnalyzeBtn.disabled = false;
+  }
+};
+
+qVideoBtn.onclick = async () => {
+  if (!currentJobId) return;
+  qVideoBtn.disabled = true;
+  const progress = setupProgressUI('qProgressWrap', 'qProgressLabel', 'qProgressFill', 'qProgressPct');
+  progress.update('در حال شروع ساخت ویدیو...', 0);
+
+  const form = new FormData();
+  form.append('fps', '12');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/video/${currentJobId}`, { method: 'POST', body: form });
+    if (!res.ok) throw new Error((await res.json()).error || 'خطای سرور');
+    const data = await res.json();
+    const videoJobId = data.job_id;
+
+    subscribeJobProgress(videoJobId, (d) => {
+      if (d.status === 'running' || d.status === 'pending') {
+        const label = STAGE_LABELS_FA[d.stage] || d.stage || 'در حال رندر ویدیو...';
+        progress.update(label, d.progress || 0);
+      } else if (d.status === 'done') {
+        progress.update('پایان', 1);
+        setTimeout(() => progress.hide(), 600);
+        document.getElementById('qVideoSection').style.display = 'block';
+        document.getElementById('qVideoPlayer').src = d.result.video_url;
+        document.getElementById('qResults').style.display = 'block';
+        qVideoBtn.disabled = false;
+      } else if (d.status === 'error') {
+        progress.hide();
+        qStatus.textContent = '❌ خطا در ساخت ویدیو: ' + d.error;
+        qVideoBtn.disabled = false;
+      }
+    });
+  } catch (err) {
+    progress.hide();
+    qStatus.textContent = '❌ خطا: ' + err.message;
+    qVideoBtn.disabled = false;
+  }
+};
+
+function renderQuranReport(report) {
+  document.getElementById('qResults').style.display = 'block';
+
+  const b = report.basic;
+  const grid = document.getElementById('qMetricsGrid');
+  const metrics = [
+    { label: 'مدت زمان', value: `${b.duration_sec.toFixed(1)}s`, sub: '' },
+    { label: 'تعداد نت‌های شناسایی‌شده', value: b.num_notes_detected, sub: '' },
+    { label: 'درصد فریم‌های صدادار', value: `${b.voiced_ratio_pct}%`, sub: '' },
+    { label: 'تعداد سکوت‌ها/نفس‌ها', value: b.num_pauses_detected, sub: '' },
+  ];
+  if (report.loudness && report.loudness.mean_db !== null) {
+    metrics.push({ label: 'بلندی صدا (میانگین)', value: `${report.loudness.mean_db} dB`, sub: `اوج: ${report.loudness.max_db} dB` });
+  }
+  if (report.ambitus) {
+    metrics.push({ label: 'دامنه ملودیک', value: `${report.ambitus.range_semitones} نیم‌پرده`, sub: `${report.ambitus.lowest_note} تا ${report.ambitus.highest_note}` });
+  }
+  grid.innerHTML = metrics.map(m => `
+    <div class="metric">
+      <div class="label">${m.label}</div>
+      <div class="value">${m.value}</div>
+      <div class="sub">${m.sub}</div>
+    </div>`).join('');
+
+  const maqamList = document.getElementById('qMaqamList');
+  maqamList.innerHTML = report.maqam_candidates.map((c, i) => `
+    <div class="maqam-card">
+      <span class="${i === 0 ? 'rank1' : ''}">${i + 1}. ${c.maqam}</span>
+      — اطمینان نسبی: ${c.confidence_pct}%
+      <div class="maqam-conf-bar"><div class="maqam-conf-fill" style="width:${c.confidence_pct}%"></div></div>
+      <div style="font-size:0.82rem;color:#9294bd;margin-top:6px;">تونیک: ${c.tonic_freq_hz} Hz — ${c.mood}</div>
+    </div>`).join('');
+
+  const tlSection = document.getElementById('qTimelineSection');
+  const tlInfo = document.getElementById('qTimelineInfo');
+  if (report.maqam_timeline && report.maqam_timeline.windows && report.maqam_timeline.windows.length) {
+    tlSection.style.display = 'block';
+    const tl = report.maqam_timeline;
+    const maqamNames = [...new Set(tl.windows.map(w => w.top_maqam).filter(Boolean))];
+    const colors = ['#7c5cff', '#23e0c2', '#ff5cad', '#ffb703', '#3ddc97', '#ff595e'];
+    const colorMap = {}; maqamNames.forEach((n, i) => colorMap[n] = colors[i % colors.length]);
+
+    let html = `<div style="margin-bottom:8px;">مقام غالب کل فایل: <b>${tl.dominant_maqam_overall}</b></div>`;
+    html += `<div style="white-space:nowrap;overflow-x:auto;padding:8px 0;">`;
+    tl.windows.forEach(w => {
+      const width = Math.max(4, (w.end - w.start) / tl.window_sec * 22);
+      const color = w.top_maqam ? colorMap[w.top_maqam] : 'rgba(255,255,255,0.08)';
+      const opacity = w.top_maqam ? (0.35 + 0.55 * (w.confidence_pct || 0) / 100) : 0.15;
+      html += `<span class="timeline-window" style="width:${width}px;background:${color};opacity:${opacity}" title="${w.start}s-${w.end}s: ${w.top_maqam || '?'}"></span>`;
+    });
+    html += `</div>`;
+    if (tl.transitions.length) {
+      html += tl.transitions.map(tr => `<div class="timeline-transition">⇄ ثانیه ${tr.time}s: ${tr.from_maqam} → ${tr.to_maqam}</div>`).join('');
+    } else {
+      html += `<div style="color:#9294bd;font-size:0.85rem;">تغییر مقام قابل‌توجهی شناسایی نشد.</div>`;
+    }
+    tlInfo.innerHTML = html;
+  } else {
+    tlSection.style.display = 'none';
+  }
+
+  if (report.meta && report.meta.visualization_url) {
+    document.getElementById('qMelographImg').src = report.meta.visualization_url;
+  }
+}
+
+// ==========================================================================
+// پنل ۲: مقایسه دو فراز
+// ==========================================================================
+
+let refFile = null, perfFile = null;
+
+function setupCompareDropzone(dzId, inputId, infoId, onSet) {
+  const dz = document.getElementById(dzId);
+  const input = document.getElementById(inputId);
+  const info = document.getElementById(infoId);
+  dz.onclick = () => input.click();
+  input.onchange = (e) => {
+    if (!e.target.files.length) return;
+    const f = e.target.files[0];
+    info.textContent = `${f.name} — ${(f.size/1024/1024).toFixed(2)} مگابایت`;
+    onSet(f);
+    checkCompareReady();
+  };
+}
+setupCompareDropzone('refDropzone', 'refFileInput', 'refFileInfo', (f) => refFile = f);
+setupCompareDropzone('perfDropzone', 'perfFileInput', 'perfFileInfo', (f) => perfFile = f);
+
+function checkCompareReady() {
+  document.getElementById('compareBtn').disabled = !(refFile && perfFile);
+}
+
+document.getElementById('compareBtn').onclick = async () => {
+  const btn = document.getElementById('compareBtn');
+  btn.disabled = true;
+  document.getElementById('cmpResults').style.display = 'none';
+  const progress = setupProgressUI('cmpProgressWrap', 'cmpProgressLabel', 'cmpProgressFill', 'cmpProgressPct');
+  progress.update('در حال آپلود فایل‌ها...', 0.02);
+
+  const form = new FormData();
+  form.append('reference', refFile);
+  form.append('performance', perfFile);
+  const refStart = document.getElementById('refStart').value;
+  const refEnd = document.getElementById('refEnd').value;
+  const perfStart = document.getElementById('perfStart').value;
+  const perfEnd = document.getElementById('perfEnd').value;
+  if (refStart) form.append('ref_start', refStart);
+  if (refEnd) form.append('ref_end', refEnd);
+  if (perfStart) form.append('perf_start', perfStart);
+  if (perfEnd) form.append('perf_end', perfEnd);
+
+  try {
+    const res = await fetch(`${API_BASE}/api/compare`, { method: 'POST', body: form });
+    if (!res.ok) throw new Error((await res.json()).error || 'خطای سرور');
+    const data = await res.json();
+
+    subscribeJobProgress(data.job_id, (d) => {
+      if (d.status === 'running' || d.status === 'pending') {
+        const stageLabels = {
+          trim: 'برش زمانی فایل‌ها', analyzing_reference: 'تحلیل دقیق دو فراز (Praat)',
+          plotting: 'رسم نمودار مقایسه',
+        };
+        progress.update(stageLabels[d.stage] || d.stage || 'در حال پردازش...', d.progress || 0);
+      } else if (d.status === 'done') {
+        progress.update('پایان', 1);
+        setTimeout(() => progress.hide(), 600);
+        renderCompareReport(d.result);
+        btn.disabled = false;
+      } else if (d.status === 'error') {
+        progress.hide();
+        document.getElementById('cmpStatus').textContent = '❌ خطا: ' + d.error;
+        btn.disabled = false;
+      }
+    });
+  } catch (err) {
+    progress.hide();
+    document.getElementById('cmpStatus').textContent = '❌ خطا: ' + err.message;
+    btn.disabled = false;
+  }
+};
+
+function renderCompareReport(result) {
+  document.getElementById('cmpResults').style.display = 'block';
+  const grid = document.getElementById('cmpMetricsGrid');
+  const metrics = [
+    { label: 'شباهت کلی', value: `${result.overall_similarity_pct}%`, sub: result.verdict.summary },
+    { label: 'شباهت ملودیک', value: `${result.melodic_similarity.similarity_pct}%`, sub: 'DTW روی نت‌ها' },
+    { label: 'شباهت ریتمیک', value: `${result.rhythm_similarity.similarity_pct}%`, sub: '' },
+    { label: 'شباهت بلندی صدا', value: result.loudness_similarity.similarity_pct !== null ? `${result.loudness_similarity.similarity_pct}%` : 'نامشخص', sub: '' },
+  ];
+  grid.innerHTML = metrics.map(m => `
+    <div class="metric">
+      <div class="label">${m.label}</div>
+      <div class="value">${m.value}</div>
+      <div class="sub">${m.sub}</div>
+    </div>`).join('');
+  if (result.meta && result.meta.visualization_url) {
+    document.getElementById('cmpImg').src = result.meta.visualization_url;
+  }
+}
+
+// ==========================================================================
+// پنل ۳: پیانوی زنده با میکروفون (استریم به بک‌اند)
+// ==========================================================================
+
+const PIANO_MIDI_MIN = 21, PIANO_MIDI_MAX = 108;
+function isBlackKeyMidi(m) { return [1,3,6,8,10].includes(m % 12); }
+
+function buildPianoSVG() {
+  const svg = document.getElementById('pianoSvg');
+  const whiteW = 16, whiteH = 160, blackW = 10, blackH = 100;
+  let x = 0;
+  const whiteXs = {};
+  let html = '';
+  for (let m = PIANO_MIDI_MIN; m <= PIANO_MIDI_MAX; m++) {
+    if (!isBlackKeyMidi(m)) {
+      html += `<rect id="key-${m}" x="${x}" y="10" width="${whiteW}" height="${whiteH}" fill="white" stroke="#333" stroke-width="0.6"/>`;
+      whiteXs[m] = x;
+      x += whiteW;
+    }
+  }
+  for (let m = PIANO_MIDI_MIN; m <= PIANO_MIDI_MAX; m++) {
+    if (isBlackKeyMidi(m)) {
+      let prevWhite = m - 1;
+      while (isBlackKeyMidi(prevWhite) && prevWhite >= PIANO_MIDI_MIN) prevWhite--;
+      if (!(prevWhite in whiteXs)) continue;
+      const kx = whiteXs[prevWhite] + whiteW - blackW/2;
+      html += `<rect id="key-${m}" x="${kx}" y="10" width="${blackW}" height="${blackH}" fill="#1a1a1a" stroke="#000" stroke-width="0.4"/>`;
+    }
+  }
+  svg.setAttribute('viewBox', `0 0 ${x} 180`);
+  svg.innerHTML = html;
+}
+buildPianoSVG();
+
+function highlightPianoKey(noteInfo) {
+  document.querySelectorAll('#pianoSvg rect').forEach(r => {
+    const midi = parseInt(r.id.split('-')[1]);
+    r.setAttribute('fill', isBlackKeyMidi(midi) ? '#1a1a1a' : 'white');
+  });
+  const label = document.getElementById('pianoNoteLabel');
+  if (!noteInfo || noteInfo.midi === null || noteInfo.midi === undefined) {
+    label.textContent = '—';
+    return;
+  }
+  let color = '#22c55e';
+  if (Math.abs(noteInfo.cents_offset) > 35) color = '#ef4444';
+  else if (Math.abs(noteInfo.cents_offset) > 15) color = '#f59e0b';
+  const rect = document.getElementById(`key-${noteInfo.midi}`);
+  if (rect) rect.setAttribute('fill', color);
+  const sign = noteInfo.cents_offset >= 0 ? '+' : '';
+  label.textContent = `${noteInfo.note_name}   ${noteInfo.freq.toFixed(1)} Hz   (${sign}${noteInfo.cents_offset.toFixed(0)}¢)`;
+  label.style.color = color;
+}
+
+let liveMicStream = null, liveMicCtx = null, liveMicWs = null, liveMicProcessor = null;
+const liveMicBtn = document.getElementById('liveMicBtn');
+const liveMicStatus = document.getElementById('liveMicStatus');
+const LIVE_SAMPLE_RATE = 16000;
+
+liveMicBtn.onclick = async () => {
+  if (liveMicStream) { stopLiveMic(); return; }
+  try {
+    liveMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    liveMicStatus.textContent = '❌ دسترسی به میکروفون رد شد: ' + err.message;
+    return;
+  }
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  liveMicWs = new WebSocket(`${proto}://${location.host}/ws/live-pitch`);
+  liveMicWs.binaryType = 'arraybuffer';
+
+  liveMicWs.onopen = () => {
+    liveMicWs.send(JSON.stringify({ sample_rate: LIVE_SAMPLE_RATE }));
+    liveMicBtn.classList.add('recording');
+    liveMicStatus.textContent = 'در حال گوش‌دادن... (برای توقف دوباره کلیک کن)';
+
+    liveMicCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: LIVE_SAMPLE_RATE });
+    const source = liveMicCtx.createMediaStreamSource(liveMicStream);
+    liveMicProcessor = liveMicCtx.createScriptProcessor(4096, 1, 1);
+    source.connect(liveMicProcessor);
+    liveMicProcessor.connect(liveMicCtx.destination);
+
+    liveMicProcessor.onaudioprocess = (e) => {
+      if (liveMicWs.readyState !== WebSocket.OPEN) return;
+      const input = e.inputBuffer.getChannelData(0);
+      liveMicWs.send(new Float32Array(input).buffer);
+    };
+  };
+
+  liveMicWs.onmessage = (ev) => {
+    const data = JSON.parse(ev.data);
+    highlightPianoKey(data.note);
+  };
+
+  liveMicWs.onerror = () => {
+    liveMicStatus.textContent = '❌ خطای اتصال به سرور (آیا بک‌اند اجراست؟)';
+  };
+  liveMicWs.onclose = () => {
+    if (liveMicStream) stopLiveMic();
+  };
+};
+
+function stopLiveMic() {
+  if (liveMicProcessor) { liveMicProcessor.disconnect(); liveMicProcessor = null; }
+  if (liveMicCtx) { liveMicCtx.close(); liveMicCtx = null; }
+  if (liveMicStream) { liveMicStream.getTracks().forEach(t => t.stop()); liveMicStream = null; }
+  if (liveMicWs) { liveMicWs.close(); liveMicWs = null; }
+  liveMicBtn.classList.remove('recording');
+  liveMicStatus.textContent = 'برای شروع کلیک کن';
+  highlightPianoKey(null);
 }
 </script>
 </body>
