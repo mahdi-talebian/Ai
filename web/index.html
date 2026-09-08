@@ -294,7 +294,12 @@
       <!-- ================= پنل ۳: پیانوی زنده با میکروفون ================= -->
       <div id="qPanelLiveMic" class="panel">
         <p class="hint-text">صدای میکروفون شما به‌صورت زنده به سرور ارسال می‌شود و با موتور دقیق Praat
-          (همان موتور نسخه پایتونی) تحلیل می‌شود تا نت دقیق (از جمله ربع‌پرده‌های مقامی) روی کلاویه هایلایت شود.</p>
+          (همان موتور نسخه پایتونی) تحلیل می‌شود: نت دقیق روی کلاویه هایلایت می‌شود، مقام لحظه‌ای و
+          سولفژ مقامی نمایش داده می‌شود، و با هر مکث/نفس واقعی، خلاصهٔ آن فراز به لیست پایین اضافه می‌شود.</p>
+        <div id="qMicIframeWarning" class="hint-text" style="display:none; color:#ffb703; border:1px solid rgba(255,183,3,0.4); border-radius:10px; padding:10px 14px;">
+          ⚠️ به نظر می‌رسد این صفحه داخل یک پنجرهٔ توکار (iframe) باز شده — مرورگرها معمولاً در این حالت اجازهٔ
+          دسترسی میکروفون نمی‌دهند. لطفاً <a id="qMicOpenNewTab" href="#" target="_blank" style="color:#23e0c2;">این صفحه را در یک تب جدید مرورگر باز کنید</a> و دوباره امتحان کنید.
+        </div>
         <div class="mic-area">
           <button id="liveMicBtn">🎤</button>
           <div id="liveMicStatus">برای شروع کلیک کن</div>
@@ -302,6 +307,18 @@
         <div class="piano-keyboard-wrap">
           <svg id="pianoSvg" viewBox="0 0 880 180" style="width:100%;"></svg>
           <div id="pianoNoteLabel">—</div>
+        </div>
+
+        <div id="liveMaqamCard" class="maqam-card" style="display:none; margin-top:16px;">
+          <span>مقام لحظه‌ای: <b id="liveMaqamName">—</b></span>
+          <span style="margin-inline-start:14px;">اطمینان: <span id="liveMaqamConf">—</span></span>
+          <div class="maqam-conf-bar"><div class="maqam-conf-fill" id="liveMaqamConfFill" style="width:0%"></div></div>
+          <div style="font-size:0.82rem;color:#9294bd;margin-top:6px;">درجه سولفژ نت جاری: <b id="liveSolfegeName">—</b></div>
+        </div>
+
+        <div id="livePhraseSection" style="display:none; margin-top:18px;">
+          <div class="chart-title">🎼 فرازهای زنده (به‌محض تمام‌شدن هر فراز اضافه می‌شود)</div>
+          <div id="livePhraseList"></div>
         </div>
       </div>
     </div>
@@ -824,14 +841,52 @@ const liveMicBtn = document.getElementById('liveMicBtn');
 const liveMicStatus = document.getElementById('liveMicStatus');
 const LIVE_SAMPLE_RATE = 16000;
 
+// ---- تشخیص iframe (پیش‌نمایش توکار) — مرورگرها معمولاً در iframe بدون
+//      مجوز صریح allow="microphone" اجازهٔ getUserMedia نمی‌دهند ----
+(function setupIframeWarning() {
+  const isInIframe = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
+  if (isInIframe) {
+    const warn = document.getElementById('qMicIframeWarning');
+    const link = document.getElementById('qMicOpenNewTab');
+    warn.style.display = 'block';
+    link.href = location.href;
+  }
+})();
+
+function describeMicError(err) {
+  const name = err && err.name;
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+    return 'دسترسی به میکروفون رد شد. اگر داخل یک پنجرهٔ توکار (iframe) هستید، صفحه را در یک تب جدید مرورگر باز کنید و دوباره امتحان کنید؛ در غیر این صورت از تنظیمات مرورگر/سایت اجازهٔ میکروفون را فعال کنید.';
+  }
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    return 'هیچ میکروفونی روی این دستگاه پیدا نشد.';
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return 'میکروفون در دسترس نیست (احتمالاً برنامهٔ دیگری از آن استفاده می‌کند).';
+  }
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    return 'دسترسی میکروفون فقط روی HTTPS یا localhost مجاز است. آدرس فعلی: ' + location.protocol + '//' + location.hostname;
+  }
+  return 'دسترسی به میکروفون ممکن نشد: ' + (err && err.message ? err.message : String(err));
+}
+
 liveMicBtn.onclick = async () => {
   if (liveMicStream) { stopLiveMic(); return; }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    liveMicStatus.textContent = '❌ این مرورگر از دسترسی میکروفون پشتیبانی نمی‌کند یا صفحه در بستر امن (HTTPS/localhost) باز نشده است.';
+    return;
+  }
+
+  liveMicStatus.textContent = '⏳ در حال درخواست دسترسی میکروفون از مرورگر...';
   try {
     liveMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
-    liveMicStatus.textContent = '❌ دسترسی به میکروفون رد شد: ' + err.message;
+    liveMicStatus.textContent = '❌ ' + describeMicError(err);
     return;
   }
+
+  resetLiveAnalysisUI();
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   liveMicWs = new WebSocket(`${proto}://${location.host}/ws/live-pitch`);
@@ -840,7 +895,7 @@ liveMicBtn.onclick = async () => {
   liveMicWs.onopen = () => {
     liveMicWs.send(JSON.stringify({ sample_rate: LIVE_SAMPLE_RATE }));
     liveMicBtn.classList.add('recording');
-    liveMicStatus.textContent = 'در حال گوش‌دادن... (برای توقف دوباره کلیک کن)';
+    liveMicStatus.textContent = 'در حال گوش‌دادن... بخوانید — تحلیل زنده است (برای توقف دوباره کلیک کن)';
 
     liveMicCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: LIVE_SAMPLE_RATE });
     const source = liveMicCtx.createMediaStreamSource(liveMicStream);
@@ -858,6 +913,8 @@ liveMicBtn.onclick = async () => {
   liveMicWs.onmessage = (ev) => {
     const data = JSON.parse(ev.data);
     highlightPianoKey(data.note);
+    updateLiveMaqamCard(data.live_maqam, data.solfege);
+    if (data.phrase_completed) addLivePhraseCard(data.phrase_completed);
   };
 
   liveMicWs.onerror = () => {
@@ -867,6 +924,41 @@ liveMicBtn.onclick = async () => {
     if (liveMicStream) stopLiveMic();
   };
 };
+
+function resetLiveAnalysisUI() {
+  document.getElementById('liveMaqamCard').style.display = 'none';
+  document.getElementById('livePhraseSection').style.display = 'none';
+  document.getElementById('livePhraseList').innerHTML = '';
+}
+
+function updateLiveMaqamCard(liveMaqam, solfege) {
+  if (!liveMaqam) return;
+  const card = document.getElementById('liveMaqamCard');
+  card.style.display = 'block';
+  document.getElementById('liveMaqamName').textContent = liveMaqam.maqam || '—';
+  document.getElementById('liveMaqamConf').textContent = (liveMaqam.confidence_pct != null ? liveMaqam.confidence_pct + '%' : '—');
+  document.getElementById('liveMaqamConfFill').style.width = (liveMaqam.confidence_pct || 0) + '%';
+  document.getElementById('liveSolfegeName').textContent = solfege ? solfege.solfege_name : '—';
+}
+
+function addLivePhraseCard(phrase) {
+  const section = document.getElementById('livePhraseSection');
+  const list = document.getElementById('livePhraseList');
+  section.style.display = 'block';
+  const idx = list.children.length + 1;
+  const maqamLabel = phrase.maqam ? `${phrase.maqam}${phrase.confidence_pct != null ? ' (' + phrase.confidence_pct + '%)' : ''}` : 'نامشخص';
+  const chips = (phrase.solfege_sequence || []).map(s => `<span class="solfege-chip">${s}</span>`).join('');
+  const card = document.createElement('div');
+  card.className = 'phrase-card';
+  card.innerHTML = `
+    <div class="phrase-head">
+      <span class="phrase-time">فراز ${idx} (${phrase.duration_sec}s)</span>
+      <span>مقام: <b>${maqamLabel}</b></span>
+      <span class="phrase-trend">روند: ${phrase.melody_trend || '—'}</span>
+    </div>
+    <div class="phrase-notes">${chips || '<span style="color:#9294bd;font-size:0.8rem;">نتی ثبت نشد.</span>'}</div>`;
+  list.prepend(card); // جدیدترین فراز بالای لیست
+}
 
 function stopLiveMic() {
   if (liveMicProcessor) { liveMicProcessor.disconnect(); liveMicProcessor = null; }

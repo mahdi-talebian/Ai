@@ -362,26 +362,118 @@ async def ws_live_pitch(websocket: WebSocket):
     """
     مرورگر قطعات صوتی خام (Float32Array به‌صورت PCM، نرخ نمونه‌برداری ثابت
     مثلاً ۱۶۰۰۰ هرتز) را از میکروفون به این وب‌سوکت ارسال می‌کند. سرور با
-    استفاده از همان موتور Praat (extract_pitch_chunk) که در نسخه پایتونی
-    piano_visualizer استفاده می‌شود، فرکانس پایه (F0) قطعه را تشخیص داده و
-    اطلاعات کامل نت (نام، اکتاو، انحراف کوک به سنت) را برای هایلایت زنده
-    کلاویه پیانو در مرورگر برمی‌گرداند.
+    استفاده از همان موتور Praat (extract_pitch_chunk) فرکانس پایه (F0) هر
+    قطعه را تشخیص می‌دهد و برای هایلایت زنده کلاویه پیانو برمی‌گرداند.
+
+    علاوه بر آن، یک بافرِ رونده (rolling buffer) از نمونه‌های F0 اخیر نگه
+    می‌دارد تا:
+      ۱) مقام لحظه‌ای (بر اساس چند ثانیهٔ اخیر) و سولفژ مقامی نت جاری را
+         محاسبه و همراه هر پیام F0 برگرداند؛
+      ۲) با تشخیص مکث/سکوت واقعی (دقیقاً مشابه تحلیل فایل آپلودی)، پایان
+         هر «فراز» طبیعی زنده را شناسایی کرده و یک خلاصهٔ فراز (مقام غالب
+         آن فراز + دنبالهٔ سولفژ نت‌هایش + روند ملودی) به مرورگر بفرستد.
     """
     await websocket.accept()
     sample_rate = 16000
+    chunk_dur_sec = 4096 / sample_rate  # طول تقریبی هر قطعهٔ دریافتی از ScriptProcessor
+
+    # بافر رونده برای مقام لحظه‌ای (چند ثانیهٔ اخیر)
+    LIVE_WINDOW_SEC = 6.0
+    recent_freqs = []   # [(t, f0), ...]
+
+    # بافر فراز جاری (از آخرین پایان فراز تا الان)
+    phrase_freqs = []    # [(t, f0), ...] از ابتدای فراز جاری
+    silence_run_sec = 0.0
+    t_cursor = 0.0
+    PHRASE_SILENCE_GATE_SEC = 0.4  # این‌مقدار سکوت پیاپی = پایان فراز
+
     try:
         while True:
             msg = await websocket.receive()
             if msg.get("type") == "websocket.disconnect":
                 break
+
             if "bytes" in msg and msg["bytes"] is not None:
                 raw = msg["bytes"]
                 samples = np.frombuffer(raw, dtype=np.float32)
+                dur = len(samples) / sample_rate if sample_rate else chunk_dur_sec
+
                 f0 = await asyncio.get_running_loop().run_in_executor(
                     None, extract_pitch_chunk, samples, sample_rate,
                 )
                 note_info = freq_to_note_info(f0) if f0 else None
-                await websocket.send_json({"note": note_info})
+
+                t_cursor += dur
+
+                # --- به‌روزرسانی بافر رونده مقام لحظه‌ای ---
+                if f0:
+                    recent_freqs.append((t_cursor, f0))
+                cutoff = t_cursor - LIVE_WINDOW_SEC
+                recent_freqs = [(t, f) for (t, f) in recent_freqs if t >= cutoff]
+
+                live_maqam = None
+                solfege = None
+                if len(recent_freqs) >= 3:
+                    pseudo_notes = [{"f0_hz": f, "duration": dur} for (_, f) in recent_freqs]
+                    hist = qma.build_qtet_histogram(pseudo_notes)
+                    candidates = qma.detect_tonic_and_maqam(hist, top_k=1)
+                    if candidates:
+                        best = candidates[0]
+                        live_maqam = {
+                            "maqam": best["maqam"],
+                            "confidence_pct": best["confidence_pct"],
+                            "tonic_freq_hz": best["tonic_freq_hz"],
+                        }
+                        if f0:
+                            tonic_hz = best["tonic_freq_hz"]
+                            maqam_cents = qma.MAQAMAT[best["maqam"]]["cents"]
+                            octave_shift = round(np.log2(f0 / tonic_hz)) if tonic_hz > 0 else 0
+                            tonic_adj = tonic_hz * (2 ** octave_shift)
+                            solfege = qma.note_to_solfege(f0, tonic_adj, maqam_cents)
+
+                # --- ردیابی فراز جاری بر اساس سکوت واقعی ---
+                phrase_completed = None
+                if f0:
+                    phrase_freqs.append((t_cursor, f0, dur))
+                    silence_run_sec = 0.0
+                else:
+                    silence_run_sec += dur
+                    if silence_run_sec >= PHRASE_SILENCE_GATE_SEC and len(phrase_freqs) >= 2:
+                        pseudo_notes = [{"f0_hz": f, "duration": d} for (_, f, d) in phrase_freqs]
+                        hist = qma.build_qtet_histogram(pseudo_notes)
+                        candidates = qma.detect_tonic_and_maqam(hist, top_k=1)
+                        best = candidates[0] if candidates else None
+                        sol_sequence = []
+                        trend = None
+                        if best:
+                            tonic_hz = best["tonic_freq_hz"]
+                            maqam_cents = qma.MAQAMAT[best["maqam"]]["cents"]
+                            freqs_only = np.array([f for (_, f, _) in phrase_freqs])
+                            center_freq = float(np.exp(np.mean(np.log(freqs_only))))
+                            octave_shift = round(np.log2(center_freq / tonic_hz)) if tonic_hz > 0 else 0
+                            tonic_adj = tonic_hz * (2 ** octave_shift)
+                            cents_seq = []
+                            for (_, f, _) in phrase_freqs:
+                                sol = qma.note_to_solfege(f, tonic_adj, maqam_cents)
+                                if sol:
+                                    sol_sequence.append(sol["solfege_name"])
+                                cents_seq.append(1200.0 * np.log2(f / tonic_adj))
+                            trend = qma._melody_trend(cents_seq)
+                        phrase_completed = {
+                            "duration_sec": round(phrase_freqs[-1][0] - phrase_freqs[0][0], 2),
+                            "maqam": best["maqam"] if best else None,
+                            "confidence_pct": best["confidence_pct"] if best else None,
+                            "melody_trend": trend,
+                            "solfege_sequence": sol_sequence,
+                        }
+                        phrase_freqs = []
+
+                await websocket.send_json({
+                    "note": note_info,
+                    "live_maqam": live_maqam,
+                    "solfege": solfege,
+                    "phrase_completed": phrase_completed,
+                })
             elif "text" in msg and msg["text"] is not None:
                 try:
                     cfg = json.loads(msg["text"])
@@ -391,6 +483,7 @@ async def ws_live_pitch(websocket: WebSocket):
                     pass
     except WebSocketDisconnect:
         pass
+
 
 
 # ============================================================================
