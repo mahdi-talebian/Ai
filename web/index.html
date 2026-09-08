@@ -1085,6 +1085,59 @@ function hookSpectrumAnimation() {
 
 const API_BASE = ''; // همان مبدأ (سرور FastAPI هم API و هم فایل‌های وب را سرو می‌کند)
 
+/**
+ * درخواست fetch را با مدیریت خطای محکم اجرا می‌کند: اگر پاسخ سرور JSON
+ * معتبر نباشد (مثلاً چون سرور بک‌اند اصلاً بالا نیست و یک پراکسی/گیت‌وی
+ * واسط با متن ساده HTML/متنی پاسخ داده، یا سرور کرش کرده و صفحه خطای
+ * پیش‌فرض uvicorn/nginx برگردانده)، به‌جای کرش خام روی JSON.parse، یک
+ * پیام خطای فارسیِ قابل‌فهم و دقیق برمی‌گرداند.
+ */
+async function apiRequest(url, options = {}) {
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch (networkErr) {
+    throw new Error(
+      'اتصال به سرور برقرار نشد. مطمئن شوید سرور بک‌اند (server/main.py) در حال اجراست.'
+    );
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+
+  if (!res.ok) {
+    if (isJson) {
+      try {
+        const errData = await res.json();
+        throw new Error(errData.error || `خطای سرور (کد ${res.status})`);
+      } catch (parseErr) {
+        throw new Error(`خطای سرور (کد ${res.status})`);
+      }
+    }
+    // پاسخ غیر-JSON برای وضعیت خطا (مثلاً صفحه HTML پیش‌فرض یا متن ساده
+    // "Method Not Allowed" / "502 Bad Gateway" از یک پراکسی واسط) —
+    // یعنی درخواست اصلاً به کد برنامه ما نرسیده.
+    const statusMessages = {
+      404: 'مسیر مورد نظر در سرور پیدا نشد (۴۰۴).',
+      405: 'این عملیات روی این مسیر مجاز نیست (۴۰۵) — احتمالاً سرور بک‌اند در حال اجرا نیست یا نسخه‌اش قدیمی است.',
+      500: 'خطای داخلی سرور (۵۰۰).',
+      502: 'سرور بک‌اند در دسترس نیست (۵۰۲ Bad Gateway) — بررسی کنید که process سرور فعال باشد.',
+      503: 'سرویس موقتاً در دسترس نیست (۵۰۳).',
+    };
+    throw new Error(
+      statusMessages[res.status] ||
+      `پاسخ غیرمنتظره از سرور دریافت شد (کد ${res.status}). سرور بک‌اند در حال اجرا نیست یا آدرس اشتباه است.`
+    );
+  }
+
+  if (!isJson) {
+    throw new Error('پاسخ سرور از نوع JSON نبود — احتمالاً سرور بک‌اند در حال اجرا نیست.');
+  }
+
+  return res.json();
+}
+
+
 // ---- تب‌های اصلی ----
 const mainTabGeneral = document.getElementById('mainTabGeneral');
 const mainTabQuran = document.getElementById('mainTabQuran');
@@ -1151,14 +1204,13 @@ async function handleQuranFile(file) {
   const form = new FormData();
   form.append('file', file);
   try {
-    const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: form });
-    const data = await res.json();
+    const data = await apiRequest(`${API_BASE}/api/upload`, { method: 'POST', body: form });
     currentJobId = data.job_id;
     qStatus.textContent = 'فایل آپلود شد. آماده تحلیل.';
     qAnalyzeBtn.disabled = false;
     qVideoBtn.disabled = false;
   } catch (err) {
-    qStatus.textContent = '❌ خطا در آپلود: ' + err.message + ' (آیا سرور بک‌اند در حال اجراست؟)';
+    qStatus.textContent = '❌ خطا در آپلود: ' + err.message;
   }
 }
 
@@ -1196,11 +1248,39 @@ const STAGE_LABELS_FA = {
 function subscribeJobProgress(jobId, onUpdate) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws/job/${jobId}`);
+  let receivedAny = false;
+  let pollTimer = null;
+
+  // اگر وب‌سوکت به هر دلیلی (مثلاً پراکسی/فایروال) قطع شد یا هیچ‌وقت باز
+  // نشد، به‌جای ماندن در سکوت، با polling روی /api/status پیشرفت را دنبال
+  // می‌کنیم — تا کاربر همیشه یک نتیجه یا پیام خطای روشن ببیند.
+  function startPollingFallback() {
+    if (pollTimer) return;
+    pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/status/${jobId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        onUpdate(data);
+        if (data.status === 'done' || data.status === 'error') {
+          clearInterval(pollTimer);
+        }
+      } catch (e) { /* در تلاش بعدی دوباره امتحان می‌شود */ }
+    }, 1500);
+  }
+
   ws.onmessage = (ev) => {
-    const data = JSON.parse(ev.data);
-    onUpdate(data);
+    receivedAny = true;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    try {
+      const data = JSON.parse(ev.data);
+      onUpdate(data);
+    } catch (e) {
+      onUpdate({ status: 'error', error: 'پاسخ نامعتبر از سرور دریافت شد.' });
+    }
   };
-  ws.onerror = () => { /* در صورت خطای وب‌سوکت، UI با پیام خطای نهایی به‌روزرسانی می‌شود */ };
+  ws.onerror = () => { startPollingFallback(); };
+  ws.onclose = () => { if (!receivedAny) startPollingFallback(); };
   return ws;
 }
 
@@ -1217,8 +1297,7 @@ qAnalyzeBtn.onclick = async () => {
   form.append('top_k', '3');
 
   try {
-    const res = await fetch(`${API_BASE}/api/analyze/${currentJobId}`, { method: 'POST', body: form });
-    if (!res.ok) throw new Error((await res.json()).error || 'خطای سرور');
+    await apiRequest(`${API_BASE}/api/analyze/${currentJobId}`, { method: 'POST', body: form });
 
     subscribeJobProgress(currentJobId, (data) => {
       if (data.status === 'running' || data.status === 'pending') {
@@ -1252,9 +1331,7 @@ qVideoBtn.onclick = async () => {
   form.append('fps', '12');
 
   try {
-    const res = await fetch(`${API_BASE}/api/video/${currentJobId}`, { method: 'POST', body: form });
-    if (!res.ok) throw new Error((await res.json()).error || 'خطای سرور');
-    const data = await res.json();
+    const data = await apiRequest(`${API_BASE}/api/video/${currentJobId}`, { method: 'POST', body: form });
     const videoJobId = data.job_id;
 
     subscribeJobProgress(videoJobId, (d) => {
@@ -1398,9 +1475,7 @@ document.getElementById('compareBtn').onclick = async () => {
   if (perfEnd) form.append('perf_end', perfEnd);
 
   try {
-    const res = await fetch(`${API_BASE}/api/compare`, { method: 'POST', body: form });
-    if (!res.ok) throw new Error((await res.json()).error || 'خطای سرور');
-    const data = await res.json();
+    const data = await apiRequest(`${API_BASE}/api/compare`, { method: 'POST', body: form });
 
     subscribeJobProgress(data.job_id, (d) => {
       if (d.status === 'running' || d.status === 'pending') {
