@@ -80,7 +80,11 @@ def T(text):
 
 try:
     import sounddevice as sd
-except ImportError:
+except (ImportError, OSError):
+    # روی سرورهای بدون دستگاه صوتی (headless)، sounddevice نصب است ولی
+    # کتابخانه سیستمی PortAudio موجود نیست و هنگام ایمپورت OSError می‌دهد.
+    # در آن حالت فقط حالت پخش/میکروفون محلی غیرفعال می‌شود و بقیهٔ ماژول
+    # (رسم کلاویه و صادرات ویدیو) سالم کار می‌کند.
     sd = None
 
 try:
