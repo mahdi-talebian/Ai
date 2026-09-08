@@ -1,0 +1,18 @@
+# پیکربندی موقت nginx — فقط برای مرحلهٔ اول (قبل از این‌که گواهی SSL
+# اصلاً وجود داشته باشد). این فایل را init-ssl.sh موقتاً جای
+# nginx.conf.template می‌گذارد تا certbot بتواند از طریق پورت ۸۰ اعتبار
+# دامنه را تأیید کند؛ بعد از گرفتن گواهی، خودش کانفیگ نهایی (با HTTPS)
+# را جایگزین می‌کند.
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 200 'در حال آماده‌سازی گواهی SSL...';
+        add_header Content-Type text/plain;
+    }
+}

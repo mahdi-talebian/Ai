@@ -1,0 +1,68 @@
+# ==========================================================================
+# پیکربندی nginx — reverse proxy جلوی اپ FastAPI + گواهی SSL (Let's Encrypt)
+#
+# نکته: این فایل یک TEMPLATE است؛ متغیر ${DOMAIN} توسط envsubst در
+# entrypoint سرویس nginx در docker-compose.yml جایگزین می‌شود — خودتان
+# دستی edit نکنید مگر این‌که docker-compose.yml را هم متناظرش کنید.
+# ==========================================================================
+
+# --- سرور HTTP (پورت ۸۰): فقط برای اعتبارسنجی ACME (گرفتن/تمدید گواهی)
+#     و ریدایرکت دائمی بقیهٔ ترافیک به HTTPS ---
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# --- سرور HTTPS اصلی ---
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # آپلود فایل صوتی طولانی (تا چند ده مگابایت) باید مجاز باشد
+    client_max_body_size 200M;
+
+    # تحلیل فایل‌های طولانی می‌تواند دقیقه‌ها طول بکشد؛ اگرچه معماری اپ
+    # polling/websocket-based است (نه یک HTTP request طولانی)، برای
+    # درخواست‌های آپلود/دانلود ویدیوهای حجیم هم زمان بیشتری لازم است.
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+
+    location / {
+        proxy_pass http://app:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # --- مسیرهای WebSocket (پیشرفت زندهٔ job + میکروفون زنده) ---
+    # باید هدرهای Upgrade/Connection صراحتاً ست شوند وگرنه اتصال وب‌سوکت
+    # پشت nginx شکست می‌خورد.
+    location /ws/ {
+        proxy_pass http://app:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # اتصال وب‌سوکت میکروفون زنده ممکن است دقیقه‌ها باز بماند
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}

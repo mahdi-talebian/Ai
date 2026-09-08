@@ -1,0 +1,9 @@
+server/jobs/
+__pycache__/
+*.pyc
+.git/
+*.mp4
+*.png
+*.wav
+*.mp3
+.DS_Store
