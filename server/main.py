@@ -448,7 +448,9 @@ async def ws_live_pitch(websocket: WebSocket):
                 if len(recent_freqs) >= 3:
                     pseudo_notes = [{"f0_hz": f, "duration": dur} for (_, f) in recent_freqs]
                     hist = qma.build_qtet_histogram(pseudo_notes)
-                    candidates = qma.detect_tonic_and_maqam(hist, top_k=1)
+                    live_finalis = recent_freqs[-1][1] if recent_freqs[-1][1] > 0 else None
+                    live_finalis_cents = (1200.0 * np.log2(live_finalis / 440.0)) % 1200.0 if live_finalis else None
+                    candidates = qma.detect_tonic_and_maqam(hist, top_k=1, finalis_cents=live_finalis_cents)
                     if candidates:
                         best = candidates[0]
                         live_maqam = {
@@ -474,7 +476,9 @@ async def ws_live_pitch(websocket: WebSocket):
                     if silence_run_sec >= PHRASE_SILENCE_GATE_SEC and len(phrase_freqs) >= 2:
                         pseudo_notes = [{"f0_hz": f, "duration": d} for (_, f, d) in phrase_freqs]
                         hist = qma.build_qtet_histogram(pseudo_notes)
-                        candidates = qma.detect_tonic_and_maqam(hist, top_k=1)
+                        ph_finalis = phrase_freqs[-1][1] if phrase_freqs[-1][1] > 0 else None
+                        ph_finalis_cents = (1200.0 * np.log2(ph_finalis / 440.0)) % 1200.0 if ph_finalis else None
+                        candidates = qma.detect_tonic_and_maqam(hist, top_k=1, finalis_cents=ph_finalis_cents)
                         best = candidates[0] if candidates else None
                         sol_sequence = []
                         trend = None

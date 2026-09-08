@@ -19,6 +19,8 @@ import tempfile
 import numpy as np
 import soundfile as sf
 
+np.random.seed(42)  # قطعیت نتایج تست (ویبراتوی سینتتیک)
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import quran_maqam_analyzer as qma  # noqa: E402
 
@@ -37,7 +39,7 @@ EXPECTED_LADDER = {
     "عجم (Ajam)":         ["عجم", "کردان", "محیر", "سنبله", "جهارکاه جواب", "نوا جواب", "حسینی جواب", "عجم جواب"],
     "کرد (Kurd)":         ["دوگاه", "کردی", "جهارکاه", "نوا", "حسینی", "عجم", "کردان", "محیر"],
     "جهارکاه (Jiharkah)": ["جهارکاه", "نوا", "حسینی", "عجم", "کردان", "محیر", "سیکاه جواب", "جهارکاه جواب"],
-    "سیکاه (Sikah)":      ["سیکاه", "جهارکاه", "نوا", "حسینی", "عجم", "کردان", "محیر", "سیکاه جواب"],
+    "سیکاه (Sikah)":      ["سیکاه", "جهارکاه", "نوا", "حسینی", "اوج", "کردان", "محیر", "سیکاه جواب"],
     "نکریز (Nikriz)":     ["راست", "دوگاه", "کردی", "حجاز", "نوا", "حسینی", "عجم", "کردان"],
 }
 
@@ -119,6 +121,39 @@ def test_detection_from_synthetic():
     return failures
 
 
+def test_jins_chains():
+    """زنجیرهٔ اجناس (نظریهٔ عقد و جنس) باید دقیقاً گام جدول را بازتولید کند
+    و هر درجه جنس زادگاه درستی داشته باشد."""
+    failures = []
+    for name, info in qma.MAQAMAT.items():
+        derived = qma.derive_scale_from_jins_chain(info["jins_chain"])
+        if derived != info["scale_ascending"]:
+            failures.append(f"{name}: گام مشتق از اجناس {derived} ≠ جدول {info['scale_ascending']}")
+        jmap = qma.build_degree_jins_map(name)
+        for c in info["scale_ascending"][:-1]:
+            if c not in jmap:
+                failures.append(f"{name}: درجهٔ {c}¢ به هیچ جنسی نسبت داده نشده")
+    # چند نمونهٔ شناخته‌شده:
+    jmap_bayati = qma.build_degree_jins_map("بیاتی (Bayati)")
+    if jmap_bayati[700]["jins"] != "nahawand":
+        failures.append("بیاتی: درجهٔ ۵ (۷۰۰¢) باید متعلق به جنس نهاوند (روی درجهٔ ۴) باشد")
+    jmap_saba = qma.build_degree_jins_map("صبا (Saba)")
+    if jmap_saba[300]["jins"] != "saba" or jmap_saba[700]["jins"] != "hijaz":
+        failures.append("صبا: درجهٔ ۳ باید جنس صبا و درجهٔ ۵ باید جنس حجازِ هم‌پوشان باشد")
+    # فرمول جنس‌ها: «از هر نت واحد چقدر باید بروی»
+    if qma.JINSAT["sikah"]["intervals"] != [150, 200]:
+        failures.append("جنس سیکاه (ثلاثی) باید ۱۵۰+۲۰۰ باشد")
+    if qma.JINSAT["hijaz"]["intervals"] != [100, 300, 100]:
+        failures.append("جنس حجاز باید ۱۰۰+۳۰۰+۱۰۰ باشد")
+    # برچسب جنس در سولفژ
+    s = qma.note_to_solfege(147.0 * 2 ** (700 / 1200.0), 147.0,
+                            qma.MAQAMAT["بیاتی (Bayati)"]["cents"],
+                            maqam_name="بیاتی (Bayati)")
+    if s.get("jins_fa") != "نهاوند" or s.get("jins_position") != 2:
+        failures.append(f"بیاتی درجهٔ ۵: برچسب جنس نادرست: {s.get('jins_fa')} ن{s.get('jins_position')}")
+    return failures
+
+
 if __name__ == "__main__":
     print("بخش ۱: نگاشت مطلق درجات...")
     f1 = test_ladder_mapping()
@@ -126,10 +161,16 @@ if __name__ == "__main__":
     for msg in f1:
         print("    " + msg)
 
-    print("بخش ۲: تشخیص از تلاوت مصنوعی (آغاز از غماز، تونیک غیرمعمول)...")
+    print("بخش ۲: زنجیرهٔ اجناس (عقد و جنس) و برچسب جنس نت‌ها...")
+    fj = test_jins_chains()
+    print("  " + ("✓ زنجیرهٔ اجناس هر ۱۰ مقام گام جدول را بازتولید می‌کند" if not fj else "✗ خطا"))
+    for msg in fj:
+        print("    " + msg)
+
+    print("بخش ۳: تشخیص از تلاوت مصنوعی (آغاز از غماز، تونیک غیرمعمول)...")
     f2 = test_detection_from_synthetic()
 
-    total = len(f1) + len(f2)
+    total = len(f1) + len(fj) + len(f2)
     print(f"\n=== نتیجه: {total} خطا ===")
     for msg in f1 + f2:
         print("  ✗ " + msg)

@@ -259,6 +259,12 @@
           <div class="chart-title">🕌 مقام‌های محتمل</div>
           <div id="qMaqamList"></div>
 
+          <div id="qJinsSection" style="display:none;">
+            <div class="chart-title">🧬 زنجیرهٔ اجناس مقام (عقد و جنس)</div>
+            <div class="hint-text">هر مقام زنجیره‌ای از اجناس ثلاثی/رباعی است که روی «عقد»ها نشسته‌اند — فرمول هر جنس از نت واحدش (پردهٔ تام، نیم‌پرده، سه‌ربع، یک‌ونیم‌پرده) و جایگاه هر درجه در جنس زادگاهش این‌جا نمایش داده می‌شود.</div>
+            <div id="qJinsInfo"></div>
+          </div>
+
           <div id="qTimelineSection" style="display:none;">
             <div class="chart-title">🕐 تایم‌لاین تغییر مقام</div>
             <div id="qTimelineInfo"></div>
@@ -840,6 +846,38 @@ function renderQuranReport(report) {
       <div style="font-size:0.82rem;color:#9294bd;margin-top:6px;">تونیک: ${c.tonic_freq_hz} Hz — ${c.mood}</div>
     </div>`).join('');
 
+  // --- زنجیرهٔ اجناس مقام تشخیصی (نظریهٔ عقد و جنس) + جدول درجات ---
+  const jinsSection = document.getElementById('qJinsSection');
+  const jinsInfo = document.getElementById('qJinsInfo');
+  const mdt = report.maqam_degree_table;
+  if (jinsSection && jinsInfo && mdt) {
+    jinsSection.style.display = 'block';
+    let jhtml = `<div style="margin-bottom:10px;">مقام <b>${mdt.maqam}</b> — تونیک این تلاوت: <b style="color:#23e0c2;">${mdt.tonic_freq_hz} Hz</b> روی درجهٔ «<b>${mdt.tonic_absolute_fa}</b>»</div>`;
+    if (mdt.jins_chain && mdt.jins_chain.length) {
+      jhtml += `<div style="font-size:0.85rem;color:#9294bd;margin-bottom:6px;">زنجیرهٔ اجناس (عقد → جنس):</div>`;
+      jhtml += mdt.jins_chain.map(jc => `
+        <div style="background:rgba(124,92,255,.08);border:1px solid rgba(124,92,255,.25);border-radius:8px;padding:7px 10px;margin-bottom:5px;font-size:0.85rem;">
+          عقد «<b style="color:#e8e9ff;">${jc.on_degree_fa}</b>» (درجهٔ ${jc.on_degree})${jc.overlap ? ' <span style="color:#ffb703;">هم‌پوشان</span>' : ''}
+          ← جنس <b style="color:#7c9dff;">${jc.jins_fa}</b> <span style="color:#9294bd;">(${jc.jins_en} — ${jc.jins_type})</span>
+          <div style="color:#9294bd;font-size:0.78rem;margin-top:2px;">فرمول از نت واحد: ${jc.formula_fa} — گسترهٔ ${jc.span_cents} سنت</div>
+        </div>`).join('');
+      if (mdt.jins_alternatives && mdt.jins_alternatives.length) {
+        jhtml += `<div style="color:#9294bd;font-size:0.78rem;">گزینه‌ها: ${mdt.jins_alternatives.join('؛ ')}</div>`;
+      }
+      if (mdt.descending_note) {
+        jhtml += `<div style="color:#ffb703;font-size:0.78rem;margin-top:4px;">نکتهٔ نزولی: ${mdt.descending_note}</div>`;
+      }
+    }
+    if (mdt.degrees && mdt.degrees.length) {
+      jhtml += `<div style="font-size:0.85rem;color:#9294bd;margin:10px 0 6px;">درجه‌به‌درجه (از هر نت چقدر باید بروی):</div>`;
+      jhtml += `<div style="display:flex;flex-wrap:wrap;gap:5px;">` + mdt.degrees.map(d => `
+        <span class="solfege-chip" title="درجهٔ ${d.degree_index} — ${d.cents_from_tonic}¢ از تونیک — فرکانس مورد انتظار: ${d.expected_freq_hz} Hz${d.step_from_previous_fa ? ' — از درجهٔ قبل: ' + d.step_from_previous_fa : ''}${d.jins_fa ? ' — جنس ' + d.jins_fa + '، نُت ' + d.jins_position : ''}">
+          ${d.absolute_fa}<span class="reg">${d.step_from_previous_fa ? ' ← ' + d.step_from_previous_fa : ''}${d.jins_fa ? ' · ' + d.jins_fa + ' ن' + d.jins_position : ''}</span>
+        </span>`).join('') + `</div>`;
+    }
+    jinsInfo.innerHTML = jhtml;
+  }
+
   const tlSection = document.getElementById('qTimelineSection');
   const tlInfo = document.getElementById('qTimelineInfo');
   if (report.maqam_timeline && report.maqam_timeline.windows && report.maqam_timeline.windows.length) {
@@ -876,8 +914,9 @@ function renderQuranReport(report) {
       const chips = (ph.notes_solfege || []).map(n => {
         if (!n.solfege_name) return '';
         const title = n.f0_hz ? n.f0_hz.toFixed(1) + ' Hz، انحراف ' + (n.cents_off_degree ?? 0) + '¢'
+                              + (n.jins_fa ? ' — جنس ' + n.jins_fa + '، نُت ' + n.jins_position : '')
                               + (n.in_maqam === false ? ' — خارج از درجات مقام' : '') : '';
-        const label = n.absolute_degree_fa ? `${n.absolute_degree_fa} <span class="reg">· ${n.solfege_name}</span>` : n.solfege_name;
+        const label = n.absolute_degree_fa ? `${n.absolute_degree_fa} <span class="reg">· ${n.solfege_name}${n.jins_fa ? ' · ' + n.jins_fa + ' ن' + n.jins_position : ''}</span>` : n.solfege_name;
         const outStyle = n.in_maqam === false ? ' style="opacity:.55;text-decoration:underline dotted;"' : '';
         return `<span class="solfege-chip"${outStyle} title="${title}">${label}</span>`;
       }).join('');

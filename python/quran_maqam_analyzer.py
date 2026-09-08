@@ -147,6 +147,179 @@ NOTE_NAMES_12 = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
 # منبع: استاندارد کنگره قاهره ۱۹۳۲ / maqamworld.com / Wikipedia Arabic maqam
 # هر مقام ۸ درجه دارد (درجه اول = تونیک = صفر سنت، درجه آخر = اکتاو = ۱۲۰۰ سنت)
 # ----------------------------------------------------------------------------
+# ============================================================================
+# اجناس (Ajnās) — آجرهای ساختمانی مقام‌ها بر پایهٔ نظریهٔ «عقد و جنس»
+# ============================================================================
+#
+# نظریهٔ کلاسیک موسیقی مقامی (که در آموزش تلاوت هم مبنای کار است) هر مقام را
+# نه یک «جدول مسط درجه‌ها»، بلکه زنجیره‌ای از «اجناس» می‌داند که هر کدام روی
+# یک «عقد» (گره/نشیمن‌گاه؛ درجهٔ شروع جنس) سوار می‌شوند:
+#
+#   - جنس (Jins): گروه ۳‌نتّی (ثلاثی) یا ۴‌نتّی (رباعی) با فاصله‌های مشخص.
+#     از هر نت واحد (عقد) که شروع شود، «فرمول» حرکتش ثابت است:
+#       جنس راست:    پردهٔ تام ← سه‌ربع ← سه‌ربع        (۲۰۰+۱۵۰+۱۵۰)
+#       جنس بیاتی:   سه‌ربع ← سه‌ربع ← پردهٔ تام        (۱۵۰+۱۵۰+۲۰۰)
+#       جنس حجاز:    نیم‌پرده ← یک‌ونیم‌پرده ← نیم‌پرده   (۱۰۰+۳۰۰+۱۰۰)
+#       جنس کرد:     نیم‌پرده ← پردهٔ تام ← پردهٔ تام     (۱۰۰+۲۰۰+۲۰۰)
+#       جنس نهاوند:  پردهٔ تام ← نیم‌پرده ← پردهٔ تام     (۲۰۰+۱۰۰+۲۰۰)
+#       جنس عجم:     پردهٔ تام ← پردهٔ تام ← نیم‌پرده     (۲۰۰+۲۰۰+۱۰۰)
+#       جنس جهارکاه: پردهٔ تام ← پردهٔ تام ← نیم‌پرده     (۲۰۰+۲۰۰+۱۰۰)
+#       جنس صبا:     سه‌ربع ← سه‌ربع ← نیم‌پرده          (۱۵۰+۱۵۰+۱۰۰ — چهارم نیم‌بمل‌گرفته!)
+#       جنس نکریز:   پردهٔ تام ← نیم‌پرده ← یک‌ونیم‌پرده  (۲۰۰+۱۰۰+۳۰۰ — گسترده)
+#       جنس سیکاه:   سه‌ربع ← پردهٔ تام                  (۱۵۰+۲۰۰ — ثلاثی! فقط ۳۵۰ سنت)
+#
+#   - عقد (Aqd): درجه‌ای از نردبان درجات که جنس از روی آن «گره» می‌زند.
+#     مقام = زنجیرهٔ اجناس روی عقود متوالی (عقد اول = تونیک؛ جنس روی عقد نوا
+#     «جواب» جنس اول خوانده می‌شود).
+#
+# منبع ساختار هر ۱۰ مقام: MaqamWorld (متن توصیف زنجیرهٔ اجناس هر مقام) +
+# استاندارد کنگرهٔ قاهرهٔ ۱۹۳۲.
+JINSAT = {
+    "rast": {
+        "fa": "راست", "en": "Rast", "type": "رباعی",
+        "intervals": [200, 150, 150],
+        "formula_fa": "پردهٔ تام + سه‌ربع + سه‌ربع",
+    },
+    "bayati": {
+        "fa": "بیاتی", "en": "Bayati", "type": "رباعی",
+        "intervals": [150, 150, 200],
+        "formula_fa": "سه‌ربع + سه‌ربع + پردهٔ تام",
+    },
+    "hijaz": {
+        "fa": "حجاز", "en": "Hijaz", "type": "رباعی",
+        "intervals": [100, 300, 100],
+        "formula_fa": "نیم‌پرده + یک‌ونیم‌پرده + نیم‌پرده",
+    },
+    "kurd": {
+        "fa": "کرد", "en": "Kurd", "type": "رباعی",
+        "intervals": [100, 200, 200],
+        "formula_fa": "نیم‌پرده + پردهٔ تام + پردهٔ تام",
+    },
+    "nahawand": {
+        "fa": "نهاوند", "en": "Nahawand", "type": "رباعی",
+        "intervals": [200, 100, 200],
+        "formula_fa": "پردهٔ تام + نیم‌پرده + پردهٔ تام",
+    },
+    "ajam": {
+        "fa": "عجم", "en": "Ajam", "type": "رباعی",
+        "intervals": [200, 200, 100],
+        "formula_fa": "پردهٔ تام + پردهٔ تام + نیم‌پرده",
+    },
+    "jiharkah": {
+        "fa": "جهارکاه", "en": "Jiharkah", "type": "رباعی",
+        "intervals": [200, 200, 100],
+        "formula_fa": "پردهٔ تام + پردهٔ تام + نیم‌پرده",
+    },
+    "saba": {
+        "fa": "صبا", "en": "Saba", "type": "رباعی ناقص (چهارم نیم‌بمل‌گرفته)",
+        "intervals": [150, 150, 100],
+        "formula_fa": "سه‌ربع + سه‌ربع + نیم‌پرده",
+    },
+    "nikriz": {
+        "fa": "نکریز", "en": "Nikriz", "type": "رباعی گسترده",
+        "intervals": [200, 100, 300],
+        "formula_fa": "پردهٔ تام + نیم‌پرده + یک‌ونیم‌پرده",
+    },
+    "sikah": {
+        "fa": "سیکاه", "en": "Sikah", "type": "ثلاثی",
+        "intervals": [150, 200],
+        "formula_fa": "سه‌ربع + پردهٔ تام",
+    },
+    "upper_rast": {
+        "fa": "راست بالایی", "en": "Upper Rast", "type": "رباعی",
+        "intervals": [200, 150, 150],
+        "formula_fa": "پردهٔ تام + سه‌ربع + سه‌ربع (تونیک جنس روی درجهٔ ۸)",
+    },
+    "upper_ajam": {
+        "fa": "عجم بالایی", "en": "Upper Ajam", "type": "رباعی",
+        "intervals": [200, 200, 100],
+        "formula_fa": "پردهٔ تام + پردهٔ تام + نیم‌پرده (تونیک جنس روی درجهٔ ۸)",
+    },
+}
+
+_QUARTER_STEP_NAMES_FA = {
+    1: "ربع‌پرده", 2: "نیم‌پرده", 3: "سه‌ربع", 4: "پردهٔ تام",
+    5: "پرده‌وربع", 6: "پرده‌ونیم", 7: "پرده‌وسه‌ربع", 8: "دو پردهٔ تام",
+}
+
+
+def cents_to_step_label_fa(cents: float) -> str:
+    """فاصلهٔ بین دو درجه را با واحدهای سنتی آموزش تلاوت می‌گوید
+    (ربع‌پرده/نیم‌پرده/سه‌ربع/پردهٔ تام/…)."""
+    q = int(round(abs(cents) / 50.0))
+    if q == 0:
+        return "هم‌نوا"
+    if q in _QUARTER_STEP_NAMES_FA:
+        return _QUARTER_STEP_NAMES_FA[q]
+    return f"{q / 4:.2f} پرده"
+
+
+def derive_scale_from_jins_chain(chain):
+    """گام مقام را از زنجیرهٔ اجناس می‌سازد — تا جدول درجه‌ها و نظریهٔ
+    اجناس هرگز از هم جدا نیفتند."""
+    degrees = [0.0]
+    for step in chain:
+        jins = JINSAT[step["jins"]]
+        on_deg = step["on_degree"]
+        if on_deg - 1 < len(degrees):
+            start = degrees[on_deg - 1]
+        else:
+            gap = step.get("gap_cents")
+            if gap is None:
+                raise ValueError(
+                    f"عقد درجهٔ {on_deg} هنوز ساخته نشده و gap_cents مشخص نیست")
+            start = degrees[-1] + gap
+        note = start
+        notes = [note]
+        for iv in jins["intervals"]:
+            note = note + iv
+            notes.append(note)
+        for note in notes:
+            note_r = round(note)
+            if note_r <= 1200 and note_r not in [round(d) for d in degrees]:
+                degrees.append(note_r)
+    # کردان (اکتاو تونیک) همیشه درجهٔ پایانی گام است
+    if 1200 not in [round(d) for d in degrees]:
+        degrees.append(1200)
+    return sorted(degrees)
+
+
+def build_degree_jins_map(maqam_name):
+    """
+    برای هر درجهٔ گام مقام می‌گوید متعلق به کدام جنس است و نُتِ چندمِ آن
+    جنس محسوب می‌شود (بر اساس زنجیرهٔ عقود). اولویت با اولین جنس زنجیره
+    است — مثلاً درجهٔ ۳ صبا هم «نت سوم جنس صبا» است و هم «عقد جنس حجاز»،
+    و این‌جا به جنس صبا نسبت داده می‌شود.
+
+    خروجی: {cents_degree: {"jins": key, "position": 1-based}}
+    """
+    info = MAQAMAT[maqam_name]
+    chain = info["jins_chain"]
+    jmap = {}
+    degrees = [0.0]
+    for step in chain:
+        jins = JINSAT[step["jins"]]
+        on_deg = step["on_degree"]
+        if on_deg - 1 < len(degrees):
+            start = degrees[on_deg - 1]
+        else:
+            start = degrees[-1] + step.get("gap_cents", 200)
+        note = start
+        notes = [note]
+        for iv in jins["intervals"]:
+            note += iv
+            notes.append(note)
+        for pos, note in enumerate(notes, 1):
+            note_r = round(note)
+            if note_r <= 1200:
+                jmap.setdefault(note_r, {"jins": step["jins"], "position": pos})
+        for note in notes:
+            note_r = round(note)
+            if note_r <= 1200 and note_r not in [round(d) for d in degrees]:
+                degrees.append(note_r)
+    return jmap
+
+
 MAQAMAT = {
     "رست (Rast)": {
         "cents": [0, 200, 350, 500, 700, 900, 1050, 1200],
@@ -156,7 +329,14 @@ MAQAMAT = {
         "jins_structure": "جنس رست (پرده+سوم نیم‌بمل) + جنس رست روی نوا",
         "mood": "وقار، متانت، صلابت — مناسب قرائت‌های مجلسی و آغاز تلاوت",
         "family": "رست",
-    },
+
+        # MaqamWorld: «جنس راست روی تونیک، سپس جنس راست بالایی (یا نهاوند) روی درجهٔ ۵»
+        "jins_chain": [
+            {"jins": "rast", "on_degree": 1},
+            {"jins": "upper_rast", "on_degree": 5, "gap_cents": 200},
+        ],
+        "jins_alternatives": ["به‌جای جنس دوم، نهاوند روی درجهٔ ۵ نیز خوانده می‌شود (رست مصری)"],
+        },
     "بیاتی (Bayati)": {
         "cents": [0, 150, 300, 500, 700, 800, 1000, 1200],
         "scale_ascending": [0, 150, 300, 500, 700, 800, 1000, 1200],
@@ -165,7 +345,14 @@ MAQAMAT = {
         "jins_structure": "جنس بیاتی (پرده+پرده+پرده) + جنس نهاوند روی نوا",
         "mood": "گرمی، صمیمیت، اندوه ملایم — رایج‌ترین مقام آغازین در تلاوت",
         "family": "بیات",
-    },
+
+        # MaqamWorld: «جنس بیاتی روی تونیک، سپس نهاوند (یا راست) روی درجهٔ ۴»
+        "jins_chain": [
+            {"jins": "bayati", "on_degree": 1},
+            {"jins": "nahawand", "on_degree": 4},
+        ],
+        "jins_alternatives": ["به‌جای جنس دوم، راست روی درجهٔ ۴ نیز خوانده می‌شود (درجهٔ ۶ نیم‌بمل)"],
+        },
     "حجاز (Hijaz)": {
         "cents": [0, 100, 400, 500, 700, 800, 1000, 1200],
         "scale_ascending": [0, 100, 400, 500, 700, 800, 1000, 1200],
@@ -174,7 +361,14 @@ MAQAMAT = {
         "jins_structure": "جنس حجاز (نیم‌پرده+سه‌ودیما+نیم‌پرده) + جنس حجاز روی نوا",
         "mood": "اشتیاق، بشارت، عشق و شور معنوی",
         "family": "حجاز",
-    },
+
+        # MaqamWorld: «جنس حجاز روی تونیک، سپس نهاوند (یا راست) روی درجهٔ ۴»
+        "jins_chain": [
+            {"jins": "hijaz", "on_degree": 1},
+            {"jins": "nahawand", "on_degree": 4},
+        ],
+        "jins_alternatives": ["به‌جای جنس دوم، راست روی درجهٔ ۴ نیز خوانده می‌شود (درجهٔ ۶ نیم‌بمل)"],
+        },
     "صبا (Saba)": {
         # ساختار دقیق: جنس صبا (دوگاه — سیکاه — جهارکاه — حجاز: ۱۵۰+۱۵۰+۱۰۰)
         # با «چهارم نیم‌بمل‌گرفته» (امضای اصلی صبا)، پرش سه‌ودیماً از حجاز به
@@ -187,7 +381,16 @@ MAQAMAT = {
         "jins_structure": "جنس صبا (پرده+پرده+نیم‌پرده، چهارم نیم‌بمل) + سه‌ودیما + جنس عجم روی درجهٔ ۶",
         "mood": "حزن، اندوه عمیق، هشدار و بیداری",
         "family": "صبا",
-    },
+
+        # MaqamWorld: «جنس صبا روی تونیک، هم‌پوشان با جنس حجاز روی درجهٔ ۳،
+        # سپس جنس عجم (یا نکریز) روی درجهٔ ۶»
+        "jins_chain": [
+            {"jins": "saba", "on_degree": 1},
+            {"jins": "hijaz", "on_degree": 3, "overlap": True},
+            {"jins": "ajam", "on_degree": 6},
+        ],
+        "jins_alternatives": ["به‌جای جنس سوم، نکریز روی درجهٔ ۶ نیز خوانده می‌شود"],
+        },
     "نهاوند (Nahawand)": {
         "cents": [0, 200, 300, 500, 700, 800, 1100, 1200],
         "scale_ascending": [0, 200, 300, 500, 700, 800, 1100, 1200],
@@ -198,7 +401,14 @@ MAQAMAT = {
         "descending_note": "در سرازیری، درجهٔ ۷ به عجم (نیم‌بمل) می‌رود",
         "mood": "سرور معرفت، لطافت، امید به رحمت الهی",
         "family": "نهاوند",
-    },
+
+        # MaqamWorld: «جنس نهاوند روی تونیک، سپس حجاز (یا کرد) روی درجهٔ ۵»
+        "jins_chain": [
+            {"jins": "nahawand", "on_degree": 1},
+            {"jins": "hijaz", "on_degree": 5, "gap_cents": 200},
+        ],
+        "jins_alternatives": ["به‌جای جنس دوم، کرد روی درجهٔ ۵ نیز خوانده می‌شود (نهاوند کُرد)"],
+        },
     "عجم (Ajam)": {
         "cents": [0, 200, 400, 500, 700, 900, 1100, 1200],
         "scale_ascending": [0, 200, 400, 500, 700, 900, 1100, 1200],
@@ -207,7 +417,14 @@ MAQAMAT = {
         "jins_structure": "جنس عجم (پرده+پرده+نیم‌پرده) + جنس عجم روی کردان — نزدیک به ماژور غربی",
         "mood": "شادی و نشاط (نزدیک‌ترین مقام به ماژور غربی)",
         "family": "عجم",
-    },
+
+        # MaqamWorld: «جنس عجم روی تونیک، سپس عجم بالایی (یا نهاوند) روی درجهٔ ۵»
+        "jins_chain": [
+            {"jins": "ajam", "on_degree": 1},
+            {"jins": "upper_ajam", "on_degree": 5, "gap_cents": 200},
+        ],
+        "jins_alternatives": ["به‌جای جنس دوم، نهاوند روی درجهٔ ۵ نیز خوانده می‌شود"],
+        },
     "کرد (Kurd)": {
         "cents": [0, 100, 300, 500, 700, 800, 1000, 1200],
         "scale_ascending": [0, 100, 300, 500, 700, 800, 1000, 1200],
@@ -216,7 +433,13 @@ MAQAMAT = {
         "jins_structure": "جنس کرد (نیم‌پرده+پرده+پرده، شبیه فریژین) + جنس کرد روی نوا",
         "mood": "حزن عمیق، شبیه فریژین غربی",
         "family": "کرد",
-    },
+
+        # MaqamWorld: «جنس کرد روی تونیک، سپس نهاوند روی درجهٔ ۴»
+        "jins_chain": [
+            {"jins": "kurd", "on_degree": 1},
+            {"jins": "nahawand", "on_degree": 4},
+        ],
+        },
     "جهارکاه (Jiharkah)": {
         "cents": [0, 200, 400, 500, 700, 900, 1050, 1200],
         "scale_ascending": [0, 200, 400, 500, 700, 900, 1050, 1200],
@@ -225,16 +448,34 @@ MAQAMAT = {
         "jins_structure": "جنس جهارکاه (پرده+پرده+نیم‌پرده، هفتم نیم‌بمل) — از فصیلهٔ رست",
         "mood": "تأثر، حالت خاص و برجسته",
         "family": "رست",
-    },
+
+        # MaqamWorld: «جنس جهارکاه روی تونیک، سپس راست بالایی روی درجهٔ ۵
+        # (تونیک جنس دوم روی درجهٔ ۸ — همین رازِ درجهٔ ۷ نیم‌بمل جهارکاه است)»
+        "jins_chain": [
+            {"jins": "jiharkah", "on_degree": 1},
+            {"jins": "upper_rast", "on_degree": 5, "gap_cents": 200},
+        ],
+        },
     "سیکاه (Sikah)": {
-        # درجهٔ ۵ = عجم (۶۵۰ سنت از تونیک سیکاه: فاصلهٔ واقعی سی‌بمل از می‌نیم‌بمل)
-        "cents": [0, 150, 350, 550, 650, 850, 1050, 1200],
-        "scale_ascending": [0, 150, 350, 550, 650, 850, 1050, 1200],
-        "scale_descending": [0, 150, 350, 550, 650, 850, 1050, 1200],
+        # گام دقیق مقام سیکاه طبق زنجیرهٔ اجناس (MaqamWorld): جنس ثلاثی
+        # سیکاه (۱۵۰+۲۰۰) + راست بالایی روی درجهٔ ۳ + راست روی درجهٔ ۶ —
+        # یعنی درجهٔ ۵ = ۷۰۰ سنت؛ نسخهٔ ۶۵۰ (سی‌بمل) تعلق به خاندان حزام/عراق دارد.
+        "cents": [0, 150, 350, 550, 700, 850, 1050, 1200],
+        "scale_ascending": [0, 150, 350, 550, 700, 850, 1050, 1200],
+        "scale_descending": [0, 150, 350, 550, 700, 850, 1050, 1200],
         "tonic_ladder_cents": 350,  # تونیک روی درجهٔ «سیکاه» (می نیم‌بمل)
         "jins_structure": "جنس سیکاه (پرده+پردهٔ کبیر) + جنس بوسلیک/کرد روی حسینی — سیر نزولی به ناحیهٔ رست",
         "mood": "هیجانات نفسانی، حالت خاص مقامات سیکاه",
         "family": "سیکاه",
+
+        # MaqamWorld: «جنس سیکاه (ثلاثی) روی تونیک، سپس راست بالایی روی درجهٔ ۳
+        # (تونیکش روی درجهٔ ۶)، سپس جنس راست روی درجهٔ ۶»
+        "jins_chain": [
+            {"jins": "sikah", "on_degree": 1},
+            {"jins": "upper_rast", "on_degree": 3},
+            {"jins": "rast", "on_degree": 6},
+        ],
+        "jins_alternatives": ["نسخهٔ رایج در خاندان حزام/عراق: درجهٔ ۵ = ۶۵۰ (سی‌بمل، اثر جنس عجم/اوج)"],
     },
     "نکریز (Nikriz)": {
         "cents": [0, 200, 300, 600, 700, 900, 1000, 1200],
@@ -244,7 +485,13 @@ MAQAMAT = {
         "jins_structure": "جنس نکریز (پرده+نیم‌پرده+سه‌ودیما) + جنس کرد روی نوا",
         "mood": "شکوه، فخامت، حالت حماسی",
         "family": "نکریز",
-    },
+
+        # MaqamWorld: «جنس نکریز روی تونیک، سپس نهاوند روی درجهٔ ۵»
+        "jins_chain": [
+            {"jins": "nikriz", "on_degree": 1},
+            {"jins": "nahawand", "on_degree": 5, "gap_cents": 100},
+        ],
+        },
 }
 
 
@@ -375,6 +622,9 @@ def refine_tonic_hz(notes, tonic_bin: int, maqam_name: str):
     return round(tonic_hz, 2), round(best_delta, 1)
 
 
+_DEGREE_JINS_MAP_CACHE = {}
+
+
 def note_to_solfege(f0_hz: float, tonic_hz: float, maqam_cents,
                     maqam_name=None, scale_cents=None):
     """
@@ -422,13 +672,32 @@ def note_to_solfege(f0_hz: float, tonic_hz: float, maqam_cents,
     # فقط وقتی نام مقام مشخص باشد؛ چون جایگاه تونیک مقام روی نردبان درجات
     # برای هر مقام متفاوت است (بیاتی/حجاز/کرد/صبا از دوگاه، سیکاه از سیکاه، ...).
     if maqam_name and maqam_name in MAQAMAT:
-        ladder_cents = MAQAMAT[maqam_name]["tonic_ladder_cents"]
+        info = MAQAMAT[maqam_name]
+        ladder_cents = info["tonic_ladder_cents"]
         abs_fa, abs_en, abs_reg = absolute_degree_name(cents_in_octave, ladder_cents)
         result["absolute_degree_fa"] = abs_fa
         result["absolute_degree_en"] = abs_en
         result["absolute_solfege_name"] = abs_fa
         # آیا نت واقعاً روی یکی از درجات مقام نشسته؟ (تلورانس ۴۰ سنت)
         result["in_maqam"] = bool(abs(cents_off) <= 40.0)
+
+        # --- نسبت نت به اجناس مقام (نظریهٔ عقد و جنس) ---
+        # هر درجه به جنسِ «زادگاه» خودش نسبت داده می‌شود + نُتِ چندمِ آن جنس
+        degree_cents = round(scale[degree_idx])
+        jmap = _DEGREE_JINS_MAP_CACHE.get((maqam_name, tuple(info["scale_ascending"])))
+        if jmap is None:
+            try:
+                jmap = build_degree_jins_map(maqam_name)
+                _DEGREE_JINS_MAP_CACHE[(maqam_name, tuple(info["scale_ascending"]))] = jmap
+            except Exception:
+                jmap = {}
+        jinfo = jmap.get(degree_cents)
+        if jinfo:
+            j = JINSAT[jinfo["jins"]]
+            result["jins_fa"] = j["fa"]
+            result["jins_en"] = j["en"]
+            result["jins_type"] = j["type"]
+            result["jins_position"] = jinfo["position"]
 
     return result
 
@@ -713,7 +982,25 @@ def _circular_bhattacharyya(hist, template):
     return corr
 
 
-def detect_tonic_and_maqam(hist, top_k=3):
+# وزن «پیشینِ قرار»: نتی که فراز/تلاوت روی آن می‌نشیند (فرود) قوی‌ترین
+# نشانهٔ تونیک است — کاندیدهایی که تونیک‌شان نزدیک قرار باشد (تا ۱۵۰ سنت)
+# تا ۳۵٪ امتیاز بیشتری می‌گیرند. این تفکیک‌کنندهٔ اصلی «هم‌ارزی چرخشی» است:
+# مثلاً نت‌های مقام کرد از درجهٔ ۴ دقیقاً همان مجموعهٔ نهاوند از تونیک است و
+# هیستوگرامِ محض نمی‌تواند بگوید قاری روی کدام عقد «نشسته» — قرار می‌گوید.
+FINALIS_BONUS = 0.35
+FINALIS_BONUS_RANGE_CENTS = 150.0
+
+
+def _finalis_bonus(tonic_cents: float, finalis_cents):
+    """ضریب تکثیری امتیاز بر اساس نزدیکی تونیک فرضی به قرار (فرود واقعی)."""
+    if finalis_cents is None:
+        return 1.0
+    dist = abs(tonic_cents - float(finalis_cents)) % 1200.0
+    dist = min(dist, 1200.0 - dist)
+    return 1.0 + FINALIS_BONUS * max(0.0, 1.0 - dist / FINALIS_BONUS_RANGE_CENTS)
+
+
+def detect_tonic_and_maqam(hist, top_k=3, finalis_cents=None):
     """
     با ضریب بهاتاچاریای دایره‌ای بین نمایهٔ مشاهده‌شده (hist) و الگوی هر
     مقام در تمام جابه‌جایی‌های ممکن تونیک، بهترین ترکیب‌های (تونیک, مقام)
@@ -765,15 +1052,18 @@ def detect_tonic_and_maqam(hist, top_k=3):
                 scale_form = "descending"
         if np.isnan(best_score):
             best_score = 0.0
-        tonic_freq_hz = 440.0 * (2 ** ((best_shift * bin_width) / 1200.0))
+        tonic_cents = (best_shift * bin_width) % 1200.0
+        bonus = _finalis_bonus(tonic_cents, finalis_cents)
+        tonic_freq_hz = 440.0 * (2 ** (tonic_cents / 1200.0))
         results.append({
             "maqam": maqam_name,
             # tonic_bin بر حسب گام ربع‌پرده‌ی معادل (۵۰ سنتی) نگه داشته شده تا
             # ساختار خروجی/گزارش‌های قدیمی سازگار بماند؛ دقت واقعی محاسبه
             # (tonic_freq_hz) از رزولوشن ریزبین ۵ سنتی می‌آید.
-            "tonic_bin": int(round((best_shift * bin_width) / 50.0)) % 24,
+            "tonic_bin": int(round(tonic_cents / 50.0)) % 24,
             "tonic_freq_hz": round(tonic_freq_hz, 2),
-            "score": best_score,
+            "score": best_score * bonus,
+            "finalis_bonus": round(bonus, 3),
             "scale_form": scale_form,
             "mood": info["mood"],
         })
@@ -888,7 +1178,8 @@ def build_maqam_timeline(notes, total_duration, window_sec=MAQAM_TIMELINE_WINDOW
 
         if len(window_notes) >= MAQAM_TIMELINE_MIN_NOTES_PER_WINDOW:
             hist = build_qtet_histogram(window_notes)
-            candidates = detect_tonic_and_maqam(hist, top_k=1)
+            finalis = freq_to_cents(window_notes[-1]["f0_hz"]) % 1200.0 if window_notes[-1]["f0_hz"] > 0 else None
+            candidates = detect_tonic_and_maqam(hist, top_k=1, finalis_cents=finalis)
             if candidates:
                 best = candidates[0]
                 entry["top_maqam"] = best["maqam"]
@@ -1004,7 +1295,8 @@ def build_phrase_breakdown(times, freqs, notes, pauses, top_k_per_phrase=1, phra
             continue  # قطعهٔ خیلی کوتاه/تک‌نت (مثل باقیماندهٔ مکث) گزارش جداگانه نمی‌شود
 
         hist = build_qtet_histogram(phrase_notes)
-        candidates = detect_tonic_and_maqam(hist, top_k=top_k_per_phrase)
+        finalis = freq_to_cents(phrase_notes[-1]["f0_hz"]) % 1200.0 if phrase_notes[-1]["f0_hz"] > 0 else None
+        candidates = detect_tonic_and_maqam(hist, top_k=top_k_per_phrase, finalis_cents=finalis)
         best = candidates[0] if candidates else None
 
         solfege_notes = []
@@ -1222,7 +1514,14 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
 
         print("در حال ساخت نمایه ربع‌پرده‌ای و تشخیص مقام...")
         hist = build_qtet_histogram(notes)
-        maqam_candidates = detect_tonic_and_maqam(hist, top_k=top_k)
+        # قرار (فرود) تلاوت: از نت‌های انتهایی — نتی که تلاوت روی آن می‌نشیند
+        finalis_cents = None
+        if notes:
+            tail = notes[-max(1, len(notes) // 20):]  # ۵٪ انتهایی
+            tail_freqs = [n["f0_hz"] for n in tail if n["f0_hz"] > 0]
+            if tail_freqs:
+                finalis_cents = freq_to_cents(tail_freqs[-1]) % 1200.0
+        maqam_candidates = detect_tonic_and_maqam(hist, top_k=top_k, finalis_cents=finalis_cents)
 
         # --- پالایش دقیق تونیک برای همهٔ نامزدها (زیر شبکهٔ ۵۰ سنتی) ---
         for cand in maqam_candidates:
@@ -1296,16 +1595,52 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
             tonic_hz_global = best_cand["tonic_freq_hz"]
             ladder_cents = best_info["tonic_ladder_cents"]
 
+            # نگاشت درجه→جنس برای برچسب‌گذاری هر درجه با جنس زادگاهش
+            try:
+                jmap = build_degree_jins_map(best_cand["maqam"])
+            except Exception:
+                jmap = {}
+
             table = []
             for i, deg_cents in enumerate(best_info["scale_ascending"]):
                 abs_fa, abs_en, _ = absolute_degree_name(deg_cents, ladder_cents)
-                table.append({
+                entry = {
                     "degree_index": i + 1,
                     "cents_from_tonic": deg_cents,
                     "expected_freq_hz": round(tonic_hz_global * (2 ** (deg_cents / 1200.0)), 2),
                     "movable_name_fa": SOLFEGE_DEGREES_FA[i] if i < len(SOLFEGE_DEGREES_FA) else f"درجه {i + 1}",
                     "absolute_fa": abs_fa,
                     "absolute_en": abs_en,
+                }
+                if i > 0:
+                    # دقیقاً همان چیزی که در آموزش تلاوت گفته می‌شود:
+                    # «از درجهٔ قبل چقدر باید بروی» — پرده/نیم‌پرده/سه‌ربع/…
+                    entry["step_from_previous_cents"] = deg_cents - best_info["scale_ascending"][i - 1]
+                    entry["step_from_previous_fa"] = cents_to_step_label_fa(deg_cents - best_info["scale_ascending"][i - 1])
+                jinfo = jmap.get(round(deg_cents))
+                if jinfo:
+                    j = JINSAT[jinfo["jins"]]
+                    entry["jins_fa"] = j["fa"]
+                    entry["jins_en"] = j["en"]
+                    entry["jins_position"] = jinfo["position"]
+                table.append(entry)
+
+            # --- زنجیرهٔ اجناس (نظریهٔ عقد و جنس) ---
+            jins_chain = []
+            for s in best_info.get("jins_chain", []):
+                j = JINSAT[s["jins"]]
+                on_deg = s["on_degree"]
+                on_deg_fa = table[on_deg - 1]["absolute_fa"] if on_deg - 1 < len(table) else f"درجهٔ {on_deg}"
+                jins_chain.append({
+                    "on_degree": on_deg,
+                    "on_degree_fa": on_deg_fa,
+                    "jins_fa": j["fa"],
+                    "jins_en": j["en"],
+                    "jins_type": j["type"],
+                    "formula_fa": j["formula_fa"],
+                    "intervals_cents": j["intervals"],
+                    "span_cents": sum(j["intervals"]),
+                    "overlap": bool(s.get("overlap")),
                 })
             if best_info["scale_descending"] != best_info["scale_ascending"]:
                 desc_fa, desc_en, _ = absolute_degree_name(1000, ladder_cents)
@@ -1323,6 +1658,8 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
                 "tonic_freq_hz": round(tonic_hz_global, 2),
                 "tonic_absolute_fa": table[0]["absolute_fa"],
                 "jins_structure": best_info["jins_structure"],
+                "jins_chain": jins_chain,
+                "jins_alternatives": best_info.get("jins_alternatives"),
                 "descending_note": best_info.get("descending_note"),
                 "degrees": table,
             }
@@ -1649,8 +1986,17 @@ def print_report(report):
             print(f"   نکتهٔ نزولی: {mdt['descending_note']}")
         for d in mdt["degrees"]:
             form = " (نزولی)" if d.get("form") == "descending" else ""
+            step_fa = f"  ← {d['step_from_previous_fa']}" if d.get("step_from_previous_fa") else ""
+            jins_fa = f"  [{d['jins_fa']} · نُت {d['jins_position']}]" if d.get("jins_fa") else ""
             print(f"      درجهٔ {d['degree_index']}{form}: {d['absolute_fa']} ({d['absolute_en']})"
-                  f"  = {d['cents_from_tonic']}¢ از تونیک  ≈ {d['expected_freq_hz']} Hz")
+                  f"{step_fa}{jins_fa}  = {d['cents_from_tonic']}¢  ≈ {d['expected_freq_hz']} Hz")
+        if mdt.get("jins_chain"):
+            print(f"   زنجیرهٔ اجناس (عقد → جنس):")
+            for jc in mdt["jins_chain"]:
+                ov = " (هم‌پوشان)" if jc.get("overlap") else ""
+                print(f"      عقد «{jc['on_degree_fa']}» (درجهٔ {jc['on_degree']}){ov}: "
+                      f"جنس {jc['jins_fa']} {jc['jins_type']} — {jc['formula_fa']}"
+                      f"  [گسترهٔ {jc['span_cents']}¢]")
 
     rd = report.get("recitation_degrees")
     if rd:
