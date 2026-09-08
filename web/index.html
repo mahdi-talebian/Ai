@@ -875,7 +875,11 @@ function renderQuranReport(report) {
     phList.innerHTML = report.phrase_breakdown.map((ph, idx) => {
       const chips = (ph.notes_solfege || []).map(n => {
         if (!n.solfege_name) return '';
-        return `<span class="solfege-chip" title="${n.f0_hz ? n.f0_hz.toFixed(1) + ' Hz، انحراف ' + (n.cents_off_degree ?? 0) + '¢' : ''}">${n.solfege_name}</span>`;
+        const title = n.f0_hz ? n.f0_hz.toFixed(1) + ' Hz، انحراف ' + (n.cents_off_degree ?? 0) + '¢'
+                              + (n.in_maqam === false ? ' — خارج از درجات مقام' : '') : '';
+        const label = n.absolute_degree_fa ? `${n.absolute_degree_fa} <span class="reg">· ${n.solfege_name}</span>` : n.solfege_name;
+        const outStyle = n.in_maqam === false ? ' style="opacity:.55;text-decoration:underline dotted;"' : '';
+        return `<span class="solfege-chip"${outStyle} title="${title}">${label}</span>`;
       }).join('');
       const maqamLabel = ph.maqam ? `${ph.maqam}${ph.confidence_pct != null ? ' (' + ph.confidence_pct + '%)' : ''}` : 'نامشخص';
       const colorIdx = (ph.color_index !== undefined && ph.color_index !== null) ? ph.color_index : idx;
@@ -891,6 +895,11 @@ function renderQuranReport(report) {
           <button class="phrase-jump-btn" onclick="qAudioPlayer.currentTime=${ph.start}; qAudioPlayer.play();">▶ پخش این فراز</button>
         </div>
         <div class="phrase-notes">${chips || '<span style="color:#9294bd;font-size:0.8rem;">نتی برای این فراز ثبت نشد.</span>'}</div>
+        ${(ph.starting_degree || ph.in_maqam_pct != null) ? `
+        <div style="margin-top:6px;font-size:0.78rem;color:#9294bd;display:flex;gap:14px;flex-wrap:wrap;">
+          ${ph.starting_degree ? `<span>آغاز: <b style="color:#e8e9ff;">«${ph.starting_degree.absolute_fa}»</b></span><span>وقف: <b style="color:#e8e9ff;">«${ph.resting_degree?.absolute_fa ?? '—'}»</b></span>` : ''}
+          ${ph.in_maqam_pct != null ? `<span>انطباق با درجات مقام: <b style="color:#23e0c2;">${ph.in_maqam_pct}٪</b></span>` : ''}
+        </div>` : ''}
       </div>`;
     }).join('');
   } else {
@@ -1287,7 +1296,8 @@ function updateLiveMaqamCard(liveMaqam, solfege) {
   document.getElementById('liveMaqamName').textContent = liveMaqam.maqam || '—';
   document.getElementById('liveMaqamConf').textContent = (liveMaqam.confidence_pct != null ? liveMaqam.confidence_pct + '%' : '—');
   document.getElementById('liveMaqamConfFill').style.width = (liveMaqam.confidence_pct || 0) + '%';
-  document.getElementById('liveSolfegeName').textContent = solfege ? solfege.solfege_name : '—';
+  document.getElementById('liveSolfegeName').textContent =
+    solfege ? (solfege.absolute_degree_fa ? `${solfege.absolute_degree_fa} · ${solfege.solfege_name}` : solfege.solfege_name) : '—';
 }
 
 function addLivePhraseCard(phrase) {

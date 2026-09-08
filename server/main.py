@@ -461,7 +461,8 @@ async def ws_live_pitch(websocket: WebSocket):
                             maqam_cents = qma.MAQAMAT[best["maqam"]]["cents"]
                             octave_shift = round(np.log2(f0 / tonic_hz)) if tonic_hz > 0 else 0
                             tonic_adj = tonic_hz * (2 ** octave_shift)
-                            solfege = qma.note_to_solfege(f0, tonic_adj, maqam_cents)
+                            solfege = qma.note_to_solfege(f0, tonic_adj, maqam_cents,
+                                                          maqam_name=best["maqam"])
 
                 # --- ردیابی فراز جاری بر اساس سکوت واقعی ---
                 phrase_completed = None
@@ -486,7 +487,8 @@ async def ws_live_pitch(websocket: WebSocket):
                             tonic_adj = tonic_hz * (2 ** octave_shift)
                             cents_seq = []
                             for (_, f, _) in phrase_freqs:
-                                sol = qma.note_to_solfege(f, tonic_adj, maqam_cents)
+                                sol = qma.note_to_solfege(f, tonic_adj, maqam_cents,
+                                                          maqam_name=best["maqam"])
                                 if sol:
                                     sol_sequence.append(sol["solfege_name"])
                                 cents_seq.append(1200.0 * np.log2(f / tonic_adj))

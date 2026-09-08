@@ -82,29 +82,63 @@ except ImportError:
 # جداول مرجع: نام‌های نت ربع‌پرده‌ای و ساختار مقامات عربی
 # ============================================================================
 
-# نام ۲۴ گام ربع‌پرده در یک اکتاو (هر گام = ۵۰ سنت)، با مرجع A=۰
-# علامت "d" = نیم‌بمل (half-flat) — مثال: "Ed" یعنی می نیم‌بمل (سیکاه رایج)
-QUARTER_TONE_NAMES = [
-    "A", "A#/Bd", "Bb", "B", "C", "C#/Dd", "Db", "D",
-    "D#/Ed", "Eb", "E", "F", "F#/Gd", "Gb", "G", "G#/Ad",
-    "Ab", "A(oct)"[:1] + "'",  # placeholder fix below
-]
-# نام‌گذاری صحیح و کامل ۲۴ گام (شروع از A=440 هرتز به‌عنوان مرجع صفر):
-QUARTER_TONE_NAMES = [
-    "A", "A♯~/B♭↓", "B♭", "B", "C", "C♯~/D♭↓", "D♭", "D",
-    "D♯~/E♭↓", "E♭", "E", "F", "F♯~/G♭↓", "G♭", "G", "G♯~/A♭↓",
-    "A♭", "A♭~/A↓", "A",
-][:12]  # اصلاح: در ادامه با تابع دقیق‌تر جایگزین می‌شود
+# (جدول‌های قدیمی ناقص نام ربع‌پرده حذف شدند و با «نظام مطلق درجات شرقی»
+#  در بخش بعد — ABS_DEGREE_LADDER — جایگزین گشته‌اند.)
 
-# --- تعریف دقیق ۲۴ نام ربع‌پرده (استاندارد رایج عربی) ---
-ARABIC_24_NAMES = [
-    "دوگاه (D)", "کردان/دوگاه+ربع", "کردان (Eb)", "سیکاه (E نیم‌بمل)",
-    "بوسلیک (E)", "جهارکاه (F)", "حجاز/جهارکاه+ربع", "نوا (G)",
-    "نوا+ربع", "حصار (Ab)", "حسینی (A نیم‌بمل)", "عشیران (A)",
-    "عشیران+ربع", "عجم (Bb)", "سنبله (B نیم‌بمل)", "کردان اوج (B)",
-    "چارگاه اوج (C)", "حجاز اوج+ربع", "محیر (D اوج)",
-]
-# (این نام‌های سنتی صرفاً جنبه توضیحی دارند و در محاسبات از سنت/فرکانس استفاده می‌شود)
+# ============================================================================
+# نظام مطلق درجات شرقی (Absolute Arabic Degree Ladder)
+# ============================================================================
+#
+# در سنت آموزشی موسیقی عربی و تلاوت قرآن، هر موقعیت ربع‌پرده‌ایِ گام یک نام
+# سنتی دارد و مقام‌ها همیشه «روی» یکی از این درجات قرار می‌گیرند؛ مثلاً:
+#   «بیاتی از دوگاه»، «حجاز از دوگاه»، «راست از راست»، «سیکاه از سیکاه»،
+#   «جهارکاه از جهارکاه»، «عجم از عجم».
+#
+# مرجع: نام‌گذاری مرسوم مدرسهٔ مصری/شامی (هم‌سو با MaqamWorld و آموزش‌های
+# رایج تلاوت — همان نظامی که در اپ‌های آموزشی شرقی مانند «اورج شرقی» به‌کار
+# می‌رود). موقعیت صفر = درجهٔ «راست» (معادل پیانویی: C).
+#
+# نکته: این نظام «سیار» پیاده شده است — یعنی اگر قاری تونیک مقام را روی هر
+# فرکانسی بخواند، بقیهٔ درجات نسبت به همان تونیک نام‌گذاری می‌شوند (دقیقاً
+# همان کاری که معلمان تلاوت می‌کنند: هر جا که «دوگاه» بخوانی، بالاترش
+# «سیکاه» است و به همین ترتیب).
+ABS_DEGREE_LADDER = {
+    0:    {"fa": "راست",       "en": "Rast"},
+    50:   {"fa": "نیم‌زیرکوله",  "en": "Nim Zirguleh"},
+    100:  {"fa": "زیرکوله",     "en": "Zirguleh"},
+    150:  {"fa": "تک‌زیرکوله",   "en": "Tik Zirguleh"},
+    200:  {"fa": "دوگاه",       "en": "Dukah"},
+    250:  {"fa": "نیم‌دوگاه",    "en": "Nim Dukah"},
+    300:  {"fa": "کردی",        "en": "Kurdi"},
+    350:  {"fa": "سیکاه",       "en": "Sikah"},
+    400:  {"fa": "بوسلیک",      "en": "Busalik"},
+    450:  {"fa": "نیم‌بوسلیک",   "en": "Nim Busalik"},
+    500:  {"fa": "جهارکاه",     "en": "Jaharkah"},
+    550:  {"fa": "نیم‌جهارکاه",  "en": "Nim Jaharkah"},
+    600:  {"fa": "حجاز",        "en": "Hijaz"},        # F♯/G♭ — در متن صبا هم خوانده می‌شود
+    650:  {"fa": "نیم‌حجاز",     "en": "Nim Hijaz"},
+    700:  {"fa": "نوا",         "en": "Nawa"},
+    750:  {"fa": "نیم‌نوا",      "en": "Nim Nawa"},
+    800:  {"fa": "حصار",        "en": "Hisar"},        # G♯/A♭
+    850:  {"fa": "نیم‌حصار",     "en": "Nim Hisar"},
+    900:  {"fa": "حسینی",       "en": "Husayni"},      # A
+    950:  {"fa": "نیم‌حسینی",    "en": "Nim Husayni"},
+    1000: {"fa": "عجم",         "en": "Ajam"},         # B♭ (عجم عشیران)
+    1050: {"fa": "اوج",         "en": "Awj (Iraq)"},   # B نیم‌بمل — درجهٔ ۷ راست
+    1100: {"fa": "ماهور",       "en": "Mahur"},        # B
+    1150: {"fa": "تک‌کوشت",     "en": "Tik Kushta"},
+}
+
+# نام‌های سنتی درجات اکتاو بالا (نسبت به «راست» مرجع) — وقتی ملودی از کردان
+# بالاتر برود، این نام‌های خاص (به‌جای پسوند جواب) به‌کار می‌روند:
+UPPER_REGISTER_DEGREE_NAMES = {
+    (0, 1):   {"fa": "کردان",  "en": "Kirdan"},     # 1200
+    (200, 1): {"fa": "محیر",   "en": "Mahayyar"},   # 1400
+    (300, 1): {"fa": "سنبله",  "en": "Sunbula"},    # 1500
+}
+
+REGISTER_UP_FA = {1: "جواب", 2: "جواب‌الجواب", 3: "جواب سوم"}
+REGISTER_UP_EN = {1: "Jawab", 2: "Jawab al-Jawab", 3: "Third Jawab"}
 
 NOTE_NAMES_12 = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -116,51 +150,98 @@ NOTE_NAMES_12 = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
 MAQAMAT = {
     "رست (Rast)": {
         "cents": [0, 200, 350, 500, 700, 900, 1050, 1200],
+        "scale_ascending": [0, 200, 350, 500, 700, 900, 1050, 1200],
+        "scale_descending": [0, 200, 350, 500, 700, 900, 1050, 1200],
+        "tonic_ladder_cents": 0,   # تونیک روی درجهٔ «راست»
+        "jins_structure": "جنس رست (پرده+سوم نیم‌بمل) + جنس رست روی نوا",
         "mood": "وقار، متانت، صلابت — مناسب قرائت‌های مجلسی و آغاز تلاوت",
         "family": "رست",
     },
-    "بیات (Bayati)": {
+    "بیاتی (Bayati)": {
         "cents": [0, 150, 300, 500, 700, 800, 1000, 1200],
+        "scale_ascending": [0, 150, 300, 500, 700, 800, 1000, 1200],
+        "scale_descending": [0, 150, 300, 500, 700, 800, 1000, 1200],
+        "tonic_ladder_cents": 200,  # تونیک روی درجهٔ «دوگاه»
+        "jins_structure": "جنس بیاتی (پرده+پرده+پرده) + جنس نهاوند روی نوا",
         "mood": "گرمی، صمیمیت، اندوه ملایم — رایج‌ترین مقام آغازین در تلاوت",
         "family": "بیات",
     },
     "حجاز (Hijaz)": {
-        "cents": [0, 100, 400, 500, 700, 800, 1100, 1200],
+        "cents": [0, 100, 400, 500, 700, 800, 1000, 1200],
+        "scale_ascending": [0, 100, 400, 500, 700, 800, 1000, 1200],
+        "scale_descending": [0, 100, 400, 500, 700, 800, 1000, 1200],
+        "tonic_ladder_cents": 200,  # تونیک روی درجهٔ «دوگاه»
+        "jins_structure": "جنس حجاز (نیم‌پرده+سه‌ودیما+نیم‌پرده) + جنس حجاز روی نوا",
         "mood": "اشتیاق، بشارت، عشق و شور معنوی",
         "family": "حجاز",
     },
     "صبا (Saba)": {
-        "cents": [0, 150, 300, 500, 600, 800, 1000, 1200],
+        # ساختار دقیق: جنس صبا (دوگاه — سیکاه — جهارکاه — حجاز: ۱۵۰+۱۵۰+۱۰۰)
+        # با «چهارم نیم‌بمل‌گرفته» (امضای اصلی صبا)، پرش سه‌ودیماً از حجاز به
+        # حسینی (هم‌پوشانی جنس حجاز روی درجهٔ ۳)، سپس جنس عجم روی درجهٔ ۶
+        # (مرجع: MaqamWorld / کنگره قاهره ۱۹۳۲)
+        "cents": [0, 150, 300, 400, 700, 800, 1000, 1200],
+        "scale_ascending": [0, 150, 300, 400, 700, 800, 1000, 1200],
+        "scale_descending": [0, 150, 300, 400, 700, 800, 1000, 1200],
+        "tonic_ladder_cents": 200,  # تونیک روی درجهٔ «دوگاه»
+        "jins_structure": "جنس صبا (پرده+پرده+نیم‌پرده، چهارم نیم‌بمل) + سه‌ودیما + جنس عجم روی درجهٔ ۶",
         "mood": "حزن، اندوه عمیق، هشدار و بیداری",
         "family": "صبا",
     },
     "نهاوند (Nahawand)": {
         "cents": [0, 200, 300, 500, 700, 800, 1100, 1200],
+        "scale_ascending": [0, 200, 300, 500, 700, 800, 1100, 1200],
+        # در نزول، درجهٔ ۷ (ماهور/سی) به کردانِ نیم‌بمل (عجم) نرم می‌شود — سیر مشهور نهاوند
+        "scale_descending": [0, 200, 300, 500, 700, 800, 1000, 1200],
+        "tonic_ladder_cents": 0,   # تونیک روی درجهٔ «راست»
+        "jins_structure": "جنس نهاوند (پرده+نیم‌پرده+پرده) + جنس حجاز یا کرد روی نوا",
+        "descending_note": "در سرازیری، درجهٔ ۷ به عجم (نیم‌بمل) می‌رود",
         "mood": "سرور معرفت، لطافت، امید به رحمت الهی",
         "family": "نهاوند",
     },
     "عجم (Ajam)": {
         "cents": [0, 200, 400, 500, 700, 900, 1100, 1200],
+        "scale_ascending": [0, 200, 400, 500, 700, 900, 1100, 1200],
+        "scale_descending": [0, 200, 400, 500, 700, 900, 1100, 1200],
+        "tonic_ladder_cents": 1000,  # تونیک روی درجهٔ «عجم» (عجم عشیران)
+        "jins_structure": "جنس عجم (پرده+پرده+نیم‌پرده) + جنس عجم روی کردان — نزدیک به ماژور غربی",
         "mood": "شادی و نشاط (نزدیک‌ترین مقام به ماژور غربی)",
         "family": "عجم",
     },
     "کرد (Kurd)": {
         "cents": [0, 100, 300, 500, 700, 800, 1000, 1200],
+        "scale_ascending": [0, 100, 300, 500, 700, 800, 1000, 1200],
+        "scale_descending": [0, 100, 300, 500, 700, 800, 1000, 1200],
+        "tonic_ladder_cents": 200,  # تونیک روی درجهٔ «دوگاه»
+        "jins_structure": "جنس کرد (نیم‌پرده+پرده+پرده، شبیه فریژین) + جنس کرد روی نوا",
         "mood": "حزن عمیق، شبیه فریژین غربی",
         "family": "کرد",
     },
-    "چهارگاه (Jiharkah)": {
+    "جهارکاه (Jiharkah)": {
         "cents": [0, 200, 400, 500, 700, 900, 1050, 1200],
+        "scale_ascending": [0, 200, 400, 500, 700, 900, 1050, 1200],
+        "scale_descending": [0, 200, 400, 500, 700, 900, 1050, 1200],
+        "tonic_ladder_cents": 500,  # تونیک روی درجهٔ «جهارکاه»
+        "jins_structure": "جنس جهارکاه (پرده+پرده+نیم‌پرده، هفتم نیم‌بمل) — از فصیلهٔ رست",
         "mood": "تأثر، حالت خاص و برجسته",
         "family": "رست",
     },
-    "سه‌گاه (Sikah)": {
-        "cents": [0, 150, 350, 550, 700, 850, 1050, 1200],
+    "سیکاه (Sikah)": {
+        # درجهٔ ۵ = عجم (۶۵۰ سنت از تونیک سیکاه: فاصلهٔ واقعی سی‌بمل از می‌نیم‌بمل)
+        "cents": [0, 150, 350, 550, 650, 850, 1050, 1200],
+        "scale_ascending": [0, 150, 350, 550, 650, 850, 1050, 1200],
+        "scale_descending": [0, 150, 350, 550, 650, 850, 1050, 1200],
+        "tonic_ladder_cents": 350,  # تونیک روی درجهٔ «سیکاه» (می نیم‌بمل)
+        "jins_structure": "جنس سیکاه (پرده+پردهٔ کبیر) + جنس بوسلیک/کرد روی حسینی — سیر نزولی به ناحیهٔ رست",
         "mood": "هیجانات نفسانی، حالت خاص مقامات سیکاه",
         "family": "سیکاه",
     },
     "نکریز (Nikriz)": {
         "cents": [0, 200, 300, 600, 700, 900, 1000, 1200],
+        "scale_ascending": [0, 200, 300, 600, 700, 900, 1000, 1200],
+        "scale_descending": [0, 200, 300, 600, 700, 900, 1000, 1200],
+        "tonic_ladder_cents": 0,   # تونیک روی درجهٔ «راست»
+        "jins_structure": "جنس نکریز (پرده+نیم‌پرده+سه‌ودیما) + جنس کرد روی نوا",
         "mood": "شکوه، فخامت، حالت حماسی",
         "family": "نکریز",
     },
@@ -223,7 +304,79 @@ REGISTER_NAMES_FA = {
 }
 
 
-def note_to_solfege(f0_hz: float, tonic_hz: float, maqam_cents):
+def absolute_degree_name(cents_from_tonic: float, tonic_ladder_cents: int):
+    """
+    نام «مطلق» یک نت در نظام درجات شرقی، وقتی تونیک مقام روی درجهٔ
+    tonic_ladder_cents (سنت از راست مرجع) قرار گرفته باشد.
+
+    مثال: در بیاتی (تونیک روی دوگاه = ۲۰۰)، نت ۱۵۰ سنت بالاتر از تونیک
+    «سیکاه» است (چون دوگاه+۱۵۰ = ۳۵۰ = جایگاه سیکاه) — دقیقاً همان‌طور
+    که در آموزش تلاوت گفته می‌شود.
+
+    خروجی: (fa, en, register) — register موقعیت اکتاوی نسبت به اکتاو تونیک است.
+    """
+    pos = float(cents_from_tonic) + tonic_ladder_cents
+    register = int(np.floor(pos / 1200.0))
+    # نتِ واقعیِ خوانده‌شده دقیقاً روی شبکهٔ ۵۰ سنتی نیست؛ نام درجه = نزدیک‌ترین
+    # موقعیت شبکه (خطای واقعی نت جداگانه در cents_off_degree گزارش می‌شود)
+    base = int(round((pos - register * 1200.0) / 50.0) * 50) % 1200
+
+    special = UPPER_REGISTER_DEGREE_NAMES.get((base, register))
+    if special:
+        return special["fa"], special["en"], register
+
+    info = ABS_DEGREE_LADDER[base]
+    fa, en = info["fa"], info["en"]
+    if register > 0:
+        suffix_fa = REGISTER_UP_FA.get(register, "جواب")
+        suffix_en = REGISTER_UP_EN.get(register, "Jawab")
+        fa = f"{fa} {suffix_fa}"
+        en = f"{en} {suffix_en}"
+    elif register < 0:
+        prefix = "قرار قرار" if register <= -2 else "قرار"
+        fa = f"{prefix} {fa}"
+        en = f"Gharr-{en}"  # اکتاو پایین‌تر از قرار اصلی
+    return fa, en, register
+
+
+def refine_tonic_hz(notes, tonic_bin: int, maqam_name: str):
+    """
+    تونیک خامِ تشخیص‌داده‌شده (روی شبکهٔ ۵۰ سنتی) را با کمینه‌سازی خطای
+    وزن‌داده‌شدهٔ همهٔ نت‌ها نسبت به نزدیک‌ترین درجهٔ مقام، با دقت نیم‌سنتی
+    پالایش می‌کند. خروجی: (tonic_hz دقیق, دلتای سنت اعمال‌شده).
+    """
+    scale = MAQAMAT[maqam_name]
+    degree_sets = set(scale["scale_ascending"][:-1]) | set(scale["scale_descending"][:-1])
+    degrees = np.array(sorted(degree_sets), dtype=float)  # سنت از تونیک
+
+    obs = []  # (سنت از A440, وزن=مدت)
+    for n in notes:
+        c = freq_to_cents(n["f0_hz"])
+        if not np.isnan(c):
+            obs.append((c, float(n.get("duration", 0.1))))
+    if not obs:
+        return 440.0 * (2 ** (tonic_bin / 24.0)), 0.0
+
+    obs_c = np.array([o[0] for o in obs])
+    obs_w = np.array([o[1] for o in obs])
+    tonic_cents0 = tonic_bin * 50.0
+
+    best_delta, best_cost = 0.0, None
+    for delta in np.arange(-24.5, 25.0, 0.5):
+        # فاصلهٔ مدارِ هر نت تا نزدیک‌ترین درجهٔ مقام (ممیز اکتاو حذف می‌شود)
+        rel = obs_c - (tonic_cents0 + delta)
+        dgrid = (rel[:, None] - degrees[None, :] + 600.0) % 1200.0 - 600.0
+        d = np.abs(dgrid).min(axis=1)
+        cost = float(np.sum(obs_w * d ** 2))
+        if best_cost is None or cost < best_cost:
+            best_cost, best_delta = cost, float(delta)
+
+    tonic_hz = 440.0 * (2 ** ((tonic_cents0 + best_delta) / 1200.0))
+    return round(tonic_hz, 2), round(best_delta, 1)
+
+
+def note_to_solfege(f0_hz: float, tonic_hz: float, maqam_cents,
+                    maqam_name=None, scale_cents=None):
     """
     یک نت را نسبت به «تونیک محلی» (تونیک مقامی که در همان فراز/لحظه تشخیص
     داده شده) و ساختار فاصله‌ای مقام محلی، به نزدیک‌ترین درجه سولفژ (از ۷
@@ -241,7 +394,8 @@ def note_to_solfege(f0_hz: float, tonic_hz: float, maqam_cents):
     register = int(np.floor(cents_from_tonic / 1200.0))
     cents_in_octave = cents_from_tonic - register * 1200.0
 
-    degree_cents = maqam_cents[:-1]  # حذف درجه ۸ (تکرار اکتاویِ درجه ۱)
+    scale = scale_cents if scale_cents is not None else maqam_cents
+    degree_cents = list(scale[:-1])  # حذف درجه ۸ (تکرار اکتاویِ درجه ۱)
     diffs = [min(abs(cents_in_octave - dc), abs(cents_in_octave - 1200.0 - dc),
                   abs(cents_in_octave + 1200.0 - dc)) for dc in degree_cents]
     degree_idx = int(np.argmin(diffs))
@@ -255,7 +409,7 @@ def note_to_solfege(f0_hz: float, tonic_hz: float, maqam_cents):
     register_suffix = REGISTER_NAMES_FA.get(register, f"اکتاو {register:+d}")
     full_name = f"{degree_name} {register_suffix}".strip()
 
-    return {
+    result = {
         "degree_index": degree_idx + 1,       # ۱ تا ۷ (۱=راست/تونیک)
         "degree_name": degree_name,
         "register_offset": register,           # ۰=اکتاو تونیک، ۱=جواب، -۱=قرار، ...
@@ -263,6 +417,20 @@ def note_to_solfege(f0_hz: float, tonic_hz: float, maqam_cents):
         "cents_off_degree": round(float(cents_off), 1),
         "solfege_name": full_name,
     }
+
+    # --- نام مطلق در نظام درجات شرقی (راست، دوگاه، سیکاه، جهارکاه، ...) ---
+    # فقط وقتی نام مقام مشخص باشد؛ چون جایگاه تونیک مقام روی نردبان درجات
+    # برای هر مقام متفاوت است (بیاتی/حجاز/کرد/صبا از دوگاه، سیکاه از سیکاه، ...).
+    if maqam_name and maqam_name in MAQAMAT:
+        ladder_cents = MAQAMAT[maqam_name]["tonic_ladder_cents"]
+        abs_fa, abs_en, abs_reg = absolute_degree_name(cents_in_octave, ladder_cents)
+        result["absolute_degree_fa"] = abs_fa
+        result["absolute_degree_en"] = abs_en
+        result["absolute_solfege_name"] = abs_fa
+        # آیا نت واقعاً روی یکی از درجات مقام نشسته؟ (تلورانس ۴۰ سنت)
+        result["in_maqam"] = bool(abs(cents_off) <= 40.0)
+
+    return result
 
 
 # ============================================================================
@@ -438,14 +606,29 @@ def detect_tonic_and_maqam(hist, top_k=3):
     """
     با چرخاندن هیستوگرام مشاهده‌شده در ۲۴ حالت ممکن (۲۴ تونیک فرضی) و مقایسه
     با الگوی هر مقام، بهترین ترکیب‌های (تونیک, مقام) را برمی‌گرداند.
+
+    برای هر مقام، هم الگوی صعودی و هم الگوی نزولی (در مقاماتی که ساختار
+    سرازیری متفاوت دارند — مثل نهاوند که درجهٔ ۷ نزولی‌اش نیم‌بمل می‌شود)
+    مقایسه می‌شود و بهترِ آن دو ملاک است.
     """
     results = []
     for maqam_name, info in MAQAMAT.items():
-        template = maqam_template_histogram(info["cents"])
+        template_asc = maqam_template_histogram(info["scale_ascending"])
+        template_desc = maqam_template_histogram(info["scale_descending"])
+        if info["scale_descending"] == info["scale_ascending"]:
+            template_desc = template_asc
         for tonic_bin in range(24):
-            rotated_template = np.roll(template, tonic_bin)
-            # همبستگی پیرسون به‌عنوان معیار شباهت
+            rotated_template = np.roll(template_asc, tonic_bin)
+            rotated_desc = np.roll(template_desc, tonic_bin)
+            # همبستگی پیرسون به‌عنوان معیار شباهت — بهترینِ صعودی/نزولی
             score = np.corrcoef(hist, rotated_template)[0, 1]
+            score_desc = np.corrcoef(hist, rotated_desc)[0, 1]
+            scale_form = "ascending"
+            if np.isnan(score):
+                score = 0
+            if not np.isnan(score_desc) and score_desc > score:
+                score = score_desc
+                scale_form = "descending"
             if np.isnan(score):
                 score = 0
             results.append({
@@ -453,6 +636,7 @@ def detect_tonic_and_maqam(hist, top_k=3):
                 "tonic_bin": tonic_bin,
                 "tonic_freq_hz": round(440.0 * (2 ** (tonic_bin / 24.0)), 2),
                 "score": float(score),
+                "scale_form": scale_form,
                 "mood": info["mood"],
             })
 
@@ -696,8 +880,30 @@ def build_phrase_breakdown(times, freqs, notes, pauses, top_k_per_phrase=1, phra
             octave_shift = round(np.log2(center_freq / tonic_hz))
             tonic_hz *= (2 ** octave_shift)
 
+            # --- پالایش دقیق تونیک (زیر شبکهٔ ۵۰ سنتی) ---
+            # با کمینه‌سازی خطای وزنی همهٔ نت‌ها نسبت به درجات مقام، جایگاه
+            # واقعی تونیک تا نیم‌سنت مشخص می‌شود — این همان چیزی است که
+            # نام‌گذاری مطلق درجات را بی‌خطا می‌کند.
+            try:
+                tonic_hz, _tonic_delta = refine_tonic_hz(phrase_notes, best["tonic_bin"], best["maqam"])
+                tonic_hz *= (2 ** octave_shift)
+            except Exception:
+                pass
+
+            # --- انتخاب ساختار مناسب (صعودی/نزولی) برای تطبیق درجات ---
+            # اگر سیر فراز غالباً نزولی باشد و مقام ساختار نزولی متفاوتی
+            # داشته باشد (مثل نهاوند)، جدول درجات نزولی ملاک می‌شود.
+            phrase_cents_path = [1200.0 * np.log2(n["f0_hz"] / tonic_hz) for n in phrase_notes]
+            is_descending_phrase = (len(phrase_cents_path) >= 3 and
+                                    (phrase_cents_path[-1] - phrase_cents_path[0]) < -150.0)
+            info = MAQAMAT[best["maqam"]]
+            scale_cents = info["scale_descending"] if (is_descending_phrase and
+                                                       info["scale_descending"] != info["scale_ascending"]) \
+                          else info["scale_ascending"]
+
             for n in phrase_notes:
-                sol = note_to_solfege(n["f0_hz"], tonic_hz, maqam_cents)
+                sol = note_to_solfege(n["f0_hz"], tonic_hz, maqam_cents,
+                                      maqam_name=best["maqam"], scale_cents=scale_cents)
                 cents_sequence.append(1200.0 * np.log2(n["f0_hz"] / tonic_hz))
                 solfege_notes.append({
                     "start": n["start"], "end": n["end"], "duration": n["duration"],
@@ -706,6 +912,41 @@ def build_phrase_breakdown(times, freqs, notes, pauses, top_k_per_phrase=1, phra
                 })
 
         trend = _melody_trend(cents_sequence) if cents_sequence else "نامشخص"
+
+        # --- آمار درجات فراز: شروع، فرود/وقف و سهم هر درجه ---
+        named_notes = [s for s in solfege_notes if s.get("absolute_degree_fa")]
+        starting_degree = None
+        resting_degree = None
+        in_maqam_pct = None
+        degree_share = None
+        if named_notes:
+            first = named_notes[0]
+            starting_degree = {
+                "absolute_fa": first["absolute_degree_fa"],
+                "absolute_en": first["absolute_degree_en"],
+                "degree_index": first["degree_index"],
+                "f0_hz": first["f0_hz"],
+            }
+            # وقف = درجه‌ای که فراز روی آن می‌نشیند (آخرین نت‌های پایدار فراز)
+            last = named_notes[-1]
+            resting_degree = {
+                "absolute_fa": last["absolute_degree_fa"],
+                "absolute_en": last["absolute_degree_en"],
+                "degree_index": last["degree_index"],
+                "f0_hz": last["f0_hz"],
+            }
+            dur_total = sum(s["duration"] for s in named_notes)
+            in_maqam_dur = sum(s["duration"] for s in named_notes if s.get("in_maqam"))
+            in_maqam_pct = round(100.0 * in_maqam_dur / dur_total, 1) if dur_total > 0 else None
+            share = {}
+            for s in named_notes:
+                key = s["absolute_degree_fa"]
+                share[key] = share.get(key, 0.0) + s["duration"]
+            degree_share = [
+                {"degree_fa": k, "duration_sec": round(v, 2),
+                 "pct": round(100.0 * v / dur_total, 1)}
+                for k, v in sorted(share.items(), key=lambda kv: -kv[1])
+            ]
 
         phrases.append({
             # color_index: اندیس فراز در مرزهای اصلی (پیش از فیلتر فرازهای
@@ -721,7 +962,14 @@ def build_phrase_breakdown(times, freqs, notes, pauses, top_k_per_phrase=1, phra
             "maqam": best["maqam"] if best else None,
             "confidence_pct": best["confidence_pct"] if best else None,
             "tonic_freq_hz": round(tonic_hz, 2) if best else None,
+            "scale_form": ("descending" if is_descending_phrase and best and
+                           MAQAMAT[best["maqam"]]["scale_descending"] != MAQAMAT[best["maqam"]]["scale_ascending"]
+                           else "ascending") if best else None,
             "melody_trend": trend,
+            "starting_degree": starting_degree,
+            "resting_degree": resting_degree,
+            "in_maqam_pct": in_maqam_pct,
+            "degree_share": degree_share,
             "notes_solfege": solfege_notes,
         })
 
@@ -837,6 +1085,21 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
         print("در حال ساخت نمایه ربع‌پرده‌ای و تشخیص مقام...")
         hist = build_qtet_histogram(notes)
         maqam_candidates = detect_tonic_and_maqam(hist, top_k=top_k)
+
+        # --- پالایش دقیق تونیک برای همهٔ نامزدها (زیر شبکهٔ ۵۰ سنتی) ---
+        for cand in maqam_candidates:
+            try:
+                refined_hz, delta = refine_tonic_hz(notes, cand["tonic_bin"], cand["maqam"])
+                # تونیک پالایش‌شده را به نزدیک‌ترین اکتاو به محدودهٔ واقعی صدا ببر
+                voiced = [n["f0_hz"] for n in notes if n["f0_hz"] > 0]
+                if voiced:
+                    center = float(np.exp(np.mean(np.log(voiced))))
+                    octave_shift = round(np.log2(center / refined_hz))
+                    refined_hz *= (2 ** octave_shift)
+                cand["tonic_freq_hz"] = round(refined_hz, 2)
+                cand["tonic_delta_cents"] = delta
+            except Exception:
+                pass
         _progress("maqam_detection", 0.78)
 
         print("در حال محاسبه بلندی صدا...")
@@ -882,6 +1145,82 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
         )
         _progress("phrase_breakdown", 0.9)
 
+        # --- جدول درجات مقام تشخیصی + آمار درجاتِ واقعاً خوانده‌شده ---
+        # (این بخش قلب درخواست «سولفژ دقیق هر مقام در درجاتی که خوانده
+        # می‌شود» است: برای مقام تشخیص‌داده‌شده، هر ۸ درجه با نام مطلق شرقی،
+        # فرکانس مورد انتظار نسبت به تونیکِ واقعیِ همین تلاوت، و سهم زمانی
+        # هر درجه از کل تلاوت گزارش می‌شود.)
+        best_cand = maqam_candidates[0] if maqam_candidates else None
+        maqam_degree_table = None
+        recitation_degrees = None
+        if best_cand:
+            best_info = MAQAMAT[best_cand["maqam"]]
+            tonic_hz_global = best_cand["tonic_freq_hz"]
+            ladder_cents = best_info["tonic_ladder_cents"]
+
+            table = []
+            for i, deg_cents in enumerate(best_info["scale_ascending"]):
+                abs_fa, abs_en, _ = absolute_degree_name(deg_cents, ladder_cents)
+                table.append({
+                    "degree_index": i + 1,
+                    "cents_from_tonic": deg_cents,
+                    "expected_freq_hz": round(tonic_hz_global * (2 ** (deg_cents / 1200.0)), 2),
+                    "movable_name_fa": SOLFEGE_DEGREES_FA[i] if i < len(SOLFEGE_DEGREES_FA) else f"درجه {i + 1}",
+                    "absolute_fa": abs_fa,
+                    "absolute_en": abs_en,
+                })
+            if best_info["scale_descending"] != best_info["scale_ascending"]:
+                desc_fa, desc_en, _ = absolute_degree_name(1000, ladder_cents)
+                table.append({
+                    "degree_index": 8,
+                    "form": "descending",
+                    "cents_from_tonic": 1000,
+                    "expected_freq_hz": round(tonic_hz_global * (2 ** (1000 / 1200.0)), 2),
+                    "movable_name_fa": SOLFEGE_DEGREES_FA[6],
+                    "absolute_fa": desc_fa,
+                    "absolute_en": desc_en,
+                })
+            maqam_degree_table = {
+                "maqam": best_cand["maqam"],
+                "tonic_freq_hz": round(tonic_hz_global, 2),
+                "tonic_absolute_fa": table[0]["absolute_fa"],
+                "jins_structure": best_info["jins_structure"],
+                "descending_note": best_info.get("descending_note"),
+                "degrees": table,
+            }
+
+            # آمار درجات خوانده‌شده (وزن‌داده‌شده با مدت هر نت)
+            named = []
+            for n in notes:
+                sol = note_to_solfege(n["f0_hz"], tonic_hz_global, best_info["cents"],
+                                      maqam_name=best_cand["maqam"])
+                if sol:
+                    named.append((sol, n["duration"]))
+            if named:
+                dur_total = sum(d for _, d in named)
+                first_sol, _ = named[0]
+                # سهم هر درجه از کل
+                share = {}
+                in_maqam_dur = 0.0
+                for s, d in named:
+                    key = s.get("absolute_degree_fa") or s["degree_name"]
+                    share[key] = share.get(key, 0.0) + d
+                    if s.get("in_maqam"):
+                        in_maqam_dur += d
+                recitation_degrees = {
+                    "starting_degree": {
+                        "absolute_fa": first_sol.get("absolute_degree_fa"),
+                        "absolute_en": first_sol.get("absolute_degree_en"),
+                        "degree_index": first_sol["degree_index"],
+                    },
+                    "in_maqam_pct": round(100.0 * in_maqam_dur / dur_total, 1) if dur_total else None,
+                    "degree_histogram": sorted(
+                        ({"degree_fa": k, "pct": round(100.0 * v / dur_total, 1)}
+                         for k, v in share.items()),
+                        key=lambda x: -x["pct"],
+                    ),
+                }
+
         report = {
             "meta": {
                 "file": os.path.basename(path),
@@ -899,6 +1238,8 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
             "loudness": loudness,
             "ambitus": ambitus,
             "maqam_candidates": maqam_candidates,
+            "maqam_degree_table": maqam_degree_table,
+            "recitation_degrees": recitation_degrees,
             "maqam_timeline": maqam_timeline,
             "phrase_breakdown": phrase_breakdown,
             "notes": notes,
@@ -1156,8 +1497,39 @@ def print_report(report):
     print(f"\n🕌 مقام‌های محتمل تلاوت (بر اساس تطبیق نمایه ربع‌پرده‌ای):")
     for i, cand in enumerate(report["maqam_candidates"], 1):
         print(f"   {i}. {cand['maqam']}  —  اطمینان نسبی: {cand['confidence_pct']}%")
-        print(f"      تونیک تخمینی: {cand['tonic_freq_hz']} Hz")
+        print(f"      تونیک تخمینی: {cand['tonic_freq_hz']} Hz" +
+              (f" (درجهٔ {absolute_degree_name(0, MAQAMAT[cand['maqam']]['tonic_ladder_cents'])[0]})" if cand["maqam"] in MAQAMAT else ""))
         print(f"      حال‌وهوا: {cand['mood']}")
+
+    # --- جدول دقیق درجات مقام تشخیصی (نظام مطلق درجات شرقی) ---
+    mdt = report.get("maqam_degree_table")
+    if mdt:
+        print(f"\n📊 جدول درجات مقام «{mdt['maqam']}» (نظام مطلق درجات شرقی):")
+        print(f"   تونیک این تلاوت: {mdt['tonic_freq_hz']} Hz — روی درجهٔ «{mdt['tonic_absolute_fa']}»")
+        print(f"   ساختار: {mdt['jins_structure']}")
+        if mdt.get("descending_note"):
+            print(f"   نکتهٔ نزولی: {mdt['descending_note']}")
+        for d in mdt["degrees"]:
+            form = " (نزولی)" if d.get("form") == "descending" else ""
+            print(f"      درجهٔ {d['degree_index']}{form}: {d['absolute_fa']} ({d['absolute_en']})"
+                  f"  = {d['cents_from_tonic']}¢ از تونیک  ≈ {d['expected_freq_hz']} Hz")
+
+    rd = report.get("recitation_degrees")
+    if rd:
+        parts = []
+        if rd.get("starting_degree"):
+            sd = rd["starting_degree"]
+            parts.append(f"آغاز روی «{sd['absolute_fa']}»")
+        if rd.get("in_maqam_pct") is not None:
+            parts.append(f"{rd['in_maqam_pct']}٪ زمان تلاوت روی درجات مقام")
+        top3 = rd.get("degree_histogram", [])[:3]
+        if top3:
+            parts.append("پرکاربردترین درجه‌ها: " + "، ".join(
+                f"«{h['degree_fa']}» ({h['pct']}٪)" for h in top3))
+        if parts:
+            print(f"\n🎤 درجاتِ خوانده‌شده در این تلاوت:")
+            for p in parts:
+                print(f"   • {p}")
 
     tl = report.get("maqam_timeline")
     if tl:
@@ -1180,7 +1552,12 @@ def print_report(report):
             print(f"   فراز {i}: {ph['start']}s - {ph['end']}s  |  مقام: {maqam_label}{conf}  |  روند: {ph['melody_trend']}  |  {ph['num_notes']} نت")
             sol_names = [n["solfege_name"] for n in ph.get("notes_solfege", []) if n.get("solfege_name")]
             if sol_names:
-                print(f"      نت‌ها (سولفژ): {' - '.join(sol_names)}")
+                print(f"      نت‌ها (سولفژ سیار): {' - '.join(sol_names)}")
+            abs_names = [n["absolute_degree_fa"] for n in ph.get("notes_solfege", []) if n.get("absolute_degree_fa")]
+            if abs_names:
+                print(f"      نت‌ها (نام مطلق درجات): {' - '.join(abs_names)}")
+            if ph.get("starting_degree"):
+                print(f"      آغاز: «{ph['starting_degree']['absolute_fa']}»  |  وقف: «{ph['resting_degree']['absolute_fa']}»  |  انطباق با مقام: {ph['in_maqam_pct']}٪")
         print(f"   جزئیات کامل هر فراز در فیلد \"phrase_breakdown\" گزارش JSON موجود است.")
 
     print(f"\n🎵 نمونه‌ای از نت‌های دقیق شناسایی‌شده (۱۰ نت اول):")
