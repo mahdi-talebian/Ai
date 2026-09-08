@@ -308,11 +308,26 @@ async def get_status(job_id: str):
 
 
 @app.get("/api/file/{job_id}/{filename}")
-async def get_file(job_id: str, filename: str):
+async def get_file(job_id: str, filename: str, download: bool = False):
     path = JOBS_DIR / job_id / filename
     if not path.exists():
         return JSONResponse({"error": "فایل پیدا نشد"}, status_code=404)
-    return FileResponse(str(path))
+
+    ext = path.suffix.lower()
+    media_type = {
+        ".mp4": "video/mp4",
+        ".png": "image/png",
+        ".json": "application/json",
+        ".wav": "audio/wav",
+    }.get(ext)
+
+    # FileResponse به‌صورت پیش‌فرض از HTTP Range requests پشتیبانی می‌کند
+    # (لازم برای Seek کردن در ویدیو/صدا در مرورگر بدون دانلود کامل فایل).
+    headers = {}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+    return FileResponse(str(path), media_type=media_type, headers=headers)
 
 
 @app.websocket("/ws/job/{job_id}")

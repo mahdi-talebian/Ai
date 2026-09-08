@@ -381,11 +381,18 @@ def export_video_from_file(file_path, out_path="piano_video.mp4", fps=VIDEO_EXPO
             "-map", "0:v:0",
             "-map", "1:a:0",
             "-shortest",
+            # +faststart: متادیتای moov را به ابتدای فایل منتقل می‌کند تا
+            # پخش در مرورگر/پخش‌کننده رسانه بلافاصله شروع شود (بدون نیاز به
+            # دانلود کامل فایل برای رسیدن به انتهای آن جهت خواندن متادیتا) —
+            # بدون این فلگ، فایل‌های طولانی‌تر در مرورگر «گیر می‌کنند» یا با
+            # تأخیر محسوس شروع به پخش می‌کنند.
+            "-movflags", "+faststart",
             out_path,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"خطای ffmpeg در مالتی‌پلکس صدا/تصویر:\n{result.stderr[-2000:]}")
+
 
         if os.path.exists(tmp_video_only):
             os.remove(tmp_video_only)

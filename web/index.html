@@ -315,7 +315,8 @@
 
           <div id="qVideoSection" style="display:none;">
             <div class="chart-title">🎬 ویدیوی پیانوی هم‌گام</div>
-            <video id="qVideoPlayer" controls style="width:100%;border-radius:12px;"></video>
+            <video id="qVideoPlayer" controls preload="auto" style="width:100%;border-radius:12px;"></video>
+            <a id="qVideoDownloadBtn" class="secondary-btn" download style="display:block;text-align:center;text-decoration:none;">⬇️ دانلود ویدیو (mp4)</a>
           </div>
         </div>
       </div>
@@ -1264,7 +1265,12 @@ qVideoBtn.onclick = async () => {
         progress.update('پایان', 1);
         setTimeout(() => progress.hide(), 600);
         document.getElementById('qVideoSection').style.display = 'block';
-        document.getElementById('qVideoPlayer').src = d.result.video_url;
+        const videoEl = document.getElementById('qVideoPlayer');
+        videoEl.src = d.result.video_url;
+        videoEl.load();
+        const dlBtn = document.getElementById('qVideoDownloadBtn');
+        dlBtn.href = d.result.video_url + '?download=true';
+        dlBtn.setAttribute('download', 'piano_video.mp4');
         document.getElementById('qResults').style.display = 'block';
         qVideoBtn.disabled = false;
       } else if (d.status === 'error') {
