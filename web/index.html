@@ -188,6 +188,24 @@
   }
   .timeline-transition { color: #ff5cad; font-size: 0.85rem; margin: 4px 0; }
 
+  .phrase-card {
+    background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+  }
+  .phrase-card .phrase-head {
+    display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline;
+    font-size: 0.86rem; color: #cfd1ee; margin-bottom: 8px;
+  }
+  .phrase-card .phrase-time { color: #23e0c2; font-weight: 700; }
+  .phrase-card .phrase-trend { color: #ffb703; }
+  .phrase-notes { display: flex; flex-wrap: wrap; gap: 6px; }
+  .solfege-chip {
+    display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 0.76rem;
+    background: rgba(124,92,255,0.16); border: 1px solid rgba(124,92,255,0.35); color: #eef0ff;
+    white-space: nowrap;
+  }
+  .solfege-chip .reg { color: #23e0c2; font-size: 0.7rem; margin-inline-start: 3px; }
+
   .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
   .compare-col h4 { margin: 0 0 10px; color: #cfd1ee; }
   .trim-row { display: flex; gap: 10px; margin-top: 10px; }
@@ -308,6 +326,12 @@
           <div id="qTimelineSection" style="display:none;">
             <div class="chart-title">🕐 تایم‌لاین تغییر مقام</div>
             <div id="qTimelineInfo"></div>
+          </div>
+
+          <div id="qPhraseSection" style="display:none;">
+            <div class="chart-title">🎼 تحلیل لحن به لحن (فراز به فراز)</div>
+            <div class="hint-text">هر فراز بر اساس مکث/نفس واقعی قاری تفکیک شده؛ نت‌ها با درجه سولفژ مقامی (راست، دوگاه، سه‌گاه، ...) و رجیستر (قرار/جواب) نمایش داده می‌شوند.</div>
+            <div id="qPhraseList"></div>
           </div>
 
           <div class="chart-title">📈 ملوگراف (منحنی پرده صدا + مقام)</div>
@@ -1239,6 +1263,7 @@ const STAGE_LABELS_FA = {
   maqam_detection: 'تشخیص مقام',
   loudness: 'محاسبه بلندی صدا',
   timeline: 'ساخت تایم‌لاین تغییر مقام',
+  phrase_breakdown: 'تفکیک فرازهای طبیعی و سولفژ هر نت',
   done: 'پایان',
   pitch: 'استخراج پرده صدا',
   render: 'رندر فریم‌های ویدیو',
@@ -1422,6 +1447,31 @@ function renderQuranReport(report) {
     tlInfo.innerHTML = html;
   } else {
     tlSection.style.display = 'none';
+  }
+
+  const phSection = document.getElementById('qPhraseSection');
+  const phList = document.getElementById('qPhraseList');
+  if (report.phrase_breakdown && report.phrase_breakdown.length) {
+    phSection.style.display = 'block';
+    phList.innerHTML = report.phrase_breakdown.map((ph, idx) => {
+      const chips = (ph.notes_solfege || []).map(n => {
+        if (!n.solfege_name) return '';
+        return `<span class="solfege-chip" title="${n.f0_hz ? n.f0_hz.toFixed(1) + ' Hz، انحراف ' + (n.cents_off_degree ?? 0) + '¢' : ''}">${n.solfege_name}</span>`;
+      }).join('');
+      const maqamLabel = ph.maqam ? `${ph.maqam}${ph.confidence_pct != null ? ' (' + ph.confidence_pct + '%)' : ''}` : 'نامشخص';
+      return `
+      <div class="phrase-card">
+        <div class="phrase-head">
+          <span class="phrase-time">فراز ${idx + 1}: ${ph.start}s – ${ph.end}s</span>
+          <span>مقام: <b>${maqamLabel}</b></span>
+          <span class="phrase-trend">روند ملودی: ${ph.melody_trend}</span>
+          <span style="color:#9294bd;">${ph.num_notes} نت</span>
+        </div>
+        <div class="phrase-notes">${chips || '<span style="color:#9294bd;font-size:0.8rem;">نتی برای این فراز ثبت نشد.</span>'}</div>
+      </div>`;
+    }).join('');
+  } else {
+    phSection.style.display = 'none';
   }
 
   if (report.meta && report.meta.visualization_url) {

@@ -190,6 +190,76 @@ def freq_to_note_and_deviation(f: float):
 
 
 # ============================================================================
+# سولفژ سیار مقامی (Movable Arabic Solfège) — نگاشت هر نت به درجه سولفژ
+# ============================================================================
+#
+# در موسیقی/تلاوت عربی، هر درجه از مقام یک نام سولفژی سنتی دارد (مشابه
+# «دو-ر-می-فا-سل-لا-سی» غربی، اما «سیار» — یعنی نام‌ها نسبت به تونیک واقعی
+# مقام در هر لحظه تعیین می‌شوند، نه یک فرکانس مطلق ثابت). این نام‌ها از
+# نام‌گذاری تاریخی روی مقام رست (وقتی رست بر پایه دوگاه/C اجرا شود) گرفته
+# شده و در تحلیل موسیقی عربی/مقامی به‌طور عمومی به‌عنوان نام هفت درجه هر
+# مقام (صرف‌نظر از این‌که کدام مقام باشد) استفاده می‌شود:
+#   درجه ۱ (تونیک) = راست    درجه ۵ = نوا
+#   درجه ۲          = دوگاه    درجه ۶ = حسینی
+#   درجه ۳          = سه‌گاه   درجه ۷ = اوج
+#   درجه ۴          = چهارگاه  درجه ۸ (اکتاو) = کردان (= راست اکتاو بعد)
+SOLFEGE_DEGREES_FA = ["راست", "دوگاه", "سه‌گاه", "چهارگاه", "نوا", "حسینی", "اوج"]
+
+# نام رجیستر (اکتاو) نسبت به اکتاوی که تونیک محلی در آن قرار دارد —
+# اصطلاحات سنتی موسیقی عربی/مقامی برای موقعیت اکتاوی یک نت:
+REGISTER_NAMES_FA = {
+    -2: "قرار قرار",
+    -1: "قرار",
+    0: "",              # اکتاو اصلی (همان اکتاو تونیک) — بدون پسوند نمایش داده می‌شود
+    1: "جواب",
+    2: "جواب‌الجواب",
+    3: "جواب‌الجواب اوج",
+}
+
+
+def note_to_solfege(f0_hz: float, tonic_hz: float, maqam_cents):
+    """
+    یک نت را نسبت به «تونیک محلی» (تونیک مقامی که در همان فراز/لحظه تشخیص
+    داده شده) و ساختار فاصله‌ای مقام محلی، به نزدیک‌ترین درجه سولفژ (از ۷
+    درجه) به‌همراه رجیستر اکتاوی (قرار/اصل/جواب/جواب‌الجواب) و میزان انحراف
+    دقیق (سنت) از آن درجه نگاشت می‌کند.
+
+    این نگاشت «سیار» (movable) است — یعنی برخلاف freq_to_note_and_deviation
+    (که نام نت غربی ثابت می‌دهد)، اینجا نام درجه به تونیک واقعی مقام در آن
+    لحظه بستگی دارد؛ دقیقاً مشابه سیستم دو-متحرک (movable-do) در سولفژ غربی.
+    """
+    if f0_hz is None or f0_hz <= 0 or tonic_hz is None or tonic_hz <= 0:
+        return None
+
+    cents_from_tonic = 1200.0 * np.log2(f0_hz / tonic_hz)
+    register = int(np.floor(cents_from_tonic / 1200.0))
+    cents_in_octave = cents_from_tonic - register * 1200.0
+
+    degree_cents = maqam_cents[:-1]  # حذف درجه ۸ (تکرار اکتاویِ درجه ۱)
+    diffs = [min(abs(cents_in_octave - dc), abs(cents_in_octave - 1200.0 - dc),
+                  abs(cents_in_octave + 1200.0 - dc)) for dc in degree_cents]
+    degree_idx = int(np.argmin(diffs))
+    cents_off = cents_in_octave - degree_cents[degree_idx]
+    if cents_off > 600:
+        cents_off -= 1200
+    elif cents_off < -600:
+        cents_off += 1200
+
+    degree_name = SOLFEGE_DEGREES_FA[degree_idx] if degree_idx < len(SOLFEGE_DEGREES_FA) else f"درجه {degree_idx + 1}"
+    register_suffix = REGISTER_NAMES_FA.get(register, f"اکتاو {register:+d}")
+    full_name = f"{degree_name} {register_suffix}".strip()
+
+    return {
+        "degree_index": degree_idx + 1,       # ۱ تا ۷ (۱=راست/تونیک)
+        "degree_name": degree_name,
+        "register_offset": register,           # ۰=اکتاو تونیک، ۱=جواب، -۱=قرار، ...
+        "register_name": register_suffix or "اصل",
+        "cents_off_degree": round(float(cents_off), 1),
+        "solfege_name": full_name,
+    }
+
+
+# ============================================================================
 # مرحله ۱: استخراج دقیق پرده صدا (Pitch) با Praat
 # ============================================================================
 
@@ -527,6 +597,115 @@ def build_maqam_timeline(notes, total_duration, window_sec=MAQAM_TIMELINE_WINDOW
     }
 
 
+# ============================================================================
+# تحلیل «لحن به لحن» — تفکیک به فرازهای طبیعی + سولفژ دقیق هر نت
+# ============================================================================
+#
+# برخلاف maqam_timeline (که فایل را به پنجره‌های زمانی *ثابت* ۴۵ ثانیه‌ای
+# تقسیم می‌کند)، این بخش فایل را بر اساس مکث‌ها/نفس‌های *واقعی* قاری
+# (خروجی detect_pauses) به «فرازها»ی طبیعی تقسیم می‌کند — دقیقاً همان واحدی
+# که در تلاوت واقعی به‌عنوان یک «لحن»/جمله مقامی شنیده می‌شود، نه یک بازهٔ
+# دلخواه زمانی. برای هر فراز:
+#   ۱) مقام و تونیک محلی همان فراز (نه مقام کلی فایل) با همان تطبیق نمایهٔ
+#      ربع‌پرده‌ای موجود (detect_tonic_and_maqam) اما محدود به نت‌های آن فراز
+#   ۲) هر نت آن فراز با نام دقیق سولفژ سیار (راست/دوگاه/سه‌گاه/.../اوج +
+#      رجیستر قرار/جواب/...) نسبت به تونیک محلی
+#   ۳) روند کلی ملودی فراز (صعودی/نزولی/ثابت/موج‌دار) بر اساس شیب میانگین
+#      و علامت تغییرات نت‌به‌نت
+#
+# این تحلیل برای *همهٔ* فایل‌ها (نه فقط فایل‌های طولانی) اجرا می‌شود.
+
+PHRASE_MIN_PAUSE_SEC = 0.35        # حداقل طول سکوت برای این‌که مرز فراز در نظر گرفته شود
+PHRASE_MIN_NOTES = 2               # کمترین تعداد نت برای این‌که یک قطعه به‌عنوان فراز مستقل گزارش شود
+
+
+def _melody_trend(cents_sequence):
+    """روند کلی حرکت ملودی یک فراز را بر اساس شیب و نوسان توصیف می‌کند."""
+    if len(cents_sequence) < 2:
+        return "ثابت"
+    diffs = np.diff(cents_sequence)
+    slope = (cents_sequence[-1] - cents_sequence[0]) / max(len(cents_sequence) - 1, 1)
+    direction_changes = np.sum(np.diff(np.sign(diffs[diffs != 0])) != 0) if len(diffs) > 1 else 0
+    wavy_ratio = direction_changes / max(len(diffs), 1)
+
+    if wavy_ratio > 0.5:
+        return "موج‌دار (فراز و فرود متناوب)"
+    if slope > 15:
+        return "صعودی"
+    if slope < -15:
+        return "نزولی"
+    return "ثابت / نوسان کوچک حول یک محور"
+
+
+def build_phrase_breakdown(times, freqs, notes, pauses, top_k_per_phrase=1):
+    """
+    فایل را بر اساس مکث‌های واقعی به فرازهای طبیعی تقسیم کرده و برای هر
+    فراز، مقام/تونیک محلی، سولفژ دقیق هر نت، و روند ملودی را برمی‌گرداند.
+    خروجی به ترتیب زمانی است — یعنی همان چیزی که کاربر با آن می‌تواند
+    بگوید «در این لحظه از فایل، این لحن/فراز با این نت‌ها خوانده شده است».
+    """
+    total_duration = float(times[-1]) if len(times) else 0.0
+    significant_pauses = [p for p in pauses if p["duration"] >= PHRASE_MIN_PAUSE_SEC]
+
+    # --- ساخت مرزهای فراز از روی نقاط پایان/شروع مکث‌های معنادار ---
+    boundaries = [0.0]
+    for p in significant_pauses:
+        boundaries.append(p["start"])
+        boundaries.append(p["end"])
+    boundaries.append(total_duration)
+    boundaries = sorted(set(round(b, 3) for b in boundaries))
+
+    phrases = []
+    for i in range(len(boundaries) - 1):
+        seg_start, seg_end = boundaries[i], boundaries[i + 1]
+        if seg_end - seg_start < 0.05:
+            continue
+
+        phrase_notes = [n for n in notes if n["start"] >= seg_start - 0.01 and n["start"] < seg_end + 0.01]
+        if len(phrase_notes) < PHRASE_MIN_NOTES:
+            continue  # قطعهٔ خیلی کوتاه/تک‌نت (مثل باقیماندهٔ مکث) گزارش جداگانه نمی‌شود
+
+        hist = build_qtet_histogram(phrase_notes)
+        candidates = detect_tonic_and_maqam(hist, top_k=top_k_per_phrase)
+        best = candidates[0] if candidates else None
+
+        solfege_notes = []
+        cents_sequence = []
+        if best:
+            tonic_hz = best["tonic_freq_hz"]
+            maqam_cents = MAQAMAT[best["maqam"]]["cents"]
+            # تونیک را به نزدیک‌ترین اکتاو به محدودهٔ صدای واقعی این فراز منتقل کن
+            phrase_freqs = np.array([n["f0_hz"] for n in phrase_notes])
+            center_freq = np.exp(np.mean(np.log(phrase_freqs)))
+            octave_shift = round(np.log2(center_freq / tonic_hz))
+            tonic_hz *= (2 ** octave_shift)
+
+            for n in phrase_notes:
+                sol = note_to_solfege(n["f0_hz"], tonic_hz, maqam_cents)
+                cents_sequence.append(1200.0 * np.log2(n["f0_hz"] / tonic_hz))
+                solfege_notes.append({
+                    "start": n["start"], "end": n["end"], "duration": n["duration"],
+                    "f0_hz": n["f0_hz"],
+                    **({} if sol is None else sol),
+                })
+
+        trend = _melody_trend(cents_sequence) if cents_sequence else "نامشخص"
+
+        phrases.append({
+            "start": round(seg_start, 2),
+            "end": round(seg_end, 2),
+            "duration": round(seg_end - seg_start, 2),
+            "num_notes": len(phrase_notes),
+            "maqam": best["maqam"] if best else None,
+            "confidence_pct": best["confidence_pct"] if best else None,
+            "tonic_freq_hz": round(tonic_hz, 2) if best else None,
+            "melody_trend": trend,
+            "notes_solfege": solfege_notes,
+        })
+
+    return phrases
+
+
 def compute_ambitus(notes):
     """دامنه ملودیک (فاصله بین بم‌ترین و زیرترین نت) را بر حسب سنت و نام نت گزارش می‌دهد."""
     if not notes:
@@ -656,7 +835,12 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
         if duration_total >= MAQAM_TIMELINE_MIN_DURATION_SEC:
             print(f"فایل طولانی است ({duration_total/60:.1f} دقیقه) — در حال ساخت تایم‌لاین تغییر مقام...")
             maqam_timeline = build_maqam_timeline(notes, duration_total)
-        _progress("timeline", 0.88)
+        _progress("timeline", 0.86)
+
+        # --- تحلیل «لحن به لحن» بر اساس فرازهای طبیعی (برای همهٔ فایل‌ها) ---
+        print("در حال تفکیک فرازهای طبیعی و تحلیل سولفژ دقیق هر نت...")
+        phrase_breakdown = build_phrase_breakdown(times, freqs, notes, pauses)
+        _progress("phrase_breakdown", 0.9)
 
         report = {
             "meta": {
@@ -675,6 +859,7 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
             "ambitus": ambitus,
             "maqam_candidates": maqam_candidates,
             "maqam_timeline": maqam_timeline,
+            "phrase_breakdown": phrase_breakdown,
             "notes": notes,
             "pauses_top5": sorted(pauses, key=lambda p: -p["duration"])[:5],
         }
@@ -860,6 +1045,18 @@ def print_report(report):
         else:
             print("   در طول فایل، تغییر مقام قابل‌توجهی شناسایی نشد (مقام ثابت باقی مانده).")
         print(f"   جزئیات کامل هر پنجره در فیلد \"maqam_timeline.windows\" گزارش JSON موجود است.")
+
+    phb = report.get("phrase_breakdown")
+    if phb:
+        print(f"\n🎼 تحلیل لحن به لحن (فرازهای طبیعی بر اساس مکث/نفس واقعی — {len(phb)} فراز):")
+        for i, ph in enumerate(phb, 1):
+            maqam_label = ph["maqam"] or "نامشخص"
+            conf = f" ({ph['confidence_pct']}%)" if ph.get("confidence_pct") is not None else ""
+            print(f"   فراز {i}: {ph['start']}s - {ph['end']}s  |  مقام: {maqam_label}{conf}  |  روند: {ph['melody_trend']}  |  {ph['num_notes']} نت")
+            sol_names = [n["solfege_name"] for n in ph.get("notes_solfege", []) if n.get("solfege_name")]
+            if sol_names:
+                print(f"      نت‌ها (سولفژ): {' - '.join(sol_names)}")
+        print(f"   جزئیات کامل هر فراز در فیلد \"phrase_breakdown\" گزارش JSON موجود است.")
 
     print(f"\n🎵 نمونه‌ای از نت‌های دقیق شناسایی‌شده (۱۰ نت اول):")
     for note in report["notes"][:10]:
