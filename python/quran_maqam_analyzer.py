@@ -1007,6 +1007,13 @@ def _make_melograph_impl(times, freqs, notes, best_maqam, out_path, maqam_timeli
             tonic_hz_adj *= (2 ** octave_shift)
 
     # --- بم‌ترین و زیرترین نت خوانده‌شده در کل فایل ---
+    #
+    # نمایش این دو نت باید به‌قدری واضح باشد که با یک نگاه، هم «کجای زمان
+    # رخ داده» و هم «دقیقاً اسمش چیست» مشخص شود — بنابراین علاوه بر خط
+    # افقی راهنما (که کل بازهٔ فرکانسی را در تمام طول نمودار نشان می‌دهد)،
+    # یک نشانگر ستاره‌ای دقیقاً روی همان نتِ واقعی (در همان لحظهٔ زمانی که
+    # رخ داده، نه گوشهٔ ثابت نمودار) رسم می‌شود و یک برچسبِ درشت/پررنگ با
+    # فلش به همان نقطه اشاره می‌کند.
     if ambitus and ambitus.get("lowest_hz") and ambitus.get("highest_hz"):
         x0, x1 = float(times[0]), float(times[-1]) if len(times) else 0.0
         low_hz, high_hz = ambitus["lowest_hz"], ambitus["highest_hz"]
@@ -1017,25 +1024,50 @@ def _make_melograph_impl(times, freqs, notes, best_maqam, out_path, maqam_timeli
             low_sol = note_to_solfege(low_hz, tonic_hz_adj, maqam_cents)
             high_sol = note_to_solfege(high_hz, tonic_hz_adj, maqam_cents)
             if low_sol:
-                low_sol_str = f" — {low_sol['solfege_name']}"
+                low_sol_str = f" ({low_sol['solfege_name']})"
             if high_sol:
-                high_sol_str = f" — {high_sol['solfege_name']}"
+                high_sol_str = f" ({high_sol['solfege_name']})"
 
-        ax.axhline(low_hz, color="#f59e0b", linestyle=":", linewidth=1.6, zorder=5)
-        ax.axhline(high_hz, color="#a855f7", linestyle=":", linewidth=1.6, zorder=5)
+        # --- پیدا کردن لحظهٔ زمانی واقعی این دو نت (نزدیک‌ترین نت در لیست
+        #     notes به فرکانس کمینه/بیشینهٔ گزارش‌شده در ambitus) ---
+        def _find_note_time(target_hz):
+            if not notes:
+                return (x0 + x1) / 2.0
+            best = min(notes, key=lambda n: abs(n["f0_hz"] - target_hz))
+            return (best["start"] + best["end"]) / 2.0
 
-        low_label = T(f"پایین‌ترین نت: {low_note} — {low_hz:.1f} Hz{low_sol_str}")
-        high_label = T(f"بالاترین نت: {high_note} — {high_hz:.1f} Hz{high_sol_str}")
+        low_t = _find_note_time(low_hz)
+        high_t = _find_note_time(high_hz)
 
-        ax.annotate(low_label, xy=(x1, low_hz), xytext=(-8, -9), textcoords="offset points",
-                    fontsize=9, color="#f59e0b", va="top", ha="right", zorder=7,
-                    bbox=dict(boxstyle="round,pad=0.25", fc="#111827", ec="#f59e0b", alpha=0.9))
-        ax.annotate(high_label, xy=(x1, high_hz), xytext=(-8, 9), textcoords="offset points",
-                    fontsize=9, color="#a855f7", va="bottom", ha="right", zorder=7,
-                    bbox=dict(boxstyle="round,pad=0.25", fc="#111827", ec="#a855f7", alpha=0.9))
+        ax.axhline(low_hz, color="#f59e0b", linestyle=":", linewidth=1.4, alpha=0.85, zorder=5)
+        ax.axhline(high_hz, color="#a855f7", linestyle=":", linewidth=1.4, alpha=0.85, zorder=5)
 
-        ax.plot(x0, low_hz, marker="v", color="#f59e0b", markersize=8, zorder=6, clip_on=False)
-        ax.plot(x0, high_hz, marker="^", color="#a855f7", markersize=8, zorder=6, clip_on=False)
+        # نشانگر ستاره‌ای بزرگ دقیقاً روی نت واقعی (نه فقط لبهٔ نمودار)
+        ax.plot(low_t, low_hz, marker="*", color="#f59e0b", markersize=20,
+                markeredgecolor="#111827", markeredgewidth=1.0, zorder=8)
+        ax.plot(high_t, high_hz, marker="*", color="#a855f7", markersize=20,
+                markeredgecolor="#111827", markeredgewidth=1.0, zorder=8)
+
+        low_label = T(f"پایین‌ترین نت\n{low_note}{low_sol_str}\n{low_hz:.1f} Hz")
+        high_label = T(f"بالاترین نت\n{high_note}{high_sol_str}\n{high_hz:.1f} Hz")
+
+        ax.annotate(low_label, xy=(low_t, low_hz), xytext=(0, -42), textcoords="offset points",
+                    fontsize=11, fontweight="bold", color="white", va="top", ha="center", zorder=9,
+                    arrowprops=dict(arrowstyle="-|>", color="#f59e0b", lw=1.6),
+                    bbox=dict(boxstyle="round,pad=0.35", fc="#b45309", ec="#f59e0b", lw=1.4, alpha=0.95))
+        ax.annotate(high_label, xy=(high_t, high_hz), xytext=(0, 42), textcoords="offset points",
+                    fontsize=11, fontweight="bold", color="white", va="bottom", ha="center", zorder=9,
+                    arrowprops=dict(arrowstyle="-|>", color="#a855f7", lw=1.6),
+                    bbox=dict(boxstyle="round,pad=0.35", fc="#7e22ce", ec="#a855f7", lw=1.4, alpha=0.95))
+
+        # برچسب کوچک انتهای خط افقی هم نگه داشته می‌شود (برای وقتی نشانگر
+        # ستاره‌ای در بخش شلوغ نمودار زیر برچسب‌های دیگر پنهان بماند)
+        ax.annotate(T(f"{low_note} — {low_hz:.1f} Hz"), xy=(x1, low_hz), xytext=(-6, -3),
+                    textcoords="offset points", fontsize=8, color="#f59e0b",
+                    va="top", ha="right", zorder=7, alpha=0.85)
+        ax.annotate(T(f"{high_note} — {high_hz:.1f} Hz"), xy=(x1, high_hz), xytext=(-6, 3),
+                    textcoords="offset points", fontsize=8, color="#a855f7",
+                    va="bottom", ha="right", zorder=7, alpha=0.85)
 
     if best_maqam:
         tonic_hz = tonic_hz_adj
