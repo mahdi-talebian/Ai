@@ -634,7 +634,22 @@ function runAnalysis(buffer) {
 }
 
 // ---- RMS / بلندی صدا ----
+
+// ماکزیمم آرایه بدون spread — برای آرایه‌های خیلی بزرگ (فایل‌های طولانی)
+// Math.max(...arr) در آرایه‌های بزرگ به «Maximum call stack size exceeded»
+// می‌خورد چون هر عضو به یک آرگومان جداگانهٔ فراخوانی تابع تبدیل می‌شود و از
+// سقف تعداد آرگومان‌های موتور جاوااسکریپت عبور می‌کند؛ این تابع با حلقهٔ
+// ساده و بدون محدودیت اندازه محاسبه می‌کند.
+function arrayMax(arr, fallback) {
+  let m = fallback !== undefined ? fallback : -Infinity;
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] > m) m = arr[i];
+  }
+  return m;
+}
+
 function computeRMS(data) {
+
   let sumSquares = 0;
   let peak = 0;
   for (let i = 0; i < data.length; i++) {
@@ -677,7 +692,7 @@ function estimateTempo(data, sr) {
   }
 
   // نرمال‌سازی
-  const maxOnset = Math.max(...onsetEnv, 1e-9);
+  const maxOnset = arrayMax(onsetEnv, 1e-9);
   for (let i = 0; i < onsetEnv.length; i++) onsetEnv[i] /= maxOnset;
 
   const envSr = sr / hop; // نرخ نمونه‌برداری پاکت (حدود 100 هرتز)
@@ -768,7 +783,7 @@ function computeChromagram(data, sr) {
   }
 
   // نرمال‌سازی
-  const maxVal = Math.max(...chroma, 1e-9);
+  const maxVal = arrayMax(chroma, 1e-9);
   for (let i = 0; i < 12; i++) chroma[i] /= maxVal;
 
   return Array.from(chroma);
