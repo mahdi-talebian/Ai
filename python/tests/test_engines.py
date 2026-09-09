@@ -204,6 +204,18 @@ r2 = qma.update_with_hysteresis(st2, "حجاز (Hijaz)", 45)
 check("اختلاف واضح فوری عوض می‌کند", r2 == "حجاز (Hijaz)", str(r2))
 
 # ─────────────────────────────────────────────
+print("== امتیازدهی سولفژ با فایل (DTW) ==")
+tgt = [0, 150, 350, 500, 700, 850, 1000]
+exact = [{"f0_hz": TONIC * 2 ** (c / 1200.0), "duration": 0.5} for c in tgt]
+r_ok = qma.solfege_score_notes(exact, tgt, TONIC)
+check("خوانندهٔ دقیق → ۱۰۰", r_ok and r_ok["overall_pct"] >= 95, str(r_ok and r_ok["overall_pct"]))
+flat = [{"f0_hz": TONIC * 2 ** ((c - 80) / 1200.0), "duration": 0.5} for c in tgt]
+r_flat = qma.solfege_score_notes(flat, tgt, TONIC)
+check("۸۰ سنت زیر → همهٔ انحراف‌ها −۸۰", all(p["offset"] == -80 for p in r_flat["per"]),
+      str([p["offset"] for p in r_flat["per"]]))
+check("فایل بی‌صدا → None", qma.solfege_score_notes([], tgt, TONIC) is None)
+
+# ─────────────────────────────────────────────
 print()
 if FAILED:
     print(f"✗ {len(FAILED)} تست شکست: {FAILED}")

@@ -956,6 +956,66 @@ def _finalis_bonus(tonic_cents: float, finalis_cents):
     return 1.0 + FINALIS_BONUS * max(0.0, 1.0 - dist / FINALIS_BONUS_RANGE_CENTS)
 
 
+def solfege_dtw_align(sung_cents, target_cents):
+    """هم‌ترازی DTW سادهٔ توالی سنتِ خوانده‌شده با توالی هدف (سولفژ).
+    خروجی: {اندیس هدف: [اندیس‌های خوانده‌شده]} — پرش‌ها و کشش‌ها را تحمل می‌کند."""
+    n, m = len(sung_cents), len(target_cents)
+    if n == 0 or m == 0:
+        return {}
+    INF = float("inf")
+    D = [[INF] * (m + 1) for _ in range(n + 1)]
+    D[0][0] = 0.0
+
+    def _wdiff(a, b):
+        off = (a - b + 600.0) % 1200.0 - 600.0
+        return min(abs(off), 150.0)
+
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            c = _wdiff(sung_cents[i - 1], target_cents[j - 1])
+            D[i][j] = c + min(D[i - 1][j - 1], D[i - 1][j], D[i][j - 1])
+    i, j = n, m
+    by_target = {}
+    while i > 0 and j > 0:
+        by_target.setdefault(j - 1, []).append(i - 1)
+        best = min(D[i - 1][j - 1], D[i - 1][j], D[i][j - 1])
+        if best == D[i - 1][j - 1]:
+            i, j = i - 1, j - 1
+        elif best == D[i - 1][j]:
+            i -= 1
+        else:
+            j -= 1
+    return by_target
+
+
+def solfege_score_notes(notes, targets_cents, tonic_hz):
+    """نت‌های تحلیل‌شدهٔ فایل کاربر را با توالی هدف سولفژ می‌سنجد.
+    notes: [{"f0_hz":.., "duration":..}] — targets_cents: [سنت از تونیک]
+    خروجی: {"per": [...], "overall_pct":.., "coverage_pct":.., "n_sung_notes":..}"""
+    sung_notes = [n for n in notes if (n.get("f0_hz") or 0) > 0 and (n.get("duration") or 0) >= 0.08]
+    if not sung_notes or not targets_cents or not tonic_hz or tonic_hz <= 0:
+        return None
+    sung = [1200.0 * np.log2(n["f0_hz"] / tonic_hz) for n in sung_notes]
+    tgt = [float(t) for t in targets_cents]
+    by_t = solfege_dtw_align(sung, tgt)
+    per, matched = [], []
+    for j, t in enumerate(tgt):
+        idxs = sorted(by_t.get(j) or [])
+        if not idxs:
+            per.append({"i": j, "matched": False, "offset": None, "score": None, "n": 0})
+            continue
+        offs = sorted(((sung[si] - t + 600.0) % 1200.0) - 600.0 for si in idxs)
+        med = offs[len(offs) // 2]
+        sc = max(0.0, 100.0 - max(0.0, abs(med) - 30.0) * 1.2)
+        matched.append(sc)
+        per.append({"i": j, "matched": True, "offset": round(med), "score": round(sc, 1),
+                    "n": len(idxs)})
+    coverage = len(matched) / len(tgt)
+    overall = round(sum(matched) / len(matched) * (coverage ** 0.5), 1) if matched else 0.0
+    return {"per": per, "overall_pct": overall, "coverage_pct": round(100.0 * coverage),
+            "n_sung_notes": len(sung)}
+
+
 def rerank_candidates_with_transitions(candidates, transition_prior,
                                        weight=0.3):
     """

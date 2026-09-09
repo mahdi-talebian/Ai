@@ -694,6 +694,41 @@ async def api_maqamat():
     return out
 
 
+@app.post("/api/solfege/score")
+async def api_solfege_score(file: UploadFile = File(...), tonic_hz: float = Form(...),
+                            target: str = Form(...)):
+    """📂 امتیازدهی سولفژ بدون میکروفون: فایل ضبط‌شدهٔ کاربر + توالی هدف
+    (برای محیط‌های iframe که getUserMedia در آن‌ها بسته است)."""
+    import json as _json, tempfile, os
+    try:
+        targets = _json.loads(target)
+        assert isinstance(targets, list) and targets
+    except Exception:
+        return {"error": "توالی هدف سولفژ نامعتبر است"}
+    suffix = os.path.splitext(file.filename or "")[1] or ".wav"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+        tf.write(await file.read())
+        tmp_path = tf.name
+    try:
+        rep = qma.analyze_recitation(tmp_path, make_plot=False)
+    except Exception as e:
+        return {"error": f"تحلیل فایل ناموفق بود: {e}"}
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+    try:
+        tonic = float(tonic_hz)
+        result = qma.solfege_score_notes(rep.get("notes") or [],
+                                         [t.get("cents") for t in targets], tonic)
+    except Exception as e:
+        return {"error": f"امتیازدهی ناموفق بود: {e}"}
+    if not result:
+        return {"error": "نتِ خوانده‌شده‌ای در فایل پیدا نشد"}
+    return result
+
+
 @app.get("/api/health")
 async def health():
     return {"ok": True, "jobs": len(JOBS), "styles": len(stl.list_profiles())}

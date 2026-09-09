@@ -481,10 +481,16 @@
           <button id="solPlay" class="primary-btn" style="padding:9px 18px;">▶ پخش نمونه</button>
           <button id="solStop" class="secondary-btn" style="padding:9px 18px;">⏹ توقف</button>
           <button id="solMic" class="primary-btn" style="padding:9px 18px;">🎤 شروع تمرین (بخوان!)</button>
+          <button id="solFileBtn" class="secondary-btn" style="padding:9px 18px;">📂 امتیاز فایل ضبط‌شده</button>
+          <input type="file" id="solFileInput" accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm,.flac" style="display:none;">
         </div>
         <div id="solSyllable" style="text-align:center; font-size:2.1rem; font-weight:900; min-height:2.8rem; color:#23e0c2; text-shadow:0 0 18px rgba(35,224,194,.4);">—</div>
         <canvas id="solCanvas" width="900" height="300" style="width:100%; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.08); border-radius:12px; direction:ltr;"></canvas>
-        <div id="solStatus" class="hint-text" style="margin-top:8px;">اول «▶ پخش نمونه» را گوش کن، بعد «🎤 شروع تمرین» — جمله پخش می‌شود و تو همزمان می‌خوانی.</div>
+        <div id="solIframeHint" style="display:none; color:#ffb703; border:1px solid rgba(255,183,3,.4); border-radius:10px; padding:10px 14px; margin-top:8px;">
+          ⚠️ این صفحه داخل iframe باز شده و مرورگرها در این حالت اجازهٔ میکروفون نمی‌دهند.
+          <a id="solOpenNewTab" href="#" target="_blank" rel="noopener" style="color:#23e0c2; font-weight:800;">↗ همین صفحه را در تب جدید باز کن</a>
+          — یا بدون میکروفون با «📂 امتیاز فایل ضبط‌شده» امتیاز بگیر.</div>
+        <div id="solStatus" class="hint-text" style="margin-top:8px;">اول «▶ پخش نمونه» را گوش کن، بعد «🎤 شروع تمرین» — جمله پخش می‌شود و تو همزمان می‌خوانی. اگر میکروفون در دسترس نیست (iframe)، ضبط کن و «📂 امتیاز فایل ضبط‌شده» را بزن.</div>
         <div id="solScore"></div>
       </div>
       <div id="qPanelCompare" class="panel">
@@ -1518,10 +1524,24 @@ const LIVE_SAMPLE_RATE = 16000;
   if (isInIframe) {
     const warn = document.getElementById('qMicIframeWarning');
     const link = document.getElementById('qMicOpenNewTab');
-    warn.style.display = 'block';
-    link.href = location.href;
+    if (warn) warn.style.display = 'block';
+    if (link) link.href = location.href;
+    const solHint = document.getElementById('solIframeHint');
+    const solLink = document.getElementById('solOpenNewTab');
+    if (solHint) solHint.style.display = 'block';
+    if (solLink) solLink.href = location.href;
   }
 })();
+
+function micPermBannerHTML(msg) {
+  const isIframe = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
+  const open = `<a href="${location.href}" target="_blank" rel="noopener" style="color:#23e0c2; font-weight:800;">↗ باز کردن در تب جدید</a>`;
+  if (isIframe) {
+    return `<div style="color:#ffb703; border:1px solid rgba(255,183,3,.4); border-radius:10px; padding:10px 14px;">
+      ⚠️ ${msg ? msg + ' ' : ''}میکروفون داخل iframe بسته است. ${open} — یا «📂 امتیاز فایل ضبط‌شده» را امتحان کن.</div>`;
+  }
+  return `<div style="color:#ffb703;">⚠️ ${msg || 'دسترسی به میکروفون ممکن نشد'} — ${open}</div>`;
+}
 
 function describeMicError(err) {
   const name = err && err.name;
@@ -1959,7 +1979,7 @@ document.getElementById('vpCalibrate').onclick = async () => {
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
   } catch (err) {
-    status.textContent = '❌ دسترسی میکروفون ممکن نشد: ' + (err.message || err.name);
+    status.innerHTML = micPermBannerHTML('کوک پروفایل: ' + (err.message || err.name));
     return;
   }
   status.textContent = '⏳ نت پایه (ندا/دوگاه) را محکم و کشیده بخوان... (۵ ثانیه — دوباره کلیک کن تا لغو شود)';
@@ -2474,7 +2494,7 @@ liveMicBtn.onclick = async () => {
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
   } catch (err) {
-    liveMicStatus.textContent = '❌ ' + describeMicError(err);
+    liveMicStatus.innerHTML = micPermBannerHTML(describeMicError(err));
     return;
   }
 
@@ -2817,7 +2837,7 @@ async function solPractice() {
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
   } catch (err) {
-    document.getElementById('solStatus').textContent = '❌ ' + (describeMicError ? describeMicError(err) : 'دسترسی به میکروفون رد شد.');
+    document.getElementById('solStatus').innerHTML = micPermBannerHTML(describeMicError(err));
     return;
   }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -2917,6 +2937,55 @@ function solFinish() {
   document.getElementById('solScore').innerHTML = html;
   document.getElementById('solStatus').textContent = '✅ تمرین تمام شد — منحنی سبز، صدای خودت روی نت‌های هدف است.';
 }
+
+function renderSolFileScore(d) {
+  const seq = SOLFEGE.seq;
+  const color = d.overall_pct >= 85 ? '#3ddc97' : d.overall_pct >= 60 ? '#ffb703' : '#ff5cad';
+  let html = `<div style="margin-top:12px; font-size:1.15rem; font-weight:900;">امتیاز فایل: <span style="color:${color};">${faNum(d.overall_pct)}٪</span>
+    <span class="hint-text">(پوشش ${faNum(d.coverage_pct)}٪ — ${faNum(d.n_sung_notes)} نت در فایل شنیده شد)</span></div>
+    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;">`;
+  d.per.forEach(p => {
+    const it = seq[p.i] || {};
+    const c = !p.matched ? '#9294bd' : Math.abs(p.offset) <= 50 ? '#3ddc97' : Math.abs(p.offset) <= 100 ? '#ffb703' : '#ff5cad';
+    const arrow = !p.matched ? '' : (p.offset > 15 ? ' ↓' : p.offset < -15 ? ' ↑' : ' ✓');
+    html += `<span style="background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:8px; padding:4px 9px; font-size:.85rem;">
+      ${it.fa || ('درجه ' + faNum(p.i + 1))} <b style="color:${c};">${p.matched ? arrow + ' ' + faNum(Math.abs(p.offset)) + '¢' : '—'}</b></span>`;
+  });
+  html += '</div>';
+  document.getElementById('solScore').innerHTML = html;
+  document.getElementById('solStatus').textContent = '✅ امتیازدهی فایل انجام شد — فلش ↑ یعنی آن نت را زیر خوانده‌ای و ↓ یعنی بالاتر.';
+}
+
+async function solScoreFile(f) {
+  const tonic = parseFloat(document.getElementById('solTonic').value) || 220;
+  solStopAll(false);
+  SOLFEGE.seq = solBuildSeq();
+  if (!SOLFEGE.seq.length) {
+    document.getElementById('solStatus').textContent = 'اول مقام و نوع تمرین را انتخاب کن.';
+    return;
+  }
+  document.getElementById('solStatus').textContent = '⏳ در حال تحلیل فایل و امتیازدهی نت‌به‌نت...';
+  document.getElementById('solScore').innerHTML = '';
+  try {
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('tonic_hz', String(tonic));
+    fd.append('target', JSON.stringify(SOLFEGE.seq.map(s => ({ cents: s.cents, dur: s.dur }))));
+    const r = await fetch('/api/solfege/score', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || 'پاسخ نامعتبر از سرور');
+    renderSolFileScore(d);
+  } catch (e) {
+    document.getElementById('solStatus').textContent = '❌ ' + (e.message || 'امتیازدهی فایل ناموفق بود.');
+  }
+}
+
+document.getElementById('solFileBtn').onclick = () => document.getElementById('solFileInput').click();
+document.getElementById('solFileInput').onchange = (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (f) solScoreFile(f);
+  e.target.value = '';
+};
 
 document.getElementById('solPlay').onclick = solPlay;
 document.getElementById('solStop').onclick = () => { solStopAll(false); document.getElementById('solSyllable').textContent = '—'; solDraw(); };
