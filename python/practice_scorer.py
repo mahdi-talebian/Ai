@@ -88,6 +88,18 @@ def score_recitation(report: dict) -> dict:
         spread_cents = 1200.0 * np.log2(max(tonics) / min(tonics))
         # ۰ سنت = ۱۰۰؛ هر ۳۰۰ سنت پخش، نمره را به ~۳۷٪ می‌رساند
         tonic_steadiness = _clamp(100.0 * float(np.exp(-spread_cents / 300.0)))
+    elif len(tonics) == 1 or (not tonics and (report.get("maqam_candidates") or [{}])[0].get("tonic_freq_hz")):
+        # رفع محدودیت فراز تک‌جمله‌ای: «چقدر روی تونیک می‌نشینی» =
+        # فاصلهٔ قرار (میانهٔ نت‌های پایانی) تا تونیک — صفر سنت = ۱۰۰
+        tonic_hz = tonics[0] if tonics else (report.get("maqam_candidates") or [{}])[0].get("tonic_freq_hz")
+        voiced = sorted([n for n in notes if n.get("f0_hz") and n.get("start") is not None],
+                        key=lambda n: n["start"])
+        if tonic_hz and voiced:
+            tail = voiced[-max(1, len(voiced) // 7):]   # ~۱۵٪ انتهایی
+            tail_f0 = float(np.median([n["f0_hz"] for n in tail]))
+            dev = abs(1200.0 * np.log2(tail_f0 / tonic_hz)) % 1200.0
+            dev = min(dev, 1200.0 - dev)
+            tonic_steadiness = _clamp(100.0 * float(np.exp(-dev / 150.0)))
 
     # ------------------------------------------------------------------
     # امتیاز کل — وزن‌ها: انطباق مهم‌ترین است
@@ -178,6 +190,8 @@ def score_recitation(report: dict) -> dict:
         "best_phrases": best,
         "badges": badges,
         "tips": tips,
+        "degree_accuracy": _degree_accuracy(phrases),
+        "tonic_advisor": _tonic_advisor(report, notes, tonics),
     }
 
 
@@ -197,3 +211,101 @@ def _grade_of(total):
     if total >= 60:
         return "D", 2
     return "E", 1
+
+def _degree_accuracy(phrases):
+    """
+    🎯 دادهٔ رادار دقت درجات: برای هر درجهٔ شرقی (دوگاه، سیکاه، ...) که کاربر
+    خوانده: میانگین |انحراف سنت| وزن‌دار با مدت + درصد نشستن روی درجه
+    (تلورانس ۴۰ سنت) + مجموع مدت.
+    """
+    agg = {}
+    for ph in phrases or []:
+        for n in (ph.get("notes_solfege") or []):
+            fa = n.get("absolute_degree_fa")
+            idx = n.get("degree_index")
+            off = n.get("cents_off_degree")
+            d = float(n.get("duration") or 0.0)
+            if not fa or idx is None or off is None or d <= 0:
+                continue
+            a = agg.setdefault(fa, {"degree_index": idx, "w": 0.0, "dev": 0.0, "ok": 0.0})
+            a["w"] += d
+            a["dev"] += d * abs(float(off))
+            if abs(float(off)) <= 40.0:
+                a["ok"] += d
+    out = []
+    for fa, a in agg.items():
+        if a["w"] <= 0:
+            continue
+        out.append({
+            "degree_fa": fa,
+            "degree_index": a["degree_index"],
+            "mean_abs_dev_cents": round(a["dev"] / a["w"], 1),
+            "in_tune_pct": _round1(_clamp(100.0 * a["ok"] / a["w"])),
+            "dur_sec": round(a["w"], 2),
+        })
+    out.sort(key=lambda x: (x["degree_index"], -x["dur_sec"]))
+    return out
+
+
+def _tonic_advisor(report, notes, tonics):
+    """
+    🎚 مشاور تونیک: تشخیص فشار رجیستر از روی توزیع نت‌ها.
+    اگر نت‌ها به سقف رنج فشرده شده‌اند (اوج > ~۱۰۵۰¢ بالای تونیک و ازدحام
+    زیر سقف) → تونیک پایین‌تر؛ اگر به کف کوبیده شده‌اند → بالاتر؛ وگرنه
+    تونیک فعلی با رنج صدای کاربر هم‌خوان است.
+    """
+    try:
+        freqs = sorted(float(n["f0_hz"]) for n in (notes or [])
+                       if n.get("f0_hz") and n["f0_hz"] > 0)
+        if len(freqs) < 4:
+            return None
+        current = (tonics[0] if tonics else None) or \
+            ((report.get("maqam_candidates") or [{}])[0].get("tonic_freq_hz"))
+        if not current:
+            return None
+
+        p05 = float(np.percentile(freqs, 5))
+        p95 = float(np.percentile(freqs, 95))
+        top_cents = 1200.0 * np.log2(p95 / current)
+        low_cents = 1200.0 * np.log2(p05 / current)
+        n = len(freqs)
+        top_crowd = sum(1 for f in freqs if f >= p95 / (2 ** (150.0 / 1200.0))) / n
+        low_crowd = sum(1 for f in freqs if f <= p05 * (2 ** (150.0 / 1200.0))) / n
+
+        # فقط فشار واقعی: سقف/کفِ بالا + ازدحام چندنت زیر آن + فراز به‌قدر کافی بلند
+        shift_cents = 0
+        if len(freqs) >= 8 and top_cents > 1300.0 and top_crowd >= 0.20:
+            shift_cents = -min(200.0, 100.0 * round((top_cents - 1250.0) / 100.0))
+        elif len(freqs) >= 8 and low_cents < -500.0 and low_crowd >= 0.18:
+            shift_cents = min(200.0, 100.0 * round((-low_cents - 500.0) / 100.0))
+
+        suggested = current * (2 ** (shift_cents / 1200.0))
+        import quran_maqam_analyzer as _qma
+        cur_name, _ = _qma.freq_to_note_and_deviation(current)
+        sug_name, _ = _qma.freq_to_note_and_deviation(suggested)
+        semi = abs(round(shift_cents / 100.0, 1))
+        if abs(shift_cents) < 50:
+            verdict = "ok"
+            hint = (f"تونیک فعلی ({cur_name}) با رنج این فراز هم‌خوان است ✓ "
+                    f"— اوج تا {round(top_cents / 100.0, 1)} پرده بالای تونیک رفته")
+        elif shift_cents < 0:
+            verdict = "lower"
+            hint = (f"نت‌های اوجت به سقف رنج فشرده شده‌اند — تونیک را ~{semi} پرده پایین بیاور "
+                    f"(≈ {sug_name} / {suggested:.0f}Hz) تا اوج‌ها راحت‌تر شود")
+        else:
+            verdict = "higher"
+            hint = (f"نت‌های بمت به کف رنج کوبیده شده‌اند — تونیک را ~{semi} پرده بالا بیاور "
+                    f"(≈ {sug_name} / {suggested:.0f}Hz) تا بم‌ها واضح بماند")
+        return {
+            "current_tonic_hz": round(float(current), 1),
+            "current_note": cur_name,
+            "suggested_tonic_hz": round(float(suggested), 1),
+            "suggested_note": sug_name,
+            "delta_cents": round(shift_cents),
+            "range_low_hz": round(p05, 1),
+            "range_high_hz": round(p95, 1),
+            "verdict": verdict,
+            "hint_fa": hint,
+        }
+    except Exception:
+        return None

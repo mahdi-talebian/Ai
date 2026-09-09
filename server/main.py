@@ -22,12 +22,15 @@ piano_visualizer, compare_recitations) را از طریق یک HTTP/WebSocket AP
 """
 
 import asyncio
+import copy as _copy
+import hashlib
 import json
 import os
 import shutil
 import sys
 import threading
 import time
+from collections import OrderedDict
 import traceback
 import uuid
 from pathlib import Path
@@ -123,6 +126,21 @@ async def _safe_send(ws: WebSocket, payload: dict):
 
 JOBS: dict[str, Job] = {}
 
+# ============================================================================
+# 🗄 کش تحلیل — کلید = (md5 فایل, denoise, top_k) → گزارش خام + فایل‌های پلات
+#    فایل تکراری = پیشنهاد ملودیک و امتیازدهی لحظه‌ای (بدون تحلیل دوباره)
+# ============================================================================
+ANALYSIS_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
+ANALYSIS_CACHE_MAX = 8
+
+
+def _md5_of_file(path: str) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
 
 # ============================================================================
 # مرحله ۱: آپلود فایل
@@ -168,11 +186,41 @@ async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = F
             def progress_cb(stage, frac):
                 job.update(stage, frac)
 
-            report = qma.analyze_recitation(
-                input_path, denoise=denoise, top_k=top_k,
-                make_plot=True, plot_dir=str(job_dir),
-                progress_callback=progress_cb,
-            )
+            cache_key = None
+            try:
+                cache_key = (_md5_of_file(input_path), bool(denoise), int(top_k))
+            except Exception:
+                cache_key = None
+
+            cached = ANALYSIS_CACHE.get(cache_key) if cache_key else None
+            if cached is not None:
+                # 🗄 تحلیل تکراری: فایل‌های پلات را به job جدید کپی کن و ادامه بده
+                ANALYSIS_CACHE.move_to_end(cache_key)
+                for extra in cached.get("extra_files", []):
+                    try:
+                        dst = job_dir / Path(extra).name
+                        if Path(extra).exists():
+                            shutil.copyfile(extra, dst)
+                    except Exception:
+                        traceback.print_exc()
+                report = _copy.deepcopy(cached["report"])
+                job.update("cached", 0.9)
+            else:
+                report = qma.analyze_recitation(
+                    input_path, denoise=denoise, top_k=top_k,
+                    make_plot=True, plot_dir=str(job_dir),
+                    progress_callback=progress_cb,
+                )
+                if cache_key:
+                    ANALYSIS_CACHE[cache_key] = {
+                        "report": _copy.deepcopy(report),
+                        "extra_files": [
+                            str(p) for p in sorted(job_dir.glob("*.png"))
+                        ],
+                    }
+                    while len(ANALYSIS_CACHE) > ANALYSIS_CACHE_MAX:
+                        ANALYSIS_CACHE.popitem(last=False)
+
             # مسیر تصویر را به مسیر قابل‌دانلود از API تبدیل کن
             if "visualization_file" in report["meta"]:
                 png_name = Path(report["meta"]["visualization_file"]).name

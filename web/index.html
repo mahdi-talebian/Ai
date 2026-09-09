@@ -291,6 +291,17 @@
       <!-- ================= پنل ۲: مقایسه دو فراز ================= -->
       <!-- ================= پنل ۲: تمرین و امتیاز ================= -->
       <div id="qPanelPractice" class="panel">
+        <div id="prGamifyCard" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; background:linear-gradient(135deg, rgba(124,92,255,.10), rgba(35,224,194,.06)); border:1px solid rgba(124,92,255,.28); border-radius:14px; padding:12px 18px; margin-bottom:14px;">
+          <div style="font-weight:800; color:#e8e9ff;">🏆 سطح <span id="prLevel">۱</span></div>
+          <div style="flex:1; min-width:170px;">
+            <div style="height:8px; background:rgba(255,255,255,.08); border-radius:99px; overflow:hidden;">
+              <div id="prXpFill" style="height:100%; width:0%; background:linear-gradient(90deg,#7c5cff,#23e0c2); transition:width .6s ease;"></div>
+            </div>
+            <div class="hint-text" id="prXpText" style="margin-top:3px; font-size:.72rem;">۰ XP</div>
+          </div>
+          <div id="prStreak" style="font-weight:800; color:#ffb703;">🔥 —</div>
+          <div id="prDaily" class="hint-text">امروز: ۰/۳</div>
+        </div>
         <div class="hint-text" style="margin-bottom:14px;">
           🏆 تلاوتت را بخوان (یا آپلود کن) تا امتیاز بگیری: انطباق با مقام، پایداری نت‌ها، نشستن روی قرار و ثبات مرکز صدا.
           می‌توانی فایل <b>مرجع (استاد)</b> هم انتخاب کنی تا شباهتت با او هم سنجیده شود.
@@ -352,6 +363,15 @@
 
             <div id="prSubscores" style="margin-top:16px;"></div>
 
+            <div style="margin-top:18px; display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap;">
+              <div>
+                <div class="chart-title">🎯 رادار دقت درجات</div>
+                <canvas id="prRadarCanvas" width="340" height="300" style="width:100%; max-width:340px;"></canvas>
+                <div class="hint-text" style="font-size:.72rem;">هر ضلع = یک درجهٔ مقام — هرچه شکل بزرگ‌تر و نزدیک‌تر به حلقهٔ بیرونی، نشستنت روی آن درجه دقیق‌تر.</div>
+              </div>
+              <div id="prTonicAdvisor" style="display:none; flex:1; min-width:230px; background:rgba(35,224,194,.07); border:1px solid rgba(35,224,194,.3); border-radius:14px; padding:14px;"></div>
+            </div>
+
             <div id="prRefBlock" style="display:none; margin-top:14px; background:rgba(255,255,255,.04); border-radius:12px; padding:12px 14px;"></div>
 
             <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:14px;">
@@ -382,6 +402,7 @@
           </div>
           <button class="primary-btn" id="melodySuggestBtn" style="padding:10px 22px;">🎹 ساخت پیشنهاد ملودیک</button>
           <span id="melodyStatus" style="margin-inline-start:10px; font-size:.85rem; color:#9294bd;"></span>
+          <div id="melodyTonicNote" class="hint-text" style="margin-top:6px;"></div>
           <div id="enginePianoWrap" style="display:none; margin-top:14px; overflow-x:auto;">
             <svg id="enginePianoSvg" style="min-width:520px; width:100%; height:150px; direction:ltr;"></svg>
             <div id="engineNoteLabel" style="text-align:center; font-weight:700; color:#e8e9ff; min-height:22px; margin-top:4px;">—</div>
@@ -488,6 +509,10 @@
         </div>
 
         <!-- 🎼 پیشنهاد ملودیک زنده -->
+        <div style="margin-top:12px; display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="liveAutoSuggest" checked style="accent-color:#7c5cff; width:16px; height:16px; cursor:pointer;">
+          <label for="liveAutoSuggest" class="hint-text" style="cursor:pointer; margin:0;">⚡ پیشنهاد خودکار ملودیک بعد از هر فراز — بساز و روی پیانو پخش کن</label>
+        </div>
         <div id="liveSuggestBox" style="display:none; margin-top:16px; background:linear-gradient(135deg, rgba(255,183,3,.07), rgba(124,92,255,.10)); border:1px solid rgba(255,183,3,.28); border-radius:16px; padding:16px;">
           <div class="chart-title" style="margin-top:0;">🎹 پیشنهاد ملودیک برای فراز زنده</div>
           <div class="hint-text" style="margin-bottom:8px;">پیشنهاد روی همان پیانوی بالای صفحه پخش می‌شود و کلیدها روشن می‌شوند.</div>
@@ -1478,6 +1503,126 @@ prStartBtn.addEventListener('click', async () => {
   }
 });
 
+// ==========================================================================
+// 🏆 گیمیفیکیشن: XP، سطح، زنجیرهٔ روزها، هدف روزانه
+// ==========================================================================
+const PR_XP_PER_LEVEL = 250, PR_DAILY_GOAL = 3;
+const FA_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
+const faNum = n => String(n).replace(/\d/g, d => FA_DIGITS[d]);
+
+function prTodayStr() { return new Date().toISOString().slice(0, 10); }
+
+function updateGamifyCard(gainedXp) {
+  try {
+    if (gainedXp) localStorage.setItem('pr_xp', String((parseInt(localStorage.getItem('pr_xp') || '0', 10) || 0) + gainedXp));
+    const xp = parseInt(localStorage.getItem('pr_xp') || '0', 10) || 0;
+    const level = Math.floor(xp / PR_XP_PER_LEVEL) + 1;
+    const into = xp % PR_XP_PER_LEVEL;
+    document.getElementById('prLevel').textContent = faNum(level);
+    document.getElementById('prXpFill').style.width = Math.round(100 * into / PR_XP_PER_LEVEL) + '%';
+    document.getElementById('prXpText').textContent = `${faNum(xp)} XP — تا سطح بعد: ${faNum(PR_XP_PER_LEVEL - into)}`;
+
+    const hist = JSON.parse(localStorage.getItem('practice_history') || '[]');
+    const days = new Set(hist.map(h => String(h.d || '').slice(0, 10)));
+    let streak = 0;
+    const day = new Date();
+    if (!days.has(day.toISOString().slice(0, 10))) day.setDate(day.getDate() - 1); // امروز هنوز نزده → از دیروز
+    while (days.has(day.toISOString().slice(0, 10))) { streak++; day.setDate(day.getDate() - 1); }
+    document.getElementById('prStreak').textContent = streak ? `🔥 زنجیرهٔ ${faNum(streak)} روزه` : '🔥 —';
+
+    const today = prTodayStr();
+    const todayCount = hist.filter(h => String(h.d || '').slice(0, 10) === today).length;
+    document.getElementById('prDaily').textContent = `امروز: ${faNum(todayCount)}/${faNum(PR_DAILY_GOAL)}`;
+  } catch (e) { /* تاریخچه خراب — گیمیفیکیشن نباید بقیه را بشکند */ }
+}
+updateGamifyCard();
+
+// ==========================================================================
+// 🎯 رادار دقت درجات
+// ==========================================================================
+function drawDegreeRadar(data) {
+  const cv = document.getElementById('prRadarCanvas');
+  if (!cv || !data || !data.length) return;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2 + 6, R = Math.min(W, H) / 2 - 38;
+  ctx.clearRect(0, 0, W, H);
+  const N = data.length;
+  const ang = i => -Math.PI / 2 + (2 * Math.PI * i) / N;
+
+  // حلقه‌ها
+  [0.25, 0.5, 0.75, 1].forEach(f => {
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const a = ang(i % N);
+      const x = cx + R * f * Math.cos(a), y = cy + R * f * Math.sin(a);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,.10)'; ctx.lineWidth = 1; ctx.stroke();
+  });
+  // پره‌ها
+  for (let i = 0; i < N; i++) {
+    const a = ang(i);
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + R * Math.cos(a), cy + R * Math.sin(a));
+    ctx.strokeStyle = 'rgba(255,255,255,.07)'; ctx.stroke();
+  }
+  // چندضلعی دقت (درصد نشستن روی درجه)
+  ctx.beginPath();
+  for (let i = 0; i <= N; i++) {
+    const d = data[i % N];
+    const f = Math.max(0.04, Math.min(100, d.in_tune_pct ?? 0) / 100);
+    const a = ang(i % N);
+    const x = cx + R * f * Math.cos(a), y = cy + R * f * Math.sin(a);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(35,224,194,.22)'; ctx.fill();
+  ctx.strokeStyle = '#23e0c2'; ctx.lineWidth = 2; ctx.stroke();
+  // نقاط + برچسب
+  data.forEach((d, i) => {
+    const f = Math.max(0.04, Math.min(100, d.in_tune_pct ?? 0) / 100);
+    const a = ang(i);
+    const x = cx + R * f * Math.cos(a), y = cy + R * f * Math.sin(a);
+    ctx.beginPath(); ctx.arc(x, y, 3.2, 0, 2 * Math.PI);
+    ctx.fillStyle = (d.in_tune_pct ?? 0) >= 85 ? '#3ddc97' : (d.in_tune_pct ?? 0) >= 60 ? '#ffb703' : '#ff5cad';
+    ctx.fill();
+    const lx = cx + (R + 20) * Math.cos(a), ly = cy + (R + 20) * Math.sin(a);
+    ctx.fillStyle = '#e8e9ff';
+    ctx.font = 'bold 12px Vazirmatn, Tahoma, sans-serif';
+    ctx.textAlign = Math.abs(Math.cos(a)) < 0.3 ? 'center' : (Math.cos(a) > 0 ? 'left' : 'right');
+    ctx.fillText(d.degree_fa, lx, ly + 4);
+    ctx.fillStyle = '#9294bd'; ctx.font = '10px Vazirmatn, Tahoma, sans-serif';
+    ctx.fillText(Math.round(d.in_tune_pct ?? 0) + '%', lx, ly + 16);
+  });
+}
+
+// ==========================================================================
+// 🎚 مشاور تونیک
+// ==========================================================================
+let prTonicOverride = null;   // تونیک پیشنهادی مشاور — برای موتور ملودیک
+
+function renderTonicAdvisor(ta) {
+  const el = document.getElementById('prTonicAdvisor');
+  if (!el) return;
+  if (!ta) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const color = ta.verdict === 'ok' ? '#3ddc97' : '#ffb703';
+  el.innerHTML = `
+    <div style="font-weight:800; color:#e8e9ff;">🎚 مشاور تونیک</div>
+    <div class="hint-text" style="margin:6px 0;">رنج صدات در این فراز: <b>${ta.range_low_hz}–${ta.range_high_hz}Hz</b></div>
+    <div style="font-size:.88rem; color:${color}; line-height:1.8;">${ta.hint_fa}</div>
+    ${ta.verdict !== 'ok' ? `<button class="secondary-btn" id="prUseTonicBtn" style="margin-top:8px; padding:6px 14px; font-size:.8rem;">🎼 استفاده در موتور ملودیک (~${ta.suggested_note})</button>` : ''}`;
+  const btn = document.getElementById('prUseTonicBtn');
+  if (btn) btn.onclick = () => {
+    prTonicOverride = ta.suggested_tonic_hz;
+    const note = document.getElementById('melodyTonicNote');
+    if (note) note.textContent = `🎚 تونیک مشاور اعمال شد: ~${ta.suggested_note} (${ta.suggested_tonic_hz}Hz)`;
+    document.getElementById('melodyEngineCard').style.display = 'block';
+    btn.textContent = '✓ اعمال شد — پیشنهاد ملودیک را بساز';
+    btn.disabled = true;
+  };
+}
+
 function renderPracticeScore(report) {
   const ps = report && report.practice_score;
   if (!ps) { document.getElementById('prStatus').textContent = 'امتیاز محاسبه نشد.'; return; }
@@ -1486,6 +1631,8 @@ function renderPracticeScore(report) {
 
   const total = ps.total ?? 0;
   document.getElementById('prTotal').textContent = Math.round(total);
+  drawDegreeRadar(ps.degree_accuracy);
+  renderTonicAdvisor(ps.tonic_advisor);
   setTimeout(() => {
     document.getElementById('prGaugeArc').style.strokeDashoffset = String(326.7 * (1 - total / 100));
   }, 60);
@@ -1529,6 +1676,7 @@ function renderPracticeScore(report) {
   document.getElementById('prTips').innerHTML = (ps.tips || []).map(t => `• ${t}`).join('<br>');
 
   savePracticeHistory(total, (report.maqam_candidates?.[0] || {}).maqam, !!refCmp);
+  updateGamifyCard(Math.round(total) + 5 * (ps.badges || []).length);   // 🏆 بعد از ثبت تاریخچه
   drawPracticeHistory();
 }
 
@@ -1622,6 +1770,11 @@ function stopEnginePlayback() {
 function playSuggestion(sug, tonicHz, opts) {
   // opts: { keyHl(midi,label), chipHl(idx|null), done() }
   stopEnginePlayback();
+  // ⚡ حین پخش پیانو، فرازهای حاصل از صدای خودِ پیانو پیشنهاد خودکار نسازند
+  try {
+    const totalMs = (sug.notes || []).reduce((s, n) => s + (n.dur || 0.35), 0) * 1000;
+    liveSuggestSuspendUntil = Date.now() + totalMs + 3000;
+  } catch (e) {}
   const AC = window.AudioContext || window.webkitAudioContext;
   if (AC) { try { engineAudioCtx = new AC(); } catch (e) { engineAudioCtx = null; } }
   let t = engineAudioCtx ? engineAudioCtx.currentTime + 0.12 : 0.12;
@@ -1630,7 +1783,8 @@ function playSuggestion(sug, tonicHz, opts) {
     const dur = Math.max(0.15, n.dur || 0.35);
     const delayMs = engineAudioCtx ? Math.max(0, (t - engineAudioCtx.currentTime) * 1000) : t * 1000;
     engineTimers.push(setTimeout(() => {
-      opts.keyHl(n.midi, `${n.degree_fa} · ${n.solfege}`);
+      opts.keyHl(n.midi, `${n.degree_fa} · ${n.solfege}`,
+                 { midi: n.midi, note_name: n.solfege || n.degree_fa, freq: f, cents_offset: 0 });
       if (opts.chipHl) opts.chipHl(i);
     }, delayMs));
     if (engineAudioCtx) {
@@ -1732,6 +1886,7 @@ document.getElementById('melodySuggestBtn').onclick = async () => {
     const sel = document.getElementById('prMaqam').value;
     let url = `${API_BASE}/api/melody/suggest/${prLastJobId}`;
     if (sel) url += `?maqam=${encodeURIComponent(sel)}`;
+    if (prTonicOverride) url += (url.includes('?') ? '&' : '?') + 'tonic_hz=' + prTonicOverride;
     const res = await fetch(url);
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'پاسخ نامعتبر از سرور');
@@ -1743,6 +1898,63 @@ document.getElementById('melodySuggestBtn').onclick = async () => {
   }
   btn.disabled = false;
 };
+
+// ==========================================================================
+// ⚡ پیشنهاد خودکار ملودیک برای فرازهای زنده
+// ==========================================================================
+let liveSuggestSuspendUntil = 0;   // timestamp — حین پخش پیانو پیشنهاد نگیر
+
+const liveAutoSuggestEl = document.getElementById('liveAutoSuggest');
+if (liveAutoSuggestEl) {
+  liveAutoSuggestEl.checked = localStorage.getItem('pr_auto_suggest') !== '0';
+  liveAutoSuggestEl.addEventListener('change', () =>
+    localStorage.setItem('pr_auto_suggest', liveAutoSuggestEl.checked ? '1' : '0'));
+}
+
+async function requestLiveSuggestions(phrase) {
+  const box = document.getElementById('liveSuggestBox');
+  box.style.display = 'block';
+  const results = document.createElement('div');
+  results.style.cssText = 'margin-top:10px; padding-top:8px; border-top:1px dashed rgba(255,255,255,.14);';
+  document.getElementById('liveSuggestResults').prepend(results);
+  results.innerHTML = '⏳ در حال ساخت پیشنهاد...';
+  try {
+    const res = await fetch(`${API_BASE}/api/melody/suggest-phrase`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maqam: phrase.maqam, tonic_hz: phrase.tonic_hz, notes: phrase.notes }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'پاسخ نامعتبر از سرور');
+    results.innerHTML = '';
+    renderEngineSuggestions(data, results, (midi, label, noteInfo) =>
+      highlightPianoKey(midi === null ? null : noteInfo));
+    const st = document.createElement('div');
+    st.className = 'hint-text';
+    st.textContent = `✓ مقام: ${data.maqam} — تونیک ${data.tonic_hz}Hz — ▶ بزن و روی پیانو بشنو`;
+    results.prepend(st);
+    return data;
+  } catch (e) {
+    results.innerHTML = `❌ ${e.message}`;
+    return null;
+  }
+}
+
+function maybeAutoSuggest(phrase) {
+  if (!liveAutoSuggestEl || !liveAutoSuggestEl.checked) return;
+  if (!phrase || !phrase.maqam || !phrase.notes || !phrase.notes.length || !phrase.tonic_hz) return;
+  if (Date.now() < liveSuggestSuspendUntil) return;   // این فراز احتمالاً صدای خود پیانوست
+  setTimeout(async () => {
+    if (Date.now() < liveSuggestSuspendUntil) return;
+    const data = await requestLiveSuggestions(phrase);
+    if (data && data.continuations && data.continuations.length) {
+      const first = data.continuations[0];
+      try { document.getElementById('liveSuggestBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) {}
+      setTimeout(() => playSuggestion(first, data.tonic_hz, { keyHl: (midi, label, noteInfo) =>
+        highlightPianoKey(midi === null ? null : noteInfo) }), 500);
+    }
+  }, 400);
+}
 
 // ==========================================================================
 // 🧭 مربی زنده (در تب پیانوی زنده)
@@ -1880,33 +2092,14 @@ function addLivePhraseCard(phrase) {
     sugBtn.style.cssText = 'margin-top:8px; padding:6px 14px; font-size:.8rem;';
     sugBtn.textContent = '🎹 پیشنهاد ملودیک برای این فراز';
     sugBtn.onclick = async () => {
-      const box = document.getElementById('liveSuggestBox');
-      box.style.display = 'block';
-      const results = document.getElementById('liveSuggestResults');
-      results.innerHTML = '⏳ در حال ساخت پیشنهاد...';
-      try {
-        const res = await fetch(`${API_BASE}/api/melody/suggest-phrase`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ maqam: phrase.maqam, tonic_hz: phrase.tonic_hz, notes: phrase.notes }),
-        });
-        const data = await res.json();
-        if (!res.ok || data.error) throw new Error(data.error || 'پاسخ نامعتبر از سرور');
-        renderEngineSuggestions(data, results, (midi, label) =>
-          highlightPianoKey(midi === null ? null : { midi: midi }));
-        const st = document.createElement('div');
-        st.className = 'hint-text';
-        st.textContent = `✓ مقام: ${data.maqam} — تونیک ${data.tonic_hz}Hz — ▶ بزن و روی پیانو بشنو`;
-        results.prepend(st);
-        box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      } catch (e) {
-        results.innerHTML = `❌ ${e.message}`;
-      }
+      await requestLiveSuggestions(phrase);
+      try { document.getElementById('liveSuggestBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) {}
     };
     card.appendChild(sugBtn);
   }
 
   list.prepend(card); // جدیدترین فراز بالای لیست
+  maybeAutoSuggest(phrase);   // ⚡ پیشنهاد خودکار (اگر فعال باشد)
 }
 
 function stopLiveMic() {
