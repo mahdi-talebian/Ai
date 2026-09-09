@@ -371,6 +371,23 @@
             <button class="secondary-btn" id="prClearHistory" style="padding:6px 14px; font-size:.8rem;">پاک کردن تاریخچه</button>
           </div>
         </div>
+
+        <!-- 🎼 موتور پیشنهاد ملودیک -->
+        <div id="melodyEngineCard" style="display:none; margin-top:18px; background:linear-gradient(135deg, rgba(255,183,3,.07), rgba(124,92,255,.10)); border:1px solid rgba(255,183,3,.28); border-radius:18px; padding:20px;">
+          <div class="chart-title" style="margin-top:0;">🎼 موتور پیشنهاد ملودیک — روی پیانو</div>
+          <div class="hint-text" style="margin-bottom:12px;">
+            فراز تو نت‌به‌نت تحلیل می‌شود: یک <b>نسخهٔ اصلاحی</b> (همان فراز، ترازشده به شبکهٔ مقام + پایان‌بندی روی قرار)
+            و <b>ادامه‌های پیشنهادی</b> (طبق قواعد سیر مقامی: اوج تا غماز و فرود به قرار، با موتیف خودت) می‌سازم.
+            ▶ بزن تا روی پیانو بشنوی و کلیدها پله‌پله روشن شوند.
+          </div>
+          <button class="primary-btn" id="melodySuggestBtn" style="padding:10px 22px;">🎹 ساخت پیشنهاد ملودیک</button>
+          <span id="melodyStatus" style="margin-inline-start:10px; font-size:.85rem; color:#9294bd;"></span>
+          <div id="enginePianoWrap" style="display:none; margin-top:14px; overflow-x:auto;">
+            <svg id="enginePianoSvg" style="min-width:520px; width:100%; height:150px; direction:ltr;"></svg>
+            <div id="engineNoteLabel" style="text-align:center; font-weight:700; color:#e8e9ff; min-height:22px; margin-top:4px;">—</div>
+          </div>
+          <div id="engineResults"></div>
+        </div>
       </div>
 
       <div id="qPanelCompare" class="panel">
@@ -468,6 +485,13 @@
         <div id="livePhraseSection" style="display:none; margin-top:18px;">
           <div class="chart-title">🎼 فرازهای زنده (به‌محض تمام‌شدن هر فراز اضافه می‌شود)</div>
           <div id="livePhraseList"></div>
+        </div>
+
+        <!-- 🎼 پیشنهاد ملودیک زنده -->
+        <div id="liveSuggestBox" style="display:none; margin-top:16px; background:linear-gradient(135deg, rgba(255,183,3,.07), rgba(124,92,255,.10)); border:1px solid rgba(255,183,3,.28); border-radius:16px; padding:16px;">
+          <div class="chart-title" style="margin-top:0;">🎹 پیشنهاد ملودیک برای فراز زنده</div>
+          <div class="hint-text" style="margin-bottom:8px;">پیشنهاد روی همان پیانوی بالای صفحه پخش می‌شود و کلیدها روشن می‌شوند.</div>
+          <div id="liveSuggestResults"></div>
         </div>
       </div>
     </div>
@@ -1279,30 +1303,33 @@ function renderCompareReport(result) {
 const PIANO_MIDI_MIN = 21, PIANO_MIDI_MAX = 108;
 function isBlackKeyMidi(m) { return [1,3,6,8,10].includes(m % 12); }
 
-function buildPianoSVG() {
-  const svg = document.getElementById('pianoSvg');
+function buildPianoSVGInto(svgId, keyPrefix, minMidi, maxMidi) {
+  const svg = document.getElementById(svgId);
   const whiteW = 16, whiteH = 160, blackW = 10, blackH = 100;
   let x = 0;
   const whiteXs = {};
   let html = '';
-  for (let m = PIANO_MIDI_MIN; m <= PIANO_MIDI_MAX; m++) {
+  for (let m = minMidi; m <= maxMidi; m++) {
     if (!isBlackKeyMidi(m)) {
-      html += `<rect id="key-${m}" x="${x}" y="10" width="${whiteW}" height="${whiteH}" fill="white" stroke="#333" stroke-width="0.6"/>`;
+      html += `<rect id="${keyPrefix}-${m}" x="${x}" y="10" width="${whiteW}" height="${whiteH}" fill="white" stroke="#333" stroke-width="0.6"/>`;
       whiteXs[m] = x;
       x += whiteW;
     }
   }
-  for (let m = PIANO_MIDI_MIN; m <= PIANO_MIDI_MAX; m++) {
+  for (let m = minMidi; m <= maxMidi; m++) {
     if (isBlackKeyMidi(m)) {
       let prevWhite = m - 1;
-      while (isBlackKeyMidi(prevWhite) && prevWhite >= PIANO_MIDI_MIN) prevWhite--;
+      while (isBlackKeyMidi(prevWhite) && prevWhite >= minMidi) prevWhite--;
       if (!(prevWhite in whiteXs)) continue;
       const kx = whiteXs[prevWhite] + whiteW - blackW/2;
-      html += `<rect id="key-${m}" x="${kx}" y="10" width="${blackW}" height="${blackH}" fill="#1a1a1a" stroke="#000" stroke-width="0.4"/>`;
+      html += `<rect id="${keyPrefix}-${m}" x="${kx}" y="10" width="${blackW}" height="${blackH}" fill="#1a1a1a" stroke="#000" stroke-width="0.4"/>`;
     }
   }
   svg.setAttribute('viewBox', `0 0 ${x} 180`);
   svg.innerHTML = html;
+}
+function buildPianoSVG() {
+  buildPianoSVGInto('pianoSvg', 'key', PIANO_MIDI_MIN, PIANO_MIDI_MAX);
 }
 buildPianoSVG();
 
@@ -1431,7 +1458,12 @@ prStartBtn.addEventListener('click', async () => {
         document.getElementById('prProgressFill').style.width = pct + '%';
         document.getElementById('prProgressPct').textContent = pct + '%';
       }
-      if (st.status === 'done') { ws.close(); renderPracticeScore(st.result); }
+      if (st.status === 'done') {
+        ws.close();
+        renderPracticeScore(st.result);
+        prLastJobId = jobId;  // 🎼 برای موتور پیشنهاد ملودیک
+        document.getElementById('melodyEngineCard').style.display = 'block';
+      }
       if (st.status === 'error') {
         ws.close();
         document.getElementById('prStatus').innerHTML = `<span style="color:#ff5cad;">❌ خطا: ${st.error || ''}</span>`;
@@ -1547,6 +1579,170 @@ document.getElementById('prClearHistory').addEventListener('click', () => {
   localStorage.removeItem('practice_history'); drawPracticeHistory();
 });
 drawPracticeHistory();
+
+// ==========================================================================
+// 🎼 موتور پیشنهاد ملودیک — تحلیل نت‌به‌نت + پیشنهاد روی پیانو
+// ==========================================================================
+let prLastJobId = null;   // job آخرین تحلیل تمرین (برای /api/melody/suggest)
+
+function buildEnginePiano(tonicMidi) {
+  const lo = Math.max(PIANO_MIDI_MIN, tonicMidi - 12);
+  const hi = Math.min(PIANO_MIDI_MAX, tonicMidi + 24);
+  buildPianoSVGInto('enginePianoSvg', 'ekey', lo, hi);
+  document.getElementById('enginePianoWrap').style.display = 'block';
+}
+
+function engineHighlight(midi, label) {
+  const svg = document.getElementById('enginePianoSvg');
+  svg.querySelectorAll && svg.querySelectorAll('rect').forEach(r => {
+    const m = parseInt(r.id.split('-')[1]);
+    r.setAttribute('fill', isBlackKeyMidi(m) ? '#1a1a1a' : 'white');
+  });
+  const labelEl = document.getElementById('engineNoteLabel');
+  if (midi !== null && midi !== undefined) {
+    let key = null;
+    try { key = svg.querySelector(`#ekey-${midi}`); } catch (e) {}
+    if (key) key.setAttribute('fill', '#ffb703');
+    labelEl.textContent = label || '—';
+  } else {
+    labelEl.textContent = '—';
+  }
+}
+
+let engineAudioCtx = null;
+let engineTimers = [];
+
+function stopEnginePlayback() {
+  engineTimers.forEach(t => clearTimeout(t));
+  engineTimers = [];
+  if (engineAudioCtx) { try { engineAudioCtx.close(); } catch (e) {} engineAudioCtx = null; }
+  engineHighlight(null);
+}
+
+function playSuggestion(sug, tonicHz, opts) {
+  // opts: { keyHl(midi,label), chipHl(idx|null), done() }
+  stopEnginePlayback();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (AC) { try { engineAudioCtx = new AC(); } catch (e) { engineAudioCtx = null; } }
+  let t = engineAudioCtx ? engineAudioCtx.currentTime + 0.12 : 0.12;
+  sug.notes.forEach((n, i) => {
+    const f = tonicHz * Math.pow(2, (n.cents || 0) / 1200);
+    const dur = Math.max(0.15, n.dur || 0.35);
+    const delayMs = engineAudioCtx ? Math.max(0, (t - engineAudioCtx.currentTime) * 1000) : t * 1000;
+    engineTimers.push(setTimeout(() => {
+      opts.keyHl(n.midi, `${n.degree_fa} · ${n.solfege}`);
+      if (opts.chipHl) opts.chipHl(i);
+    }, delayMs));
+    if (engineAudioCtx) {
+      // صدای سادهٔ پیانو: دو اسیلاتور با افت نمایی
+      [['triangle', 1, 0.16], ['sine', 2, 0.05]].forEach(([type, mult, amp]) => {
+        const o = engineAudioCtx.createOscillator();
+        o.type = type;
+        o.frequency.value = f * mult;
+        const g = engineAudioCtx.createGain();
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(amp, t + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(dur * 0.92, 0.22));
+        o.connect(g); g.connect(engineAudioCtx.destination);
+        o.start(t); o.stop(t + dur + 0.25);
+      });
+    }
+    t += dur;
+  });
+  const endMs = engineAudioCtx ? (t - engineAudioCtx.currentTime) * 1000 + 250 : t * 1000 + 250;
+  engineTimers.push(setTimeout(() => {
+    opts.keyHl(null);
+    if (opts.chipHl) opts.chipHl(null);
+    if (opts.done) opts.done();
+  }, endMs));
+}
+
+function renderSuggestionCard(container, sug, tonicHz, opts) {
+  // opts: { keyHl(midi,label) } — پخش روی کدام پیانو
+  const card = document.createElement('div');
+  card.style.cssText = 'margin-top:12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:14px;';
+  const head = document.createElement('div');
+  head.innerHTML = `<div style="font-weight:800; color:#e8e9ff;">${sug.title_fa}</div>` +
+    `<div class="hint-text" style="margin-top:2px;">${sug.desc_fa}</div>`;
+  card.appendChild(head);
+
+  const chips = document.createElement('div');
+  chips.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;';
+  const setChip = (idx) => {
+    for (let j = 0; j < sug.notes.length; j++) {
+      const el = chips.children[j];
+      if (!el) continue;
+      el.style.background = (idx === j)
+        ? 'rgba(255,183,3,.4)'
+        : (sug.notes[j].added ? 'rgba(35,224,194,.15)' : 'rgba(255,255,255,.06)');
+    }
+  };
+  sug.notes.forEach((n, i) => {
+    const sp = document.createElement('span');
+    const dev = (sug.kind === 'corrected' && n.dev_cents && Math.abs(n.dev_cents) > 5)
+      ? ` <small style="color:#ffb703;">(${n.dev_cents > 0 ? '+' : ''}${n.dev_cents}¢)</small>` : '';
+    sp.style.cssText = `padding:4px 9px; border-radius:9px; font-size:.78rem; ` +
+      `background:${n.added ? 'rgba(35,224,194,.15)' : 'rgba(255,255,255,.06)'}; ` +
+      `border:1px solid ${n.added ? 'rgba(35,224,194,.4)' : 'rgba(255,255,255,.12)'}; ` +
+      `color:#e8e9ff; cursor:pointer;`;
+    sp.innerHTML = `${n.degree_fa}${dev}`;
+    sp.title = `${n.solfege} — ${n.dur} ثانیه`;
+    sp.onclick = () => {
+      const rest = Object.assign({}, sug, { notes: sug.notes.slice(i) });
+      playSuggestion(rest, tonicHz, { keyHl: opts.keyHl, chipHl: (idx) => setChip(idx === null ? null : idx + i) });
+    };
+    chips.appendChild(sp);
+  });
+  card.appendChild(chips);
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;';
+  const playBtn = document.createElement('button');
+  playBtn.className = 'primary-btn';
+  playBtn.style.cssText = 'padding:7px 18px; font-size:.85rem;';
+  playBtn.textContent = '▶ پخش روی پیانو';
+  playBtn.onclick = () => playSuggestion(sug, tonicHz, { keyHl: opts.keyHl, chipHl: setChip });
+  const stopBtn = document.createElement('button');
+  stopBtn.className = 'secondary-btn';
+  stopBtn.style.cssText = 'padding:7px 18px; font-size:.85rem;';
+  stopBtn.textContent = '⏹ توقف';
+  stopBtn.onclick = stopEnginePlayback;
+  btnRow.appendChild(playBtn);
+  btnRow.appendChild(stopBtn);
+  card.appendChild(btnRow);
+  container.appendChild(card);
+}
+
+function renderEngineSuggestions(data, resultsEl, keyHl) {
+  resultsEl.innerHTML = '';
+  if (data.corrected) renderSuggestionCard(resultsEl, data.corrected, data.tonic_hz, { keyHl });
+  (data.continuations || []).forEach(s => renderSuggestionCard(resultsEl, s, data.tonic_hz, { keyHl }));
+}
+
+document.getElementById('melodySuggestBtn').onclick = async () => {
+  const btn = document.getElementById('melodySuggestBtn');
+  const status = document.getElementById('melodyStatus');
+  if (!prLastJobId) {
+    status.textContent = 'ابتدا یک فراز را تحلیل کن.';
+    return;
+  }
+  btn.disabled = true;
+  status.textContent = '⏳ در حال ساخت پیشنهادها...';
+  try {
+    const sel = document.getElementById('prMaqam').value;
+    let url = `${API_BASE}/api/melody/suggest/${prLastJobId}`;
+    if (sel) url += `?maqam=${encodeURIComponent(sel)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'پاسخ نامعتبر از سرور');
+    buildEnginePiano(data.tonic_midi);
+    renderEngineSuggestions(data, document.getElementById('engineResults'), engineHighlight);
+    status.textContent = `✓ مقام: ${data.maqam} — ${data.user_summary ? data.user_summary.in_scale_pct + '% نت‌هایت در مقام بود' : ''}`;
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+  }
+  btn.disabled = false;
+};
 
 // ==========================================================================
 // 🧭 مربی زنده (در تب پیانوی زنده)
@@ -1676,6 +1872,40 @@ function addLivePhraseCard(phrase) {
       <span class="phrase-trend">روند: ${phrase.melody_trend || '—'}</span>
     </div>
     <div class="phrase-notes">${chips || '<span style="color:#9294bd;font-size:0.8rem;">نتی ثبت نشد.</span>'}</div>`;
+
+  // 🎼 پیشنهاد ملودیک برای همین فراز (موتور سیر مقامی روی پیانو)
+  if (phrase.maqam && phrase.notes && phrase.notes.length && phrase.tonic_hz) {
+    const sugBtn = document.createElement('button');
+    sugBtn.className = 'secondary-btn';
+    sugBtn.style.cssText = 'margin-top:8px; padding:6px 14px; font-size:.8rem;';
+    sugBtn.textContent = '🎹 پیشنهاد ملودیک برای این فراز';
+    sugBtn.onclick = async () => {
+      const box = document.getElementById('liveSuggestBox');
+      box.style.display = 'block';
+      const results = document.getElementById('liveSuggestResults');
+      results.innerHTML = '⏳ در حال ساخت پیشنهاد...';
+      try {
+        const res = await fetch(`${API_BASE}/api/melody/suggest-phrase`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ maqam: phrase.maqam, tonic_hz: phrase.tonic_hz, notes: phrase.notes }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'پاسخ نامعتبر از سرور');
+        renderEngineSuggestions(data, results, (midi, label) =>
+          highlightPianoKey(midi === null ? null : { midi: midi }));
+        const st = document.createElement('div');
+        st.className = 'hint-text';
+        st.textContent = `✓ مقام: ${data.maqam} — تونیک ${data.tonic_hz}Hz — ▶ بزن و روی پیانو بشنو`;
+        results.prepend(st);
+        box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } catch (e) {
+        results.innerHTML = `❌ ${e.message}`;
+      }
+    };
+    card.appendChild(sugBtn);
+  }
+
   list.prepend(card); // جدیدترین فراز بالای لیست
 }
 

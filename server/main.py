@@ -48,6 +48,7 @@ JOBS_DIR.mkdir(exist_ok=True)
 sys.path.insert(0, str(PYTHON_DIR))
 
 import quran_maqam_analyzer as qma          # noqa: E402
+import melody_engine as mel            # noqa: E402
 import piano_visualizer as pv               # noqa: E402
 import compare_recitations as cr            # noqa: E402
 from pitch_engine import extract_pitch_chunk, freq_to_note_info  # noqa: E402
@@ -351,6 +352,66 @@ def _maybe_trim(path, start, end, job_dir, out_name):
 
 
 # ============================================================================
+# 🎼 موتور پیشنهاد ملودیک
+# ============================================================================
+
+@app.get("/api/melody/suggest/{job_id}")
+async def melody_suggest_job(job_id: str, maqam: str = None, tonic_hz: float = None):
+    """پیشنهاد ملودیک برای یک job تحلیل‌شده (فایل آپلودی در تب تمرین).
+
+    maqam/tonic_hz اختیاری: اگر کاربر در سلکت مقام دستی انتخاب کرده باشد،
+    از پارامتر override می‌شود؛ وگرنه مقامِ تشخیص‌داده‌شدهٔ همان job استفاده
+    می‌شود.
+    """
+    job = JOBS.get(job_id)
+    report = job.result if job else None
+    if not isinstance(report, dict) or not report.get("notes"):
+        return JSONResponse(
+            {"error": "تحلیل این فراز در دسترس نیست — ابتدا تحلیل را اجرا کنید"},
+            status_code=409)
+
+    cand = (report.get("maqam_candidates") or [{}])[0]
+    eff_maqam = maqam if (maqam and maqam in qma.MAQAMAT) else cand.get("maqam")
+    eff_tonic = float(tonic_hz) if tonic_hz else cand.get("tonic_freq_hz")
+    if not eff_maqam or not eff_tonic:
+        return JSONResponse({"error": "مقام/تونیک مشخص نیست"}, status_code=400)
+
+    try:
+        return mel.suggest_melody(report["notes"], eff_maqam, float(eff_tonic))
+    except Exception as e:
+        return JSONResponse({"error": f"خطای موتور ملودیک: {e}"}, status_code=500)
+
+
+@app.post("/api/melody/suggest-phrase")
+async def melody_suggest_phrase(payload: dict):
+    """پیشنهاد ملودیک برای فراز زندهٔ میکروفون (بدون job).
+
+    بدنه: {"maqam": "...", "tonic_hz": 220.0,
+           "notes": [{"f0_hz": 220, "dur_sec": 0.25}, ...]}
+    """
+    maqam = payload.get("maqam")
+    tonic = payload.get("tonic_hz")
+    chunks = payload.get("notes") or []
+    if maqam not in qma.MAQAMAT:
+        return JSONResponse({"error": "مقام نامعتبر است"}, status_code=400)
+    if not tonic or float(tonic) <= 0:
+        return JSONResponse({"error": "تونیک نامعتبر است"}, status_code=400)
+    if not chunks:
+        return JSONResponse({"error": "هیچ نتی در فراز نیست"}, status_code=400)
+
+    norm = [{"f0_hz": c.get("f0_hz"), "dur_sec": c.get("dur_sec") or c.get("duration") or 0.25}
+            for c in chunks]
+    notes = mel.notes_from_chunks(norm)
+    if not notes:
+        return JSONResponse({"error": "نت قابل‌استفاده‌ای یافت نشد"}, status_code=400)
+
+    try:
+        return mel.suggest_melody(notes, maqam, float(tonic))
+    except Exception as e:
+        return JSONResponse({"error": f"خطای موتور ملودیک: {e}"}, status_code=500)
+
+
+# ============================================================================
 # دریافت وضعیت job (fallback در صورت عدم استفاده از وب‌سوکت)
 # ============================================================================
 
@@ -537,6 +598,12 @@ async def ws_live_pitch(websocket: WebSocket):
                             "confidence_pct": best["confidence_pct"] if best else None,
                             "melody_trend": trend,
                             "solfege_sequence": sol_sequence,
+                            # نت‌های خام فراز برای موتور پیشنهاد ملودیک (🎼)
+                            "notes": [
+                                {"f0_hz": round(float(f), 2), "dur_sec": round(float(d), 3)}
+                                for (_, f, d) in phrase_freqs if f and f > 0
+                            ],
+                            "tonic_hz": round(float(tonic_adj), 2) if best else None,
                         }
                         phrase_freqs = []
 
