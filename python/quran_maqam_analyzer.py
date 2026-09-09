@@ -1487,8 +1487,39 @@ def compute_ambitus(notes):
 # تابع اصلی تحلیل
 # ============================================================================
 
+def refine_tonic_with_prior(detected_hz, prior_hz, tolerance_cents=40.0):
+    """
+    🎙 پالایش تونیک با پروفایل صوتی کاربر.
+
+    تونیکِ تشخیص‌داده‌شده از ضبط، به سمت تونیکِ ثبت‌شدهٔ پروفایل صوتی همان
+    کاربر پالایش می‌شود:
+      • اول اکتاوِ پروفایل به نزدیک‌ترین اکتاوِ تونیکِ تشخیصی تراز می‌شود
+        (چون قاری ممکن است همان روز یک اکتاو بالاتر/پایین‌تر بخواند).
+      • اگر اختلاف باقی‌مانده ≤ tolerance_cents باشد، تونیک پروفایل معتبر
+        تلقی می‌شود و مقدار ترازشدهٔ آن جایگزین می‌شود (حذف لرزش تشخیص و
+        تثبیت ارزیابی بین نشست‌ها).
+      • اگر اختلاف زیاد باشد (مثلاً آن روز کلید متفاوتی خوانده)، تشخیصِ
+        خودکار دست‌نخورده می‌ماند.
+
+    خروجی: تونیک پالایش‌شده بر حسب هرتز.
+    """
+    try:
+        d = float(detected_hz)
+        p = float(prior_hz)
+        if d <= 0 or p <= 0:
+            return detected_hz
+        k = round(np.log2(d / p))
+        aligned = p * (2.0 ** k)
+        dev = abs(1200.0 * np.log2(d / aligned))
+        if dev <= float(tolerance_cents):
+            return float(aligned)
+        return d
+    except Exception:
+        return detected_hz
+
+
 def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=None,
-                         progress_callback=None):
+                       progress_callback=None, tonic_prior_hz=None):
     """
     تحلیل کامل یک فایل تلاوت.
 
@@ -1601,6 +1632,13 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
                 cand["tonic_delta_cents"] = delta
             except Exception:
                 pass
+
+        # 🎙 پروفایل صوتی: پالایش همهٔ نامزدها به سمت تونیک ثبت‌شدهٔ کاربر
+        if tonic_prior_hz:
+            for cand in maqam_candidates:
+                if cand.get("tonic_freq_hz"):
+                    cand["tonic_freq_hz"] = round(
+                        refine_tonic_with_prior(cand["tonic_freq_hz"], tonic_prior_hz), 2)
         _progress("maqam_detection", 0.78)
 
         print("در حال محاسبه بلندی صدا...")

@@ -302,6 +302,19 @@
           <div id="prStreak" style="font-weight:800; color:#ffb703;">🔥 —</div>
           <div id="prDaily" class="hint-text">امروز: ۰/۳</div>
         </div>
+        <div id="vpCard" style="background:rgba(35,224,194,.06); border:1px solid rgba(35,224,194,.25); border-radius:14px; padding:12px 18px; margin-bottom:14px;">
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <div style="font-weight:800; color:#23e0c2;">🎙 پروفایل صوتی</div>
+            <select id="vpSelect" style="flex:1; min-width:170px; padding:8px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); color:#e8e9ff; font-family:inherit;">
+              <option value="">— بدون پروفایل (تشخیص خودکار خالص) —</option>
+            </select>
+            <input id="vpName" placeholder="نام پروفایل جدید (مثلاً رژ معمولی)" style="flex:1; min-width:170px; padding:8px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); color:#e8e9ff; font-family:inherit;">
+            <button class="primary-btn" id="vpCalibrate" style="padding:8px 16px; font-size:.85rem;">🎤 کوک کن</button>
+            <button class="secondary-btn" id="vpSaveDetected" style="padding:8px 14px; font-size:.8rem; display:none;">💾 ثبت تونیک آخرین تحلیل</button>
+            <button class="secondary-btn" id="vpDelete" style="padding:8px 14px; font-size:.8rem;">🗑 حذف</button>
+          </div>
+          <div id="vpStatus" class="hint-text" style="margin-top:8px;"></div>
+        </div>
         <div class="hint-text" style="margin-bottom:14px;">
           🏆 تلاوتت را بخوان (یا آپلود کن) تا امتیاز بگیری: انطباق با مقام، پایداری نت‌ها، نشستن روی قرار و ثبات مرکز صدا.
           می‌توانی فایل <b>مرجع (استاد)</b> هم انتخاب کنی تا شباهتت با او هم سنجیده شود.
@@ -490,6 +503,11 @@
         <div class="mic-area">
           <button id="liveMicBtn">🎤</button>
           <div id="liveMicStatus">برای شروع کلیک کن</div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+          <span class="hint-text">🎙 پروفایل صوتی:</span>
+          <select id="vpSelectMic" style="flex:1; min-width:200px; padding:8px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); color:#e8e9ff; font-family:inherit;"></select>
+          <span id="vpMicLabel" class="hint-text"></span>
         </div>
         <div class="piano-keyboard-wrap">
           <svg id="pianoSvg" viewBox="0 0 880 180" style="width:100%;"></svg>
@@ -1470,6 +1488,8 @@ prStartBtn.addEventListener('click', async () => {
     const fd = new FormData();
     fd.append('denoise', 'false'); fd.append('top_k', '3');
     fd.append('mode', 'practice');
+    const vp = vpActive();
+    if (vp) fd.append('voice_tonic_hz', vp.tonic_hz);   // 🎙 پالایش تونیک با پروفایل صوتی
     if (refJobId) fd.append('reference_job_id', refJobId);
     await fetch(`/api/analyze/${jobId}`, { method: 'POST', body: fd });
 
@@ -1623,7 +1643,15 @@ function renderTonicAdvisor(ta) {
   };
 }
 
+let prLastReport = null;   // برای «ثبت تونیک آخرین تحلیل» در پروفایل صوتی
+
 function renderPracticeScore(report) {
+  prLastReport = report;
+  const vpSaveBtn = document.getElementById('vpSaveDetected');
+  if (vpSaveBtn) {
+    const t = ((report || {}).maqam_candidates || [{}])[0].tonic_freq_hz;
+    vpSaveBtn.style.display = t ? 'inline-block' : 'none';
+  }
   const ps = report && report.practice_score;
   if (!ps) { document.getElementById('prStatus').textContent = 'امتیاز محاسبه نشد.'; return; }
   document.getElementById('prScoreCard').style.display = 'block';
@@ -1727,6 +1755,163 @@ document.getElementById('prClearHistory').addEventListener('click', () => {
   localStorage.removeItem('practice_history'); drawPracticeHistory();
 });
 drawPracticeHistory();
+
+// ==========================================================================
+// 🎙 پروفایل صوتی — تونیک منحصربه‌فرد هر صدا
+// ==========================================================================
+const VP_KEY = 'voice_profiles_v1';
+
+function vpLoad() {
+  try { const s = JSON.parse(localStorage.getItem(VP_KEY)); if (s && Array.isArray(s.profiles)) return s; } catch (e) {}
+  return { profiles: [], activeId: null };
+}
+function vpSave(s) { localStorage.setItem(VP_KEY, JSON.stringify(s)); }
+function vpActive() { const s = vpLoad(); return s.profiles.find(p => p.id === s.activeId) || null; }
+
+function vpUpsert(name, tonicHz) {
+  const s = vpLoad();
+  let p = name ? s.profiles.find(x => x.name === name)
+               : s.profiles.find(x => x.id === s.activeId);
+  if (!p) {
+    p = { id: 'vp' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), name: name || ('پروفایل ' + faNum(s.profiles.length + 1)),
+          tonic_hz: tonicHz, created: new Date().toISOString() };
+    s.profiles.push(p);
+  } else { p.tonic_hz = tonicHz; }
+  p.updated = new Date().toISOString();
+  s.activeId = p.id;
+  vpSave(s);
+  return p;
+}
+
+function vpSetActive(id) {
+  const s = vpLoad(); s.activeId = id || null; vpSave(s);
+  vpRenderSelects();
+  sendCoachConfig();   // مربی زنده بلافاصله پروفایل جدید را بگیرد
+}
+
+function vpRenderSelects() {
+  const s = vpLoad();
+  for (const selId of ['vpSelect', 'vpSelectMic']) {
+    const sel = document.getElementById(selId);
+    if (!sel) continue;
+    sel.innerHTML = '<option value="">— بدون پروفایل (تشخیص خودکار خالص) —</option>';
+    s.profiles.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = `${p.name} — ${p.tonic_hz.toFixed(1)}Hz`;
+      sel.appendChild(o);
+    });
+    sel.value = s.activeId || '';
+  }
+  const lbl = document.getElementById('vpMicLabel');
+  if (lbl) {
+    const p = vpActive();
+    lbl.textContent = p ? `✓ تونیک مبنا: ${p.tonic_hz.toFixed(1)}Hz (پالایش ارزیابی)` : 'تشخیص خودکار خالص';
+  }
+}
+
+function vpCoachLabel() {
+  const p = vpActive();
+  const el = document.getElementById('coachTonicSrc');
+  if (el) el.textContent = p ? `🎙 تونیک مبنا: پروفایل «${p.name}» — پالایش شده` : '🎙 تونیک: تشخیص خودکار';
+}
+
+// --- کوک تعاملی: نت پایه را کشیده بخوان ---
+let vpCal = null;   // { stream, ctx, ws, processor, samples, timer }
+
+function vpStopCalibration() {
+  if (!vpCal) return;
+  clearTimeout(vpCal.timer);
+  try { if (vpCal.processor) vpCal.processor.disconnect(); } catch (e) {}
+  try { if (vpCal.ctx) vpCal.ctx.close(); } catch (e) {}
+  try { if (vpCal.stream) vpCal.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  try { if (vpCal.ws) vpCal.ws.close(); } catch (e) {}
+  vpCal = null;
+  const b = document.getElementById('vpCalibrate');
+  if (b) b.textContent = '🎤 کوک کن';
+}
+
+document.getElementById('vpCalibrate').onclick = async () => {
+  const status = document.getElementById('vpStatus');
+  if (vpCal) { vpStopCalibration(); status.textContent = 'کوک لغو شد.'; return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    status.textContent = '❌ مرورگر از میکروفون پشتیبانی نمی‌کند (HTTPS لازم است).';
+    return;
+  }
+  let stream, ctx, ws;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    status.textContent = '❌ دسترسی میکروفون ممکن نشد: ' + (err.message || err.name);
+    return;
+  }
+  status.textContent = '⏳ نت پایه (ندا/دوگاه) را محکم و کشیده بخوان... (۵ ثانیه — دوباره کلیک کن تا لغو شود)';
+  document.getElementById('vpCalibrate').textContent = '⏹ توقف کوک';
+  const samples = [];
+  ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: LIVE_SAMPLE_RATE });
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/live-pitch`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ sample_rate: LIVE_SAMPLE_RATE }));
+    const source = ctx.createMediaStreamSource(stream);
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    source.connect(proc); proc.connect(ctx.destination);
+    proc.onaudioprocess = (e) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      ws.send(new Float32Array(e.inputBuffer.getChannelData(0)).buffer);
+    };
+    vpCal.processor = proc;
+  };
+  ws.onmessage = (ev) => {
+    try {
+      const d = JSON.parse(ev.data);
+      if (d.note && d.note.freq && d.note.freq > 0) samples.push(d.note.freq);
+    } catch (e) {}
+  };
+  vpCal = { stream, ctx, ws, samples, timer: null };
+  vpCal.timer = setTimeout(() => {
+    const s = vpCal; vpStopCalibration();
+    if (!s || s.samples.length < 12) {
+      status.textContent = '❌ صدای کافی شنیده نشد — آرام‌تر و کشیده‌تر بخوان و دوباره امتحان کن.';
+      return;
+    }
+    s.samples.sort((a, b) => a - b);
+    const tonic = s.samples[Math.floor(s.samples.length / 2)];
+    const name = document.getElementById('vpName').value.trim();
+    const p = vpUpsert(name, Math.round(tonic * 10) / 10);
+    document.getElementById('vpName').value = '';
+    vpRenderSelects();
+    vpCoachLabel();
+    status.textContent = `✓ پروفایل «${p.name}» کوک شد: تونیک ${p.tonic_hz}Hz (${s.samples.length} نمونهٔ صوتی)`;
+  }, 5000);
+};
+
+document.getElementById('vpDelete').onclick = () => {
+  const s = vpLoad();
+  if (!s.activeId) return;
+  s.profiles = s.profiles.filter(p => p.id !== s.activeId);
+  s.activeId = null;
+  vpSave(s);
+  vpRenderSelects();
+  sendCoachConfig();
+  document.getElementById('vpStatus').textContent = 'پروفایل حذف شد.';
+};
+
+document.getElementById('vpSelect').onchange = (e) => vpSetActive(e.target.value || null);
+document.getElementById('vpSelectMic').onchange = (e) => vpSetActive(e.target.value || null);
+
+document.getElementById('vpSaveDetected').onclick = () => {
+  const t = ((prLastReport || {}).maqam_candidates || [{}])[0].tonic_freq_hz;
+  if (!t) return;
+  const name = document.getElementById('vpName').value.trim();
+  const p = vpUpsert(name || null, t);
+  document.getElementById('vpName').value = '';
+  vpRenderSelects();
+  vpCoachLabel();
+  document.getElementById('vpStatus').textContent = `✓ تونیک تحلیل (${t}Hz) در پروفایل «${p.name}» ثبت شد.`;
+};
+
+vpRenderSelects();
 
 // ==========================================================================
 // 🎼 موتور پیشنهاد ملودیک — تحلیل نت‌به‌نت + پیشنهاد روی پیانو
@@ -1887,6 +2072,8 @@ document.getElementById('melodySuggestBtn').onclick = async () => {
     let url = `${API_BASE}/api/melody/suggest/${prLastJobId}`;
     if (sel) url += `?maqam=${encodeURIComponent(sel)}`;
     if (prTonicOverride) url += (url.includes('?') ? '&' : '?') + 'tonic_hz=' + prTonicOverride;
+    const vp2 = vpActive();
+    if (vp2) url += (url.includes('?') ? '&' : '?') + 'voice_tonic_hz=' + vp2.tonic_hz;
     const res = await fetch(url);
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'پاسخ نامعتبر از سرور');
@@ -1922,7 +2109,9 @@ async function requestLiveSuggestions(phrase) {
     const res = await fetch(`${API_BASE}/api/melody/suggest-phrase`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ maqam: phrase.maqam, tonic_hz: phrase.tonic_hz, notes: phrase.notes }),
+      body: JSON.stringify(Object.assign(
+        { maqam: phrase.maqam, tonic_hz: phrase.tonic_hz, notes: phrase.notes },
+        (vpActive() ? { voice_tonic_hz: vpActive().tonic_hz } : {}))),
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'پاسخ نامعتبر از سرور');
@@ -1971,7 +2160,8 @@ coachCard.innerHTML = `
   </div>
   <div style="display:flex; justify-content:space-between; max-width:280px; margin:4px auto 0; font-size:.7rem; color:#9294bd;">
     <span>−۵۰¢ پایین</span><span id="coachOff">0¢</span><span>بالا +۵۰¢</span>
-  </div>`;
+  </div>
+  <div id="coachTonicSrc" style="font-size:.68rem; color:#9294bd; margin-top:5px;"></div>`;
 document.getElementById('liveMaqamCard').after(coachCard);
 
 function updateCoach(coach) {
@@ -1990,8 +2180,13 @@ function updateCoach(coach) {
 prMaqamSel.addEventListener('change', () => sendCoachConfig());
 function sendCoachConfig() {
   if (liveMicWs && liveMicWs.readyState === WebSocket.OPEN) {
-    liveMicWs.send(JSON.stringify({ maqam: prMaqamSel.value || null }));
+    const vp = vpActive();
+    liveMicWs.send(JSON.stringify({
+      maqam: prMaqamSel.value || null,
+      voice_tonic_hz: (vp && vp.tonic_hz) || null,   // 🎙 پالایش با پروفایل صوتی
+    }));
   }
+  vpCoachLabel();
 }
 
 liveMicBtn.onclick = async () => {
@@ -2017,7 +2212,9 @@ liveMicBtn.onclick = async () => {
   liveMicWs.binaryType = 'arraybuffer';
 
   liveMicWs.onopen = () => {
-    liveMicWs.send(JSON.stringify({ sample_rate: LIVE_SAMPLE_RATE }));
+    const vp0 = vpActive();
+    liveMicWs.send(JSON.stringify({ sample_rate: LIVE_SAMPLE_RATE,
+                                    voice_tonic_hz: (vp0 && vp0.tonic_hz) || null }));
     liveMicBtn.classList.add('recording');
     liveMicStatus.textContent = 'در حال گوش‌دادن... بخوانید — تحلیل زنده است (برای توقف دوباره کلیک کن)';
 

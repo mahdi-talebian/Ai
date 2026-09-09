@@ -166,7 +166,8 @@ async def upload_file(file: UploadFile = File(...)):
 
 @app.post("/api/analyze/{job_id}")
 async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = Form(3),
-                         mode: str = Form("analysis"), reference_job_id: str = Form(None)):
+                         mode: str = Form("analysis"), reference_job_id: str = Form(None),
+                         voice_tonic_hz: float = Form(None)):
     job_dir = JOBS_DIR / job_id
     if not job_dir.exists():
         return JSONResponse({"error": "job پیدا نشد"}, status_code=404)
@@ -188,7 +189,9 @@ async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = F
 
             cache_key = None
             try:
-                cache_key = (_md5_of_file(input_path), bool(denoise), int(top_k))
+                # voice_tonic_hz بخشی از کلید است (گزارشِ پالایش‌شده کش می‌شود)
+                cache_key = (_md5_of_file(input_path), bool(denoise), int(top_k),
+                             round(float(voice_tonic_hz), 1) if (voice_tonic_hz and voice_tonic_hz > 0) else None)
             except Exception:
                 cache_key = None
 
@@ -210,6 +213,7 @@ async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = F
                     input_path, denoise=denoise, top_k=top_k,
                     make_plot=True, plot_dir=str(job_dir),
                     progress_callback=progress_cb,
+                    tonic_prior_hz=voice_tonic_hz,
                 )
                 if cache_key:
                     ANALYSIS_CACHE[cache_key] = {
@@ -229,6 +233,10 @@ async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = F
             # مسیر فایل صوتی اصلی — برای پخش هم‌گام با نمایش waveform رنگی
             # فراز-به-فراز در وب (تب «آپلود و تحلیل»).
             report["meta"]["audio_url"] = f"/api/file/{job_id}/{Path(input_path).name}"
+
+            # 🎙 پروفایل صوتی کاربر (برای نمایش و مشاور تونیک)
+            if voice_tonic_hz and voice_tonic_hz > 0:
+                report["voice_tonic_hz"] = float(voice_tonic_hz)
 
             # --- حالت تمرین: کارت امتیاز بازی‌وار ---
             if mode == "practice":
@@ -404,7 +412,8 @@ def _maybe_trim(path, start, end, job_dir, out_name):
 # ============================================================================
 
 @app.get("/api/melody/suggest/{job_id}")
-async def melody_suggest_job(job_id: str, maqam: str = None, tonic_hz: float = None):
+async def melody_suggest_job(job_id: str, maqam: str = None, tonic_hz: float = None,
+                             voice_tonic_hz: float = None):
     """پیشنهاد ملودیک برای یک job تحلیل‌شده (فایل آپلودی در تب تمرین).
 
     maqam/tonic_hz اختیاری: اگر کاربر در سلکت مقام دستی انتخاب کرده باشد،
@@ -421,6 +430,8 @@ async def melody_suggest_job(job_id: str, maqam: str = None, tonic_hz: float = N
     cand = (report.get("maqam_candidates") or [{}])[0]
     eff_maqam = maqam if (maqam and maqam in qma.MAQAMAT) else cand.get("maqam")
     eff_tonic = float(tonic_hz) if tonic_hz else cand.get("tonic_freq_hz")
+    if eff_tonic and voice_tonic_hz and voice_tonic_hz > 0:
+        eff_tonic = qma.refine_tonic_with_prior(float(eff_tonic), float(voice_tonic_hz))
     if not eff_maqam or not eff_tonic:
         return JSONResponse({"error": "مقام/تونیک مشخص نیست"}, status_code=400)
 
@@ -439,6 +450,7 @@ async def melody_suggest_phrase(payload: dict):
     """
     maqam = payload.get("maqam")
     tonic = payload.get("tonic_hz")
+    voice_tonic = payload.get("voice_tonic_hz")
     chunks = payload.get("notes") or []
     if maqam not in qma.MAQAMAT:
         return JSONResponse({"error": "مقام نامعتبر است"}, status_code=400)
@@ -446,6 +458,9 @@ async def melody_suggest_phrase(payload: dict):
         return JSONResponse({"error": "تونیک نامعتبر است"}, status_code=400)
     if not chunks:
         return JSONResponse({"error": "هیچ نتی در فراز نیست"}, status_code=400)
+
+    if tonic and voice_tonic and float(voice_tonic) > 0:
+        tonic = qma.refine_tonic_with_prior(float(tonic), float(voice_tonic))
 
     norm = [{"f0_hz": c.get("f0_hz"), "dur_sec": c.get("dur_sec") or c.get("duration") or 0.25}
             for c in chunks]
@@ -560,7 +575,8 @@ async def ws_live_pitch(websocket: WebSocket):
 
     # --- مربی زنده: مقام انتخابی کاربر (از پیام متنی کلاینت) ---
     coach_maqam = None      # نام مقام انتخابی یا None = تشخیص زنده
-    coach_tonic_hz = None   # تونیک دستی (اختیاری)
+    coach_tonic_hz = None   # تونیک دستی (اختیاری — override مطلق)
+    voice_tonic_hz = None   # 🎙 پروفایل صوتی کاربر (پالایش تونیک تشخیصی)
 
     try:
         while True:
@@ -666,6 +682,11 @@ async def ws_live_pitch(websocket: WebSocket):
                         if f0 and c_tonic > 0:
                             oct_shift = round(np.log2(f0 / c_tonic))
                             c_tonic *= (2 ** oct_shift)
+                        # 🎙 پالایش با پروفایل صوتی — آستانهٔ بازتر چون نقش
+                        # مربی «بازگرداندن به تونیک شخصی» است (تا نیم‌پرده)
+                        if voice_tonic_hz:
+                            c_tonic = qma.refine_tonic_with_prior(c_tonic, voice_tonic_hz,
+                                                                  tolerance_cents=100.0)
                     else:
                         c_tonic = None
                     if f0 and c_tonic:
@@ -714,6 +735,9 @@ async def ws_live_pitch(websocket: WebSocket):
                     if "tonic_hz" in cfg:
                         v = float(cfg["tonic_hz"])
                         coach_tonic_hz = v if v > 0 else None
+                    if "voice_tonic_hz" in cfg:
+                        v = float(cfg["voice_tonic_hz"])
+                        voice_tonic_hz = v if v > 0 else None
                 except Exception:
                     pass
     except WebSocketDisconnect:
