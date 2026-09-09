@@ -706,6 +706,7 @@ function initPhraseWaveform(opts) {
   return { redraw: draw };
 }
 qTabUpload.onclick = () => switchQuranTab('upload');
+qTabPractice.onclick = () => switchQuranTab('practice');
 qTabCompare.onclick = () => switchQuranTab('compare');
 qTabLiveMic.onclick = () => switchQuranTab('mic');
 
@@ -1359,6 +1360,232 @@ function describeMicError(err) {
   return 'دسترسی به میکروفون ممکن نشد: ' + (err && err.message ? err.message : String(err));
 }
 
+// ==========================================================================
+// 🏆 تب تمرین و امتیاز
+// ==========================================================================
+const MAQAM_OPTIONS = ["رست (Rast)", "بیاتی (Bayati)", "حجاز (Hijaz)", "صبا (Saba)",
+  "نهاوند (Nahawand)", "عجم (Ajam)", "کرد (Kurd)", "جهارکاه (Jiharkah)",
+  "سیکاه (Sikah)", "نکریز (Nikriz)"];
+const prMaqamSel = document.getElementById('prMaqam');
+MAQAM_OPTIONS.forEach(m => {
+  const o = document.createElement('option'); o.value = m; o.textContent = m;
+  prMaqamSel.appendChild(o);
+});
+
+const prDropzone = document.getElementById('prDropzone');
+const prFileInput = document.getElementById('prFileInput');
+const prFileInfo = document.getElementById('prFileInfo');
+const prStartBtn = document.getElementById('prStartBtn');
+let prFile = null;
+
+prDropzone.addEventListener('click', () => prFileInput.click());
+prDropzone.addEventListener('dragover', e => { e.preventDefault(); prDropzone.classList.add('dragover'); });
+prDropzone.addEventListener('dragleave', () => prDropzone.classList.remove('dragover'));
+prDropzone.addEventListener('drop', e => {
+  e.preventDefault(); prDropzone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) setPrFile(e.dataTransfer.files[0]);
+});
+prFileInput.addEventListener('change', () => { if (prFileInput.files.length) setPrFile(prFileInput.files[0]); });
+function setPrFile(f) {
+  prFile = f;
+  prFileInfo.textContent = `✔ ${f.name} (${(f.size / 1048576).toFixed(1)} MB)`;
+  prStartBtn.disabled = false;
+}
+
+async function prUpload(file, label) {
+  const fd = new FormData(); fd.append('file', file);
+  const r = await fetch('/api/upload', { method: 'POST', body: fd });
+  if (!r.ok) throw new Error('خطا در آپلود ' + label);
+  return (await r.json()).job_id;
+}
+
+prStartBtn.addEventListener('click', async () => {
+  if (!prFile) return;
+  prStartBtn.disabled = true;
+  document.getElementById('prScoreCard').style.display = 'none';
+  document.getElementById('prStatus').textContent = '';
+  const wrap = document.getElementById('prProgressWrap');
+  wrap.style.display = 'block';
+  document.getElementById('prProgressLabel').textContent = 'در حال آپلود...';
+  document.getElementById('prProgressFill').style.width = '5%';
+  document.getElementById('prProgressPct').textContent = '5%';
+  try {
+    const refFileInput = document.getElementById('prRefFile');
+    let refJobId = null;
+    if (refFileInput.files.length) refJobId = await prUpload(refFileInput.files[0], 'مرجع');
+    const jobId = await prUpload(prFile, 'تمرین');
+
+    const fd = new FormData();
+    fd.append('denoise', 'false'); fd.append('top_k', '3');
+    fd.append('mode', 'practice');
+    if (refJobId) fd.append('reference_job_id', refJobId);
+    await fetch(`/api/analyze/${jobId}`, { method: 'POST', body: fd });
+
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}/ws/job/${jobId}`);
+    ws.onmessage = (ev) => {
+      const st = JSON.parse(ev.data);
+      if (st.stage) {
+        document.getElementById('prProgressLabel').textContent = 'مرحله: ' + st.stage;
+        const pct = Math.round((st.progress || 0) * 100);
+        document.getElementById('prProgressFill').style.width = pct + '%';
+        document.getElementById('prProgressPct').textContent = pct + '%';
+      }
+      if (st.status === 'done') { ws.close(); renderPracticeScore(st.result); }
+      if (st.status === 'error') {
+        ws.close();
+        document.getElementById('prStatus').innerHTML = `<span style="color:#ff5cad;">❌ خطا: ${st.error || ''}</span>`;
+      }
+    };
+    ws.onerror = () => { document.getElementById('prStatus').textContent = '❌ خطای اتصال'; };
+  } catch (err) {
+    document.getElementById('prStatus').innerHTML = `<span style="color:#ff5cad;">❌ ${err.message}</span>`;
+  } finally {
+    wrap.style.display = 'none';
+    prStartBtn.disabled = false;
+  }
+});
+
+function renderPracticeScore(report) {
+  const ps = report && report.practice_score;
+  if (!ps) { document.getElementById('prStatus').textContent = 'امتیاز محاسبه نشد.'; return; }
+  document.getElementById('prScoreCard').style.display = 'block';
+  document.getElementById('prScoreCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  const total = ps.total ?? 0;
+  document.getElementById('prTotal').textContent = Math.round(total);
+  setTimeout(() => {
+    document.getElementById('prGaugeArc').style.strokeDashoffset = String(326.7 * (1 - total / 100));
+  }, 60);
+  document.getElementById('prStars').textContent = '★'.repeat(ps.stars || 0) + '☆'.repeat(5 - (ps.stars || 0));
+  document.getElementById('prGradeLine').textContent = `رتبه: ${ps.grade || '—'} — مقام تشخیصی: ${(report.maqam_candidates?.[0] || {}).maqam || '—'}`;
+
+  const badges = document.getElementById('prBadges');
+  badges.innerHTML = (ps.badges || []).map(b =>
+    `<span title="${b.desc}" style="background:rgba(255,183,3,.15); border:1px solid rgba(255,183,3,.45); border-radius:999px; padding:3px 10px; font-size:.8rem; color:#ffd97a;">${b.icon} ${b.fa}</span>`
+  ).join('') || '';
+
+  const labels = {
+    maqam_adherence: 'انطباق با درجات مقام',
+    note_stability: 'پایداری نت‌ها',
+    phrase_resting: 'نشستن روی قرار',
+    tonic_steadiness: 'ثبات مرکز صدا',
+  };
+  document.getElementById('prSubscores').innerHTML = Object.entries(ps.subscores || {}).map(([k, v]) => `
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+      <div style="width:150px; font-size:.85rem; color:#9294bd; flex-shrink:0;">${labels[k] || k}</div>
+      <div class="maqam-conf-bar" style="flex:1;"><div class="maqam-conf-fill" style="width:${v ?? 0}%;"></div></div>
+      <div style="width:46px; font-size:.85rem; color:#e8e9ff; text-align:left;">${v != null ? v + '٪' : '—'}</div>
+    </div>`).join('');
+
+  const refCmp = report.reference_comparison;
+  const refBlock = document.getElementById('prRefBlock');
+  if (refCmp && refCmp.overall_similarity_pct != null) {
+    refBlock.style.display = 'block';
+    refBlock.innerHTML = `<b>🎧 شباهت با مرجع (استاد): ${refCmp.overall_similarity_pct}٪</b>
+      <div style="font-size:.85rem; color:#9294bd; margin-top:4px;">
+        ملودیک: ${refCmp.melodic_similarity_pct ?? '—'}٪ | ریتم: ${refCmp.rhythm_similarity_pct ?? '—'}٪ | بلندی: ${refCmp.loudness_similarity_pct ?? '—'}٪</div>
+      <div style="font-size:.85rem; margin-top:2px;">${refCmp.verdict || ''}</div>`;
+  } else refBlock.style.display = 'none';
+
+  const phList = (arr, color) => (arr || []).map(p =>
+    `<div style="display:flex; justify-content:space-between; font-size:.82rem; padding:3px 0; border-bottom:1px dashed rgba(255,255,255,.06);">
+      <span>فراز ${p.index} (${p.start}s–${p.end}s)</span><span style="color:${color};">${p.score}٪</span></div>`).join('') || '<div class="hint-text">—</div>';
+  document.getElementById('prWeakest').innerHTML = `<div class="chart-title" style="font-size:.85rem;">🔻 ضعیف‌ترین فرازها</div>${phList(ps.weakest_phrases, '#ff5cad')}`;
+  document.getElementById('prBest').innerHTML = `<div class="chart-title" style="font-size:.85rem;">🔺 بهترین فرازها</div>${phList(ps.best_phrases, '#3ddc97')}`;
+
+  document.getElementById('prTips').innerHTML = (ps.tips || []).map(t => `• ${t}`).join('<br>');
+
+  savePracticeHistory(total, (report.maqam_candidates?.[0] || {}).maqam, !!refCmp);
+  drawPracticeHistory();
+}
+
+function savePracticeHistory(total, maqam, hadRef) {
+  try {
+    const h = JSON.parse(localStorage.getItem('practice_history') || '[]');
+    h.push({ d: new Date().toISOString().slice(0, 16).replace('T', ' '), t: total, m: maqam, r: hadRef });
+    localStorage.setItem('practice_history', JSON.stringify(h.slice(-30)));
+  } catch (e) {}
+}
+function drawPracticeHistory() {
+  const cv = document.getElementById('prHistoryCanvas');
+  const ctx = cv.getContext('2d');
+  let h = [];
+  try { h = JSON.parse(localStorage.getItem('practice_history') || '[]'); } catch (e) {}
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!h.length) {
+    ctx.fillStyle = '#9294bd'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('هنوز تمرینی ثبت نشده — اولین تلاوتت را امتیاز بگیر!', cv.width / 2, cv.height / 2);
+    return;
+  }
+  const W = cv.width - 30, H = cv.height - 18, X0 = 30, Y0 = 8;
+  const pts = h.slice(-20);
+  ctx.strokeStyle = 'rgba(255,255,255,.08)';
+  [25, 50, 75, 100].forEach(v => {
+    const y = Y0 + H * (1 - v / 100);
+    ctx.beginPath(); ctx.moveTo(X0, y); ctx.lineTo(X0 + W, y); ctx.stroke();
+    ctx.fillStyle = '#9294bd'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(v, X0 - 4, y + 3);
+  });
+  ctx.beginPath();
+  pts.forEach((p, i) => {
+    const x = X0 + W * i / Math.max(pts.length - 1, 1);
+    const y = Y0 + H * (1 - (p.t ?? 0) / 100);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.strokeStyle = '#7c5cff'; ctx.lineWidth = 2.5; ctx.stroke();
+  pts.forEach((p, i) => {
+    const x = X0 + W * i / Math.max(pts.length - 1, 1);
+    const y = Y0 + H * (1 - (p.t ?? 0) / 100);
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fillStyle = '#23e0c2'; ctx.fill();
+    ctx.title = `${p.d}: ${p.t}`;
+  });
+  ctx.fillStyle = '#9294bd'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText(`${pts.length} جلسه اخیر`, X0, cv.height - 1);
+}
+document.getElementById('prClearHistory').addEventListener('click', () => {
+  localStorage.removeItem('practice_history'); drawPracticeHistory();
+});
+drawPracticeHistory();
+
+// ==========================================================================
+// 🧭 مربی زنده (در تب پیانوی زنده)
+// ==========================================================================
+const coachCard = document.createElement('div');
+coachCard.id = 'liveCoachCard';
+coachCard.style.cssText = 'display:none; margin-top:16px; background:linear-gradient(135deg, rgba(35,224,194,.1), rgba(124,92,255,.1)); border:1px solid rgba(35,224,194,.35); border-radius:16px; padding:16px; text-align:center;';
+coachCard.innerHTML = `
+  <div style="font-size:.8rem; color:#9294bd; margin-bottom:6px;">🧭 مربی زنده — به درجهٔ <b id="coachTarget" style="color:#23e0c2;">—</b> برو</div>
+  <div id="coachArrow" style="font-size:2.6rem; line-height:1; color:#23e0c2;">✓</div>
+  <div id="coachHint" style="font-weight:700; color:#e8e9ff; margin-top:2px;">—</div>
+  <div style="max-width:280px; margin:8px auto 0; height:8px; border-radius:99px; background:rgba(255,255,255,.08); position:relative;">
+    <div id="coachMeter" style="position:absolute; top:-3px; left:50%; width:3px; height:14px; border-radius:2px; background:#23e0c2; transition:left .12s linear;"></div>
+  </div>
+  <div style="display:flex; justify-content:space-between; max-width:280px; margin:4px auto 0; font-size:.7rem; color:#9294bd;">
+    <span>−۵۰¢ پایین</span><span id="coachOff">0¢</span><span>بالا +۵۰¢</span>
+  </div>`;
+document.getElementById('liveMaqamCard').after(coachCard);
+
+function updateCoach(coach) {
+  if (!coach || !coach.active) { coachCard.style.display = 'none'; return; }
+  coachCard.style.display = 'block';
+  document.getElementById('coachTarget').textContent = coach.target_degree_fa || '—';
+  document.getElementById('coachArrow').textContent = coach.direction === 'up' ? '⬆️' : coach.direction === 'down' ? '⬇️' : '✓';
+  document.getElementById('coachHint').textContent = coach.hint_fa || '';
+  const off = Math.max(-50, Math.min(50, coach.cents_off || 0));
+  document.getElementById('coachMeter').style.left = `calc(${50 + off}% - 1.5px)`;
+  document.getElementById('coachMeter').style.background = coach.direction === 'ok' ? '#3ddc97' : '#ffb703';
+  document.getElementById('coachOff').textContent = (off > 0 ? '+' : '') + Math.round(off) + '¢';
+}
+
+// ارسال انتخاب مقام به سرور برای مربی زنده
+prMaqamSel.addEventListener('change', () => sendCoachConfig());
+function sendCoachConfig() {
+  if (liveMicWs && liveMicWs.readyState === WebSocket.OPEN) {
+    liveMicWs.send(JSON.stringify({ maqam: prMaqamSel.value || null }));
+  }
+}
+
 liveMicBtn.onclick = async () => {
   if (liveMicStream) { stopLiveMic(); return; }
 
@@ -1398,232 +1625,6 @@ liveMicBtn.onclick = async () => {
       liveMicWs.send(new Float32Array(input).buffer);
     };
   };
-
-  // ==========================================================================
-  // 🏆 تب تمرین و امتیاز
-  // ==========================================================================
-  const MAQAM_OPTIONS = ["رست (Rast)", "بیاتی (Bayati)", "حجاز (Hijaz)", "صبا (Saba)",
-    "نهاوند (Nahawand)", "عجم (Ajam)", "کرد (Kurd)", "جهارکاه (Jiharkah)",
-    "سیکاه (Sikah)", "نکریز (Nikriz)"];
-  const prMaqamSel = document.getElementById('prMaqam');
-  MAQAM_OPTIONS.forEach(m => {
-    const o = document.createElement('option'); o.value = m; o.textContent = m;
-    prMaqamSel.appendChild(o);
-  });
-
-  const prDropzone = document.getElementById('prDropzone');
-  const prFileInput = document.getElementById('prFileInput');
-  const prFileInfo = document.getElementById('prFileInfo');
-  const prStartBtn = document.getElementById('prStartBtn');
-  let prFile = null;
-
-  prDropzone.addEventListener('click', () => prFileInput.click());
-  prDropzone.addEventListener('dragover', e => { e.preventDefault(); prDropzone.classList.add('dragover'); });
-  prDropzone.addEventListener('dragleave', () => prDropzone.classList.remove('dragover'));
-  prDropzone.addEventListener('drop', e => {
-    e.preventDefault(); prDropzone.classList.remove('dragover');
-    if (e.dataTransfer.files.length) setPrFile(e.dataTransfer.files[0]);
-  });
-  prFileInput.addEventListener('change', () => { if (prFileInput.files.length) setPrFile(prFileInput.files[0]); });
-  function setPrFile(f) {
-    prFile = f;
-    prFileInfo.textContent = `✔ ${f.name} (${(f.size / 1048576).toFixed(1)} MB)`;
-    prStartBtn.disabled = false;
-  }
-
-  async function prUpload(file, label) {
-    const fd = new FormData(); fd.append('file', file);
-    const r = await fetch('/api/upload', { method: 'POST', body: fd });
-    if (!r.ok) throw new Error('خطا در آپلود ' + label);
-    return (await r.json()).job_id;
-  }
-
-  prStartBtn.addEventListener('click', async () => {
-    if (!prFile) return;
-    prStartBtn.disabled = true;
-    document.getElementById('prScoreCard').style.display = 'none';
-    document.getElementById('prStatus').textContent = '';
-    const wrap = document.getElementById('prProgressWrap');
-    wrap.style.display = 'block';
-    document.getElementById('prProgressLabel').textContent = 'در حال آپلود...';
-    document.getElementById('prProgressFill').style.width = '5%';
-    document.getElementById('prProgressPct').textContent = '5%';
-    try {
-      const refFileInput = document.getElementById('prRefFile');
-      let refJobId = null;
-      if (refFileInput.files.length) refJobId = await prUpload(refFileInput.files[0], 'مرجع');
-      const jobId = await prUpload(prFile, 'تمرین');
-
-      const fd = new FormData();
-      fd.append('denoise', 'false'); fd.append('top_k', '3');
-      fd.append('mode', 'practice');
-      if (refJobId) fd.append('reference_job_id', refJobId);
-      await fetch(`/api/analyze/${jobId}`, { method: 'POST', body: fd });
-
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${location.host}/ws/job/${jobId}`);
-      ws.onmessage = (ev) => {
-        const st = JSON.parse(ev.data);
-        if (st.stage) {
-          document.getElementById('prProgressLabel').textContent = 'مرحله: ' + st.stage;
-          const pct = Math.round((st.progress || 0) * 100);
-          document.getElementById('prProgressFill').style.width = pct + '%';
-          document.getElementById('prProgressPct').textContent = pct + '%';
-        }
-        if (st.status === 'done') { ws.close(); renderPracticeScore(st.result); }
-        if (st.status === 'error') {
-          ws.close();
-          document.getElementById('prStatus').innerHTML = `<span style="color:#ff5cad;">❌ خطا: ${st.error || ''}</span>`;
-        }
-      };
-      ws.onerror = () => { document.getElementById('prStatus').textContent = '❌ خطای اتصال'; };
-    } catch (err) {
-      document.getElementById('prStatus').innerHTML = `<span style="color:#ff5cad;">❌ ${err.message}</span>`;
-    } finally {
-      wrap.style.display = 'none';
-      prStartBtn.disabled = false;
-    }
-  });
-
-  function renderPracticeScore(report) {
-    const ps = report && report.practice_score;
-    if (!ps) { document.getElementById('prStatus').textContent = 'امتیاز محاسبه نشد.'; return; }
-    document.getElementById('prScoreCard').style.display = 'block';
-    document.getElementById('prScoreCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-    const total = ps.total ?? 0;
-    document.getElementById('prTotal').textContent = Math.round(total);
-    setTimeout(() => {
-      document.getElementById('prGaugeArc').style.strokeDashoffset = String(326.7 * (1 - total / 100));
-    }, 60);
-    document.getElementById('prStars').textContent = '★'.repeat(ps.stars || 0) + '☆'.repeat(5 - (ps.stars || 0));
-    document.getElementById('prGradeLine').textContent = `رتبه: ${ps.grade || '—'} — مقام تشخیصی: ${(report.maqam_candidates?.[0] || {}).maqam || '—'}`;
-
-    const badges = document.getElementById('prBadges');
-    badges.innerHTML = (ps.badges || []).map(b =>
-      `<span title="${b.desc}" style="background:rgba(255,183,3,.15); border:1px solid rgba(255,183,3,.45); border-radius:999px; padding:3px 10px; font-size:.8rem; color:#ffd97a;">${b.icon} ${b.fa}</span>`
-    ).join('') || '';
-
-    const labels = {
-      maqam_adherence: 'انطباق با درجات مقام',
-      note_stability: 'پایداری نت‌ها',
-      phrase_resting: 'نشستن روی قرار',
-      tonic_steadiness: 'ثبات مرکز صدا',
-    };
-    document.getElementById('prSubscores').innerHTML = Object.entries(ps.subscores || {}).map(([k, v]) => `
-      <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
-        <div style="width:150px; font-size:.85rem; color:#9294bd; flex-shrink:0;">${labels[k] || k}</div>
-        <div class="maqam-conf-bar" style="flex:1;"><div class="maqam-conf-fill" style="width:${v ?? 0}%;"></div></div>
-        <div style="width:46px; font-size:.85rem; color:#e8e9ff; text-align:left;">${v != null ? v + '٪' : '—'}</div>
-      </div>`).join('');
-
-    const refCmp = report.reference_comparison;
-    const refBlock = document.getElementById('prRefBlock');
-    if (refCmp && refCmp.overall_similarity_pct != null) {
-      refBlock.style.display = 'block';
-      refBlock.innerHTML = `<b>🎧 شباهت با مرجع (استاد): ${refCmp.overall_similarity_pct}٪</b>
-        <div style="font-size:.85rem; color:#9294bd; margin-top:4px;">
-          ملودیک: ${refCmp.melodic_similarity_pct ?? '—'}٪ | ریتم: ${refCmp.rhythm_similarity_pct ?? '—'}٪ | بلندی: ${refCmp.loudness_similarity_pct ?? '—'}٪</div>
-        <div style="font-size:.85rem; margin-top:2px;">${refCmp.verdict || ''}</div>`;
-    } else refBlock.style.display = 'none';
-
-    const phList = (arr, color) => (arr || []).map(p =>
-      `<div style="display:flex; justify-content:space-between; font-size:.82rem; padding:3px 0; border-bottom:1px dashed rgba(255,255,255,.06);">
-        <span>فراز ${p.index} (${p.start}s–${p.end}s)</span><span style="color:${color};">${p.score}٪</span></div>`).join('') || '<div class="hint-text">—</div>';
-    document.getElementById('prWeakest').innerHTML = `<div class="chart-title" style="font-size:.85rem;">🔻 ضعیف‌ترین فرازها</div>${phList(ps.weakest_phrases, '#ff5cad')}`;
-    document.getElementById('prBest').innerHTML = `<div class="chart-title" style="font-size:.85rem;">🔺 بهترین فرازها</div>${phList(ps.best_phrases, '#3ddc97')}`;
-
-    document.getElementById('prTips').innerHTML = (ps.tips || []).map(t => `• ${t}`).join('<br>');
-
-    savePracticeHistory(total, (report.maqam_candidates?.[0] || {}).maqam, !!refCmp);
-    drawPracticeHistory();
-  }
-
-  function savePracticeHistory(total, maqam, hadRef) {
-    try {
-      const h = JSON.parse(localStorage.getItem('practice_history') || '[]');
-      h.push({ d: new Date().toISOString().slice(0, 16).replace('T', ' '), t: total, m: maqam, r: hadRef });
-      localStorage.setItem('practice_history', JSON.stringify(h.slice(-30)));
-    } catch (e) {}
-  }
-  function drawPracticeHistory() {
-    const cv = document.getElementById('prHistoryCanvas');
-    const ctx = cv.getContext('2d');
-    let h = [];
-    try { h = JSON.parse(localStorage.getItem('practice_history') || '[]'); } catch (e) {}
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    if (!h.length) {
-      ctx.fillStyle = '#9294bd'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('هنوز تمرینی ثبت نشده — اولین تلاوتت را امتیاز بگیر!', cv.width / 2, cv.height / 2);
-      return;
-    }
-    const W = cv.width - 30, H = cv.height - 18, X0 = 30, Y0 = 8;
-    const pts = h.slice(-20);
-    ctx.strokeStyle = 'rgba(255,255,255,.08)';
-    [25, 50, 75, 100].forEach(v => {
-      const y = Y0 + H * (1 - v / 100);
-      ctx.beginPath(); ctx.moveTo(X0, y); ctx.lineTo(X0 + W, y); ctx.stroke();
-      ctx.fillStyle = '#9294bd'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
-      ctx.fillText(v, X0 - 4, y + 3);
-    });
-    ctx.beginPath();
-    pts.forEach((p, i) => {
-      const x = X0 + W * i / Math.max(pts.length - 1, 1);
-      const y = Y0 + H * (1 - (p.t ?? 0) / 100);
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    });
-    ctx.strokeStyle = '#7c5cff'; ctx.lineWidth = 2.5; ctx.stroke();
-    pts.forEach((p, i) => {
-      const x = X0 + W * i / Math.max(pts.length - 1, 1);
-      const y = Y0 + H * (1 - (p.t ?? 0) / 100);
-      ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fillStyle = '#23e0c2'; ctx.fill();
-      ctx.title = `${p.d}: ${p.t}`;
-    });
-    ctx.fillStyle = '#9294bd'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText(`${pts.length} جلسه اخیر`, X0, cv.height - 1);
-  }
-  document.getElementById('prClearHistory').addEventListener('click', () => {
-    localStorage.removeItem('practice_history'); drawPracticeHistory();
-  });
-  drawPracticeHistory();
-
-  // ==========================================================================
-  // 🧭 مربی زنده (در تب پیانوی زنده)
-  // ==========================================================================
-  const coachCard = document.createElement('div');
-  coachCard.id = 'liveCoachCard';
-  coachCard.style.cssText = 'display:none; margin-top:16px; background:linear-gradient(135deg, rgba(35,224,194,.1), rgba(124,92,255,.1)); border:1px solid rgba(35,224,194,.35); border-radius:16px; padding:16px; text-align:center;';
-  coachCard.innerHTML = `
-    <div style="font-size:.8rem; color:#9294bd; margin-bottom:6px;">🧭 مربی زنده — به درجهٔ <b id="coachTarget" style="color:#23e0c2;">—</b> برو</div>
-    <div id="coachArrow" style="font-size:2.6rem; line-height:1; color:#23e0c2;">✓</div>
-    <div id="coachHint" style="font-weight:700; color:#e8e9ff; margin-top:2px;">—</div>
-    <div style="max-width:280px; margin:8px auto 0; height:8px; border-radius:99px; background:rgba(255,255,255,.08); position:relative;">
-      <div id="coachMeter" style="position:absolute; top:-3px; left:50%; width:3px; height:14px; border-radius:2px; background:#23e0c2; transition:left .12s linear;"></div>
-    </div>
-    <div style="display:flex; justify-content:space-between; max-width:280px; margin:4px auto 0; font-size:.7rem; color:#9294bd;">
-      <span>−۵۰¢ پایین</span><span id="coachOff">0¢</span><span>بالا +۵۰¢</span>
-    </div>`;
-  document.getElementById('liveMaqamCard').after(coachCard);
-
-  function updateCoach(coach) {
-    if (!coach || !coach.active) { coachCard.style.display = 'none'; return; }
-    coachCard.style.display = 'block';
-    document.getElementById('coachTarget').textContent = coach.target_degree_fa || '—';
-    document.getElementById('coachArrow').textContent = coach.direction === 'up' ? '⬆️' : coach.direction === 'down' ? '⬇️' : '✓';
-    document.getElementById('coachHint').textContent = coach.hint_fa || '';
-    const off = Math.max(-50, Math.min(50, coach.cents_off || 0));
-    document.getElementById('coachMeter').style.left = `calc(${50 + off}% - 1.5px)`;
-    document.getElementById('coachMeter').style.background = coach.direction === 'ok' ? '#3ddc97' : '#ffb703';
-    document.getElementById('coachOff').textContent = (off > 0 ? '+' : '') + Math.round(off) + '¢';
-  }
-
-  // ارسال انتخاب مقام به سرور برای مربی زنده
-  prMaqamSel.addEventListener('change', () => sendCoachConfig());
-  function sendCoachConfig() {
-    if (liveMicWs && liveMicWs.readyState === WebSocket.OPEN) {
-      liveMicWs.send(JSON.stringify({ maqam: prMaqamSel.value || null }));
-    }
-  }
 
   liveMicWs.onmessage = (ev) => {
     const data = JSON.parse(ev.data);
