@@ -349,8 +349,79 @@ def _score_path(path, scale, ghammaz_idx, motif, start_step):
     return s
 
 
+def _style_dur(style, rng, fallback):
+    """کشش نت از توزیع سبک (مثلثی بین چارک‌ها حول میانه)."""
+    try:
+        ps = style.get("dur_stats") or {}
+        lo, med, hi = ps.get("p25"), ps.get("p50"), ps.get("p75")
+        if lo and med and hi:
+            return max(0.15, round(rng.triangular(lo, hi, med) * 20) / 20)
+    except Exception:
+        pass
+    return fallback
+
+
+def _style_path(start_step, trans_counter, scale, karar_idx_list, ghammaz_idx,
+                target_len, rng):
+    """
+    گام‌زدن در «ماتریس گذر قاری»: از هر پله، پلهٔ بعدی با وزن گذرهای ثبت‌شدهٔ
+    همان قاری نمونه‌گیری می‌شود؛ سپس همان فرود به قرارِ قواعد سیر اعمال می‌شود.
+    اگر گذری از پلهٔ فعلی ثبت نشده باشد، از نزدیک‌ترین پلهٔ دارای گذر ادامه می‌دهیم.
+    """
+    out = [start_step]
+    cur = start_step
+    guard = 0
+    while len(out) < target_len and guard < target_len * 3:
+        guard += 1
+        cands = []
+        for key, w in (trans_counter or {}).items():
+            try:
+                a_s, b_s = key.split("->")
+                a, b = int(a_s), int(b_s)
+            except Exception:
+                continue
+            if a == cur:
+                cands.append((b, w))
+        if not cands:
+            # پرش به منبعی که گذر دارد (نزدیک‌ترین به cur)
+            sources = sorted({int(k.split("->")[0]) for k in trans_counter
+                              if "->" in k} ) if trans_counter else []
+            if not sources:
+                break
+            cur = min(sources, key=lambda s: abs(s - cur))
+            continue
+        total = sum(w for _, w in cands)
+        r = rng.uniform(0, total)
+        acc = 0.0
+        nxt = cands[0][0]
+        for b, w in cands:
+            acc += w
+            if r <= acc:
+                nxt = b
+                break
+        out.append(nxt)
+        cur = nxt
+
+    # --- فرود به قرار (مثل مسیر قاعده‌مبنا) ---
+    karar = 0 if rng.random() < 0.6 else (karar_idx_list[-1] if len(karar_idx_list) > 1 else 0)
+    octv = max(out) // 7
+    target = octv * 7 + karar
+    if target > max(out):
+        target -= 7
+    cur = out[-1]
+    g = 0
+    while cur > target and g < 14:
+        nxt = max(target, cur - rng.choice([1, 1, 1, 2]))
+        out.append(nxt)
+        cur = nxt
+        g += 1
+    if out[-1] != target:
+        out.append(target)
+    return out
+
+
 def make_continuations(notes, maqam_name, tonic_hz, tonic_midi,
-                       n_variants=2, seed=42):
+                       n_variants=2, seed=42, style=None):
     scale = _scale_degrees(maqam_name)
     karars = _karar_indices(scale)
     ghammaz_c = _ghammaz_cents(maqam_name)
@@ -367,13 +438,30 @@ def make_continuations(notes, maqam_name, tonic_hz, tonic_midi,
     t_after = (notes[-1].get("start") or 0) + (notes[-1].get("duration") or 0) \
         if notes and notes[-1].get("start") is not None else 0.0
 
+    style_tr = ((style or {}).get("transitions") or {}).get(maqam_name)
+    style_len = None
+    try:
+        style_len = int(style.get("phrase_len_median") or 0) or None
+    except Exception:
+        style_len = None
+
     candidates = []
     for k in range(8):
         rng = random.Random(seed * 100 + k)
-        target_len = rng.randint(7, 10)
-        path = _gen_path(start_step, scale, karars, ghammaz_idx, motif,
-                         target_len, rng)
+        target_len = rng.randint(7, 10) if not style_len else \
+            max(6, min(14, style_len + rng.randint(-2, 2)))
+        if style_tr:
+            path = _style_path(start_step, style_tr, scale, karars, ghammaz_idx,
+                               target_len, rng)
+        else:
+            path = _gen_path(start_step, scale, karars, ghammaz_idx, motif,
+                             target_len, rng)
         sc = _score_path(path, scale, ghammaz_idx, motif, start_step)
+        if style_tr:
+            # جایزهٔ وفاداری به گذرهای سبک: سهم گذرهای ثبت‌شده در مسیر
+            keys = {f"{a}->{b}" for a, b in zip(path, path[1:])}
+            hit = sum(style_tr.get(kk, 0) for kk in keys)
+            sc += min(2.0, hit / max(1, len(path)))
         candidates.append((sc, k, path))
     candidates.sort(key=lambda x: -x[0])
 
@@ -404,7 +492,8 @@ def make_continuations(notes, maqam_name, tonic_hz, tonic_midi,
         t = t_after + 0.15
         for j, st in enumerate(path):
             cents = _step_to_cents(st, scale)
-            dur = base_dur * rng.uniform(0.75, 1.25)
+            dur = (_style_dur(style, rng, base_dur)
+                   if style else base_dur * rng.uniform(0.75, 1.25))
             if j == len(path) - 1:
                 dur = base_dur * 1.9   # اقدام روی قرار
             dur = max(0.18, round(dur * 20) / 20)
@@ -419,9 +508,10 @@ def make_continuations(notes, maqam_name, tonic_hz, tonic_midi,
             t += dur
         apex_deg_fa, _ = _label(maqam_name, tonic_hz,
                                 max(_step_to_cents(p, scale) for p in path))
+        style_tag = f" — به سبک {(style or {}).get('name')}" if style else ""
         out.append({
             "kind": "continuation",
-            "title_fa": f"🎹 ادامهٔ پیشنهادی {rank}",
+            "title_fa": f"🎹 ادامهٔ پیشنهادی {rank}{style_tag}",
             "desc_fa": (f"شروع از «{notes_out[0]['degree_fa']}» (ادامهٔ فراز شما) — "
                         f"اوج روی «{apex_deg_fa}» (غماز) و فرود به قرار؛ "
                         f"با بازگویی موتیف خودت"),
@@ -476,7 +566,7 @@ def notes_from_chunks(chunks, group_cents=70.0, min_dur=0.12):
 # API اصلی
 # ============================================================================
 
-def suggest_melody(notes, maqam_name, tonic_hz, n_variants=2, seed=42):
+def suggest_melody(notes, maqam_name, tonic_hz, n_variants=2, seed=42, style=None):
     """
     notes: [{"start": s, "duration": d, "f0_hz": f}, ...]
     خروجی: {"maqam", "tonic_hz", "tonic_midi", "corrected", "continuations",
@@ -495,7 +585,7 @@ def suggest_melody(notes, maqam_name, tonic_hz, n_variants=2, seed=42):
     corrected = make_corrected(notes, maqam_name, tonic_hz, tonic_midi)
     continuations = make_continuations(notes, maqam_name, tonic_hz,
                                        tonic_midi, n_variants=n_variants,
-                                       seed=seed)
+                                       seed=seed, style=style)
 
     in_scale = 0
     for n in notes:

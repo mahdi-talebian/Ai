@@ -28,6 +28,7 @@ import json
 import os
 import shutil
 import sys
+import subprocess
 import threading
 import time
 from collections import OrderedDict
@@ -52,6 +53,7 @@ sys.path.insert(0, str(PYTHON_DIR))
 
 import quran_maqam_analyzer as qma          # noqa: E402
 import melody_engine as mel            # noqa: E402
+import style_learner as stl           # noqa: E402
 import piano_visualizer as pv               # noqa: E402
 import compare_recitations as cr            # noqa: E402
 from pitch_engine import extract_pitch_chunk, freq_to_note_info  # noqa: E402
@@ -167,7 +169,7 @@ async def upload_file(file: UploadFile = File(...)):
 @app.post("/api/analyze/{job_id}")
 async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = Form(3),
                          mode: str = Form("analysis"), reference_job_id: str = Form(None),
-                         voice_tonic_hz: float = Form(None)):
+                         voice_tonic_hz: float = Form(None), style_id: str = Form(None)):
     job_dir = JOBS_DIR / job_id
     if not job_dir.exists():
         return JSONResponse({"error": "job پیدا نشد"}, status_code=404)
@@ -237,6 +239,15 @@ async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = F
             # 🎙 پروفایل صوتی کاربر (برای نمایش و مشاور تونیک)
             if voice_tonic_hz and voice_tonic_hz > 0:
                 report["voice_tonic_hz"] = float(voice_tonic_hz)
+
+            # 🎓 شباهت سبک با قاری انتخابی
+            if style_id:
+                try:
+                    _sp = stl.load_profile(style_id)
+                    report["style_match"] = stl.style_similarity(report, _sp) if _sp else None
+                except Exception:
+                    traceback.print_exc()
+                    report["style_match"] = None
 
             # --- حالت تمرین: کارت امتیاز بازی‌وار ---
             if mode == "practice":
@@ -413,7 +424,7 @@ def _maybe_trim(path, start, end, job_dir, out_name):
 
 @app.get("/api/melody/suggest/{job_id}")
 async def melody_suggest_job(job_id: str, maqam: str = None, tonic_hz: float = None,
-                             voice_tonic_hz: float = None):
+                             voice_tonic_hz: float = None, style_id: str = None):
     """پیشنهاد ملودیک برای یک job تحلیل‌شده (فایل آپلودی در تب تمرین).
 
     maqam/tonic_hz اختیاری: اگر کاربر در سلکت مقام دستی انتخاب کرده باشد،
@@ -435,8 +446,10 @@ async def melody_suggest_job(job_id: str, maqam: str = None, tonic_hz: float = N
     if not eff_maqam or not eff_tonic:
         return JSONResponse({"error": "مقام/تونیک مشخص نیست"}, status_code=400)
 
+    style = stl.load_profile(style_id) if style_id else None
     try:
-        return mel.suggest_melody(report["notes"], eff_maqam, float(eff_tonic))
+        return mel.suggest_melody(report["notes"], eff_maqam, float(eff_tonic),
+                                  style=style)
     except Exception as e:
         return JSONResponse({"error": f"خطای موتور ملودیک: {e}"}, status_code=500)
 
@@ -451,6 +464,7 @@ async def melody_suggest_phrase(payload: dict):
     maqam = payload.get("maqam")
     tonic = payload.get("tonic_hz")
     voice_tonic = payload.get("voice_tonic_hz")
+    style = stl.load_profile(payload.get("style_id")) if payload.get("style_id") else None
     chunks = payload.get("notes") or []
     if maqam not in qma.MAQAMAT:
         return JSONResponse({"error": "مقام نامعتبر است"}, status_code=400)
@@ -469,9 +483,91 @@ async def melody_suggest_phrase(payload: dict):
         return JSONResponse({"error": "نت قابل‌استفاده‌ای یافت نشد"}, status_code=400)
 
     try:
-        return mel.suggest_melody(notes, maqam, float(tonic))
+        return mel.suggest_melody(notes, maqam, float(tonic), style=style)
     except Exception as e:
         return JSONResponse({"error": f"خطای موتور ملودیک: {e}"}, status_code=500)
+
+
+# ============================================================================
+# 🎓 سبک‌های قاری‌ها (پروفایل سبک + ساخت از فایل‌های کاربر)
+# ==========================================================================
+
+@app.get("/api/styles")
+async def styles_list():
+    return stl.list_profiles()
+
+
+@app.post("/api/styles/build")
+async def styles_build(name: str = Form(...), files: list[UploadFile] = File(...)):
+    """🎓 یادگیری سبک از فایل‌های آپلودی: هر فایل تا ۹۰ ثانیهٔ اول تحلیل
+    می‌شود (برای سرعت) و پروفایل سبک از مجموعهٔ همه ساخته و ذخیره می‌شود."""
+    name = (name or "").strip()
+    if not name:
+        return JSONResponse({"error": "نام سبک لازم است"}, status_code=400)
+    if not files:
+        return JSONResponse({"error": "حداقل یک فایل لازم است"}, status_code=400)
+    if len(files) > 8:
+        return JSONResponse({"error": "حداکثر ۸ فایل در هر بار"}, status_code=400)
+
+    tmp_dir = JOBS_DIR / "_stylebuild"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    reports = []
+    per_file = []
+    for uf in files[:8]:
+        ext = Path(uf.filename).suffix or ".mp3"
+        raw = tmp_dir / f"sb_{uuid.uuid4().hex[:8]}{ext}"
+        with open(raw, "wb") as f:
+            shutil.copyfileobj(uf.file, f)
+        # برش به ۹۰ ثانیهٔ اول برای سرعت تحلیل
+        trimmed = raw.with_suffix(".trim.wav")
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw),
+                 "-t", "90", "-ac", "1", str(trimmed)],
+                check=True, timeout=120)
+            use = str(trimmed)
+        except Exception:
+            use = str(raw)
+        try:
+            rep = qma.analyze_recitation(use, denoise=False, top_k=2, make_plot=False)
+            reports.append(rep)
+            per_file.append({"file": uf.filename,
+                             "notes": rep.get("basic", {}).get("num_notes_detected")})
+        except Exception as e:
+            per_file.append({"file": uf.filename, "error": str(e)})
+        finally:
+            try:
+                raw.unlink()
+            except Exception:
+                pass
+            try:
+                trimmed.unlink()
+            except Exception:
+                pass
+
+    if not reports:
+        return JSONResponse({"error": "هیچ فایلی تحلیل نشد", "detail": per_file},
+                            status_code=400)
+    try:
+        profile = stl.build_profile(reports, name,
+                                    style_id="style_" + uuid.uuid4().hex[:8],
+                                    source="upload")
+    except Exception as e:
+        return JSONResponse({"error": f"ساخت سبک ناموفق: {e}"}, status_code=500)
+    stl.save_profile(profile)
+    return {"profile": {"id": profile["id"], "name": profile["name"],
+                        "n_files": profile["n_files"], "n_notes": profile["n_notes"],
+                        "top_maqams": list(profile["maqam_usage"])[:3]},
+            "per_file": per_file}
+
+
+@app.delete("/api/styles/{style_id}")
+async def styles_delete(style_id: str):
+    path = Path(stl.STYLES_DIR_DEFAULT) / f"{style_id}.json"
+    if path.exists():
+        path.unlink()
+        return {"ok": True}
+    return JSONResponse({"error": "سبک پیدا نشد"}, status_code=404)
 
 
 # ============================================================================

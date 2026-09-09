@@ -4,6 +4,7 @@ __pycache__/
 *.mp3
 *.json
 !package.json
+!python/styles/*.json
 .DS_Store
 *.png
 !docs/**/*.png

@@ -315,6 +315,20 @@
           </div>
           <div id="vpStatus" class="hint-text" style="margin-top:8px;"></div>
         </div>
+
+        <div id="styleBuilderCard" style="background:rgba(124,92,255,.06); border:1px solid rgba(124,92,255,.25); border-radius:14px; padding:12px 18px; margin-bottom:14px;">
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <div style="font-weight:800; color:#7c5cff;">🎓 یادگیری سبک قاری</div>
+            <input id="sbName" placeholder="نام قاری/سبک (مثلاً منشاوی)" style="flex:1; min-width:170px; padding:8px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); color:#e8e9ff; font-family:inherit;">
+            <input id="sbFiles" type="file" multiple accept="audio/*" style="flex:1.4; min-width:200px; padding:6px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); color:#cfd1ee;">
+            <button class="primary-btn" id="sbBuild" style="padding:8px 16px; font-size:.85rem;">📚 یاد بگیر</button>
+            <button class="secondary-btn" id="sbRefresh" style="padding:8px 14px; font-size:.8rem;">↻</button>
+          </div>
+          <div id="sbStatus" class="hint-text" style="margin-top:8px;">
+            چند فایل از تلاوت همان قاری بده (۲–۸ فایل؛ از هر فایل ۹۰ ثانیهٔ اول تحلیل می‌شود) —
+            ماتریس گذر درجات، قرارها، ریتم و ویبروی او «یاد گرفته» می‌شود؛ بعد پیشنهادهای ملودیک به همان سبک ساخته می‌شوند.
+          </div>
+        </div>
         <div class="hint-text" style="margin-bottom:14px;">
           🏆 تلاوتت را بخوان (یا آپلود کن) تا امتیاز بگیری: انطباق با مقام، پایداری نت‌ها، نشستن روی قرار و ثبات مرکز صدا.
           می‌توانی فایل <b>مرجع (استاد)</b> هم انتخاب کنی تا شباهتت با او هم سنجیده شود.
@@ -325,6 +339,12 @@
             <label class="hint-text">مقام هدف (اختیاری — برای مربی دقیق‌تر):</label>
             <select id="prMaqam" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); color:#e8e9ff; font-family:inherit;">
               <option value="">تشخیص خودکار</option>
+            </select>
+          </div>
+          <div style="flex:1; min-width:220px;">
+            <label class="hint-text">🎓 شباهت سبک با قاری (اختیاری):</label>
+            <select id="prStyle" style="width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); color:#e8e9ff; font-family:inherit;">
+              <option value="">— بدون مقایسه سبک —</option>
             </select>
           </div>
           <div style="flex:1; min-width:220px;">
@@ -385,6 +405,8 @@
               <div id="prTonicAdvisor" style="display:none; flex:1; min-width:230px; background:rgba(35,224,194,.07); border:1px solid rgba(35,224,194,.3); border-radius:14px; padding:14px;"></div>
             </div>
 
+            <div id="prStyleMatch" style="display:none; margin-top:16px; background:rgba(124,92,255,.07); border:1px solid rgba(124,92,255,.3); border-radius:14px; padding:14px;"></div>
+
             <div id="prRefBlock" style="display:none; margin-top:14px; background:rgba(255,255,255,.04); border-radius:12px; padding:12px 14px;"></div>
 
             <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:14px;">
@@ -412,6 +434,12 @@
             فراز تو نت‌به‌نت تحلیل می‌شود: یک <b>نسخهٔ اصلاحی</b> (همان فراز، ترازشده به شبکهٔ مقام + پایان‌بندی روی قرار)
             و <b>ادامه‌های پیشنهادی</b> (طبق قواعد سیر مقامی: اوج تا غماز و فرود به قرار، با موتیف خودت) می‌سازم.
             ▶ بزن تا روی پیانو بشنوی و کلیدها پله‌پله روشن شوند.
+          </div>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
+            <span class="hint-text">🎼 سبک قاری:</span>
+            <select id="melStyle" style="flex:1; min-width:180px; padding:8px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); color:#e8e9ff; font-family:inherit;">
+              <option value="">— قواعد عمومی سیر مقامی —</option>
+            </select>
           </div>
           <button class="primary-btn" id="melodySuggestBtn" style="padding:10px 22px;">🎹 ساخت پیشنهاد ملودیک</button>
           <span id="melodyStatus" style="margin-inline-start:10px; font-size:.85rem; color:#9294bd;"></span>
@@ -1490,6 +1518,8 @@ prStartBtn.addEventListener('click', async () => {
     fd.append('mode', 'practice');
     const vp = vpActive();
     if (vp) fd.append('voice_tonic_hz', vp.tonic_hz);   // 🎙 پالایش تونیک با پروفایل صوتی
+    const stSel = document.getElementById('prStyle');
+    if (stSel && stSel.value) fd.append('style_id', stSel.value);   // 🎓 شباهت سبک
     if (refJobId) fd.append('reference_job_id', refJobId);
     await fetch(`/api/analyze/${jobId}`, { method: 'POST', body: fd });
 
@@ -1661,6 +1691,7 @@ function renderPracticeScore(report) {
   document.getElementById('prTotal').textContent = Math.round(total);
   drawDegreeRadar(ps.degree_accuracy);
   renderTonicAdvisor(ps.tonic_advisor);
+  renderStyleMatch(report.style_match);   // 🎓 شباهت سبک قاری
   setTimeout(() => {
     document.getElementById('prGaugeArc').style.strokeDashoffset = String(326.7 * (1 - total / 100));
   }, 60);
@@ -1914,6 +1945,94 @@ document.getElementById('vpSaveDetected').onclick = () => {
 vpRenderSelects();
 
 // ==========================================================================
+// 🎓 سبک‌های قاری‌ها — فهرست، ساخت، و شباهت سبک
+// ==========================================================================
+let STYLES = [];
+
+async function refreshStyles() {
+  try {
+    const r = await fetch(`${API_BASE}/api/styles`);
+    STYLES = await r.json();
+  } catch (e) { STYLES = []; }
+  for (const selId of ['prStyle', 'melStyle']) {
+    const sel = document.getElementById(selId);
+    if (!sel) continue;
+    const keep = sel.value;
+    const firstOpt = sel.children[0] ? sel.children[0].outerHTML : '';
+    sel.innerHTML = firstOpt;
+    STYLES.forEach(s => {
+      const o = document.createElement('option');
+      o.value = s.id;
+      o.textContent = `${s.name} (${s.n_files} فایل، ${s.top_maqams ? s.top_maqams[0] : '—'})`;
+      sel.appendChild(o);
+    });
+    sel.value = keep;
+  }
+}
+refreshStyles();
+
+document.getElementById('sbRefresh').onclick = refreshStyles;
+
+document.getElementById('sbBuild').onclick = async () => {
+  const btn = document.getElementById('sbBuild');
+  const status = document.getElementById('sbStatus');
+  const name = document.getElementById('sbName').value.trim();
+  const files = document.getElementById('sbFiles').files;
+  if (!name) { status.textContent = '⚠️ نام قاری/سبک را بنویس.'; return; }
+  if (!files.length) { status.textContent = '⚠️ حداقل یک فایل صوتی انتخاب کن.'; return; }
+  btn.disabled = true;
+  status.textContent = `⏳ در حال تحلیل ${files.length} فایل و یادگیری سبک... (چند دقیقه ممکن طول بکشد)`;
+  try {
+    const fd = new FormData();
+    fd.append('name', name);
+    for (const f of files) fd.append('files', f, f.name);
+    const r = await fetch(`${API_BASE}/api/styles/build`, { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || 'پاسخ نامعتبر از سرور');
+    status.textContent = `✓ سبک «${d.profile.name}» یاد گرفته شد — ` +
+      `${d.profile.n_files} فایل، ${d.profile.n_notes} نت، ${d.profile.n_transitions || ''} گذر درجه‌ای. ` +
+      `مقام‌های اصلی: ${(d.profile.top_maqams || []).join('، ')}`;
+    document.getElementById('sbName').value = '';
+    document.getElementById('sbFiles').value = '';
+    await refreshStyles();
+  } catch (e) {
+    status.textContent = '❌ ' + e.message;
+  }
+  btn.disabled = false;
+};
+
+function renderStyleMatch(sm) {
+  const el = document.getElementById('prStyleMatch');
+  if (!el) return;
+  if (!sm) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const pct = sm.overall_pct ?? 0;
+  const color = pct >= 70 ? '#3ddc97' : pct >= 50 ? '#ffb703' : '#ff5cad';
+  const comp = sm.components || {};
+  const bar = (label, v) => v === null || v === undefined ? '' :
+    `<div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+       <span class="hint-text" style="width:120px;">${label}</span>
+       <div style="flex:1; height:6px; background:rgba(255,255,255,.08); border-radius:99px;">
+         <div style="height:100%; width:${Math.round(v)}%; background:${color}; border-radius:99px;"></div>
+       </div>
+       <span class="hint-text">${Math.round(v)}٪</span></div>`;
+  el.innerHTML = `
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <div style="font-weight:800; color:#e8e9ff;">🎓 شباهت سبک با «${sm.style_name}»</div>
+      <div style="font-weight:800; color:${color}; font-size:1.3rem;">${pct}٪</div>
+      <div class="hint-text">مقام مبنا: ${sm.basis_maqam || '—'} — ${sm.n_user_notes} نت</div>
+    </div>
+    <div style="font-size:.88rem; color:${color}; margin:6px 0;">${sm.verdict_fa || ''}</div>
+    ${bar('گذرهای درجه‌ای', comp.transitions_pct)}
+    ${bar('قرارها', comp.resting_pct)}
+    ${bar('فاصله‌پردازی', comp.intervals_pct)}
+    ${bar('ریتم و کشش', comp.rhythm_pct)}
+    ${bar('تنوع مقامی', comp.maqam_pct)}
+    ${(sm.shared_moves_fa || []).length ? `<div class="hint-text" style="margin-top:6px;">امضاهای مشترک: ${sm.shared_moves_fa.join(' · ')}</div>` : ''}
+    ${(sm.only_yours_fa || []).length ? `<div class="hint-text">حرکت‌های خاص خودت: ${sm.only_yours_fa.join(' · ')}</div>` : ''}`;
+}
+
+// ==========================================================================
 // 🎼 موتور پیشنهاد ملودیک — تحلیل نت‌به‌نت + پیشنهاد روی پیانو
 // ==========================================================================
 let prLastJobId = null;   // job آخرین تحلیل تمرین (برای /api/melody/suggest)
@@ -2074,6 +2193,8 @@ document.getElementById('melodySuggestBtn').onclick = async () => {
     if (prTonicOverride) url += (url.includes('?') ? '&' : '?') + 'tonic_hz=' + prTonicOverride;
     const vp2 = vpActive();
     if (vp2) url += (url.includes('?') ? '&' : '?') + 'voice_tonic_hz=' + vp2.tonic_hz;
+    const melStyleSel = document.getElementById('melStyle');
+    if (melStyleSel && melStyleSel.value) url += (url.includes('?') ? '&' : '?') + 'style_id=' + melStyleSel.value;
     const res = await fetch(url);
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'پاسخ نامعتبر از سرور');
@@ -2111,7 +2232,9 @@ async function requestLiveSuggestions(phrase) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign(
         { maqam: phrase.maqam, tonic_hz: phrase.tonic_hz, notes: phrase.notes },
-        (vpActive() ? { voice_tonic_hz: vpActive().tonic_hz } : {}))),
+        (vpActive() ? { voice_tonic_hz: vpActive().tonic_hz } : {}),
+        (document.getElementById('melStyle') && document.getElementById('melStyle').value
+          ? { style_id: document.getElementById('melStyle').value } : {}))),
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'پاسخ نامعتبر از سرور');
