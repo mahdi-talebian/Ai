@@ -51,6 +51,7 @@ import quran_maqam_analyzer as qma          # noqa: E402
 import piano_visualizer as pv               # noqa: E402
 import compare_recitations as cr            # noqa: E402
 from pitch_engine import extract_pitch_chunk, freq_to_note_info  # noqa: E402
+from practice_scorer import score_recitation  # noqa: E402
 
 app = FastAPI(title="تحلیلگر تلاوت قرآن - API")
 app.add_middleware(
@@ -145,7 +146,8 @@ async def upload_file(file: UploadFile = File(...)):
 # ============================================================================
 
 @app.post("/api/analyze/{job_id}")
-async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = Form(3)):
+async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = Form(3),
+                         mode: str = Form("analysis"), reference_job_id: str = Form(None)):
     job_dir = JOBS_DIR / job_id
     if not job_dir.exists():
         return JSONResponse({"error": "job پیدا نشد"}, status_code=404)
@@ -178,6 +180,34 @@ async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = F
             # مسیر فایل صوتی اصلی — برای پخش هم‌گام با نمایش waveform رنگی
             # فراز-به-فراز در وب (تب «آپلود و تحلیل»).
             report["meta"]["audio_url"] = f"/api/file/{job_id}/{Path(input_path).name}"
+
+            # --- حالت تمرین: کارت امتیاز بازی‌وار ---
+            if mode == "practice":
+                try:
+                    report["practice_score"] = score_recitation(report)
+                except Exception:
+                    traceback.print_exc()
+                    report["practice_score"] = None
+
+            # --- مقایسه با فایل مرجع (استاد) در حالت تمرین ---
+            if mode == "practice" and reference_job_id:
+                ref_dir = JOBS_DIR / reference_job_id
+                ref_files = list(ref_dir.glob("input.*")) if ref_dir.exists() else []
+                if ref_files:
+                    try:
+                        job.update("comparing_with_reference", 0.95)
+                        cmp_result, _ref, _perf, _mel = cr.compare_files(
+                            str(ref_files[0]), input_path)
+                        report["reference_comparison"] = {
+                            "overall_similarity_pct": cmp_result.get("overall_similarity_pct"),
+                            "verdict": cmp_result.get("verdict"),
+                            "melodic_similarity_pct": (cmp_result.get("melodic_similarity") or {}).get("similarity_pct"),
+                            "rhythm_similarity_pct": (cmp_result.get("rhythm_similarity") or {}).get("similarity_pct"),
+                            "loudness_similarity_pct": (cmp_result.get("loudness_similarity") or {}).get("similarity_pct"),
+                        }
+                    except Exception:
+                        traceback.print_exc()
+                        report["reference_comparison"] = None
 
             with open(job_dir / "report.json", "w", encoding="utf-8") as f:
                 json.dump(report, f, ensure_ascii=False, indent=2)
@@ -419,6 +449,10 @@ async def ws_live_pitch(websocket: WebSocket):
     t_cursor = 0.0
     PHRASE_SILENCE_GATE_SEC = 0.4  # این‌مقدار سکوت پیاپی = پایان فراز
 
+    # --- مربی زنده: مقام انتخابی کاربر (از پیام متنی کلاینت) ---
+    coach_maqam = None      # نام مقام انتخابی یا None = تشخیص زنده
+    coach_tonic_hz = None   # تونیک دستی (اختیاری)
+
     try:
         while True:
             msg = await websocket.receive()
@@ -506,17 +540,65 @@ async def ws_live_pitch(websocket: WebSocket):
                         }
                         phrase_freqs = []
 
+                # --- مربی زنده: راهنمای بالاتر/پایین‌تر نسبت به نزدیک‌ترین درجه ---
+                coach = None
+                c_maqam_name = coach_maqam or (live_maqam or {}).get("maqam")
+                if c_maqam_name and c_maqam_name in qma.MAQAMAT:
+                    if coach_tonic_hz:
+                        c_tonic = coach_tonic_hz
+                    elif live_maqam and live_maqam.get("tonic_freq_hz"):
+                        c_tonic = live_maqam["tonic_freq_hz"]
+                        if f0 and c_tonic > 0:
+                            oct_shift = round(np.log2(f0 / c_tonic))
+                            c_tonic *= (2 ** oct_shift)
+                    else:
+                        c_tonic = None
+                    if f0 and c_tonic:
+                        c_cents = 1200.0 * np.log2(f0 / c_tonic)
+                        scale = qma.MAQAMAT[c_maqam_name]["scale_ascending"][:-1]
+                        diffs = [min(abs((c_cents % 1200) - dc), 1200 - abs((c_cents % 1200) - dc))
+                                 for dc in scale]
+                        nearest_c = scale[int(np.argmin(diffs))]
+                        off = c_cents - nearest_c
+                        if off > 600:
+                            off -= 1200
+                        elif off < -600:
+                            off += 1200
+                        t_fa, t_en, _ = qma.absolute_degree_name(nearest_c,
+                                                qma.MAQAMAT[c_maqam_name]["tonic_ladder_cents"])
+                        if abs(off) <= 30:
+                            direction, hint = "ok", "درست است — نگه دار ✓"
+                        elif off < 0:
+                            direction, hint = "up", "کمی بالاتر ↑"
+                        else:
+                            direction, hint = "down", "کمی پایین‌تر ↓"
+                        coach = {
+                            "active": True,
+                            "maqam": c_maqam_name,
+                            "target_degree_fa": t_fa,
+                            "target_cents": nearest_c,
+                            "cents_off": round(float(off), 1),
+                            "direction": direction,
+                            "hint_fa": hint,
+                        }
+
                 await websocket.send_json({
                     "note": note_info,
                     "live_maqam": live_maqam,
                     "solfege": solfege,
                     "phrase_completed": phrase_completed,
+                    "coach": coach,
                 })
             elif "text" in msg and msg["text"] is not None:
                 try:
                     cfg = json.loads(msg["text"])
                     if "sample_rate" in cfg:
                         sample_rate = int(cfg["sample_rate"])
+                    if "maqam" in cfg:
+                        coach_maqam = cfg["maqam"] if cfg["maqam"] in qma.MAQAMAT else None
+                    if "tonic_hz" in cfg:
+                        v = float(cfg["tonic_hz"])
+                        coach_tonic_hz = v if v > 0 else None
                 except Exception:
                     pass
     except WebSocketDisconnect:
