@@ -420,9 +420,24 @@ def _style_path(start_step, trans_counter, scale, karar_idx_list, ghammaz_idx,
     return out
 
 
+def _user_ioi_pattern(notes, max_k=6):
+    """🥁 الگوی کشش خود کاربر: IOIها نرمال‌شده به میانه (خودِ ریتمش)."""
+    durs = [float(n.get("duration") or 0) for n in notes or []]
+    durs = [d for d in durs if d > 0.05]
+    if len(durs) < 4:
+        return None
+    med = float(np.median(durs))
+    if med <= 0:
+        return None
+    rel = [max(0.4, min(2.5, d / med)) for d in durs]
+    tail = rel[-max_k:]
+    return [round(x, 2) for x in tail]
+
+
 def make_continuations(notes, maqam_name, tonic_hz, tonic_midi,
                        n_variants=2, seed=42, style=None):
     scale = _scale_degrees(maqam_name)
+    ioi_pattern = _user_ioi_pattern(notes)
     karars = _karar_indices(scale)
     ghammaz_c = _ghammaz_cents(maqam_name)
     ghammaz_idx = _nearest_index(ghammaz_c, scale)
@@ -478,10 +493,18 @@ def make_continuations(notes, maqam_name, tonic_hz, tonic_midi,
     if len(picked) >= 2:
         best = picked[0]
         best_apex, best_end = max(best[2]), best[2][-1]
+        ghammaz_step = None
+        for pth in (best[2],):
+            for p in pth:
+                if _step_to_cents(p, scale) % 1200 == scale[ghammaz_idx]:
+                    ghammaz_step = p
         for sc, k, path in candidates:
             if any(k == p[1] for p in picked):
                 continue
             if max(path) != best_apex or path[-1] != best_end:
+                # 🎭 واریانت دوم = «پاسخِ نیمه» — روی غماز می‌ماند تا ادامه‌پذیر باشد
+                if ghammaz_step is not None:
+                    path = path[:-1] + [ghammaz_step]
                 picked[1] = (sc, k, path)
                 break
 
@@ -490,10 +513,15 @@ def make_continuations(notes, maqam_name, tonic_hz, tonic_midi,
         rng = random.Random(seed * 100 + k + 500)
         notes_out = []
         t = t_after + 0.15
+        pat = ioi_pattern or []
         for j, st in enumerate(path):
             cents = _step_to_cents(st, scale)
-            dur = (_style_dur(style, rng, base_dur)
-                   if style else base_dur * rng.uniform(0.75, 1.25))
+            if j < len(pat):
+                dur = base_dur * pat[j]                 # 🥁 ریتم خود کاربر
+            elif style:
+                dur = _style_dur(style, rng, base_dur)  # یا توزیع سبک قاری
+            else:
+                dur = base_dur * rng.uniform(0.75, 1.25)
             if j == len(path) - 1:
                 dur = base_dur * 1.9   # اقدام روی قرار
             dur = max(0.18, round(dur * 20) / 20)
@@ -509,9 +537,11 @@ def make_continuations(notes, maqam_name, tonic_hz, tonic_midi,
         apex_deg_fa, _ = _label(maqam_name, tonic_hz,
                                 max(_step_to_cents(p, scale) for p in path))
         style_tag = f" — به سبک {(style or {}).get('name')}" if style else ""
+        qa_tag = (" · 🎭 جملهٔ کامل (روی قرار)" if rank == 1
+                  else " · 🎭 جملهٔ نیمه (روی غماز — ادامه‌پذیر)") if len(picked) > 1 else ""
         out.append({
             "kind": "continuation",
-            "title_fa": f"🎹 ادامهٔ پیشنهادی {rank}{style_tag}",
+            "title_fa": f"🎹 ادامهٔ پیشنهادی {rank}{style_tag}{qa_tag}",
             "desc_fa": (f"شروع از «{notes_out[0]['degree_fa']}» (ادامهٔ فراز شما) — "
                         f"اوج روی «{apex_deg_fa}» (غماز) و فرود به قرار؛ "
                         f"با بازگویی موتیف خودت"),

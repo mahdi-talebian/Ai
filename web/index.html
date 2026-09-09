@@ -407,6 +407,11 @@
 
             <div id="prStyleMatch" style="display:none; margin-top:16px; background:rgba(124,92,255,.07); border:1px solid rgba(124,92,255,.3); border-radius:14px; padding:14px;"></div>
 
+            <div id="prPhraseFeedback" style="display:none; margin-top:16px;">
+              <div class="chart-title">🎙 فیدبک فرازبه‌فراز — کلیک کن تا همان ثانیه پخش شود</div>
+              <div id="prPhraseList" style="display:flex; flex-direction:column; gap:6px; margin-top:8px;"></div>
+            </div>
+
             <div id="prRefBlock" style="display:none; margin-top:14px; background:rgba(255,255,255,.04); border-radius:12px; padding:12px 14px;"></div>
 
             <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:14px;">
@@ -423,7 +428,10 @@
           <div style="margin-top:16px;">
             <div class="chart-title">📈 روند پیشرفت تو</div>
             <canvas id="prHistoryCanvas" width="600" height="90" style="width:100%; max-width:600px;"></canvas>
-            <button class="secondary-btn" id="prClearHistory" style="padding:6px 14px; font-size:.8rem;">پاک کردن تاریخچه</button>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button class="secondary-btn" id="prClearHistory" style="padding:6px 14px; font-size:.8rem;">پاک کردن تاریخچه</button>
+              <button class="secondary-btn" id="prExportCsv" style="padding:6px 14px; font-size:.8rem;">⬇ دانلود CSV</button>
+            </div>
           </div>
         </div>
 
@@ -1399,10 +1407,52 @@ function buildPianoSVGInto(svgId, keyPrefix, minMidi, maxMidi) {
   svg.setAttribute('viewBox', `0 0 ${x} 180`);
   svg.innerHTML = html;
 }
+function playMidiNote(midi) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  try {
+    if (!window.__pianoClickCtx) window.__pianoClickCtx = new AC();
+    const ctx = window.__pianoClickCtx;
+    const f = 440 * Math.pow(2, (midi - 69) / 12);
+    const t = ctx.currentTime + 0.01;
+    const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = f;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.15, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(t); o.stop(t + 0.75);
+  } catch (e) {}
+}
+
 function buildPianoSVG() {
   buildPianoSVGInto('pianoSvg', 'key', PIANO_MIDI_MIN, PIANO_MIDI_MAX);
 }
 buildPianoSVG();
+
+// 🖱 کلیک روی کلید = پخش همان نت (تمرین شنیداری)
+(function wirePianoClicks() {
+  const wire = () => {
+    const svg = document.getElementById('pianoSvg');
+    if (svg && !svg.dataset.clickWired) {
+      svg.addEventListener('click', (ev) => {
+        const id = ev.target && ev.target.id;
+        if (id && id.startsWith('key-')) playMidiNote(parseInt(id.split('-')[1], 10));
+      });
+      svg.dataset.clickWired = '1';
+    }
+    const esvg = document.getElementById('enginePianoSvg');
+    if (esvg && !esvg.dataset.clickWired) {
+      esvg.addEventListener('click', (ev) => {
+        const id = ev.target && ev.target.id;
+        if (id && id.startsWith('ekey-')) playMidiNote(parseInt(id.split('-')[1], 10));
+      });
+      esvg.dataset.clickWired = '1';
+    }
+  };
+  wire();
+  setTimeout(wire, 400);   // پیانوی موتور دیرتر ساخته می‌شود
+})();
 
 function highlightPianoKey(noteInfo) {
   document.querySelectorAll('#pianoSvg rect').forEach(r => {
@@ -1692,6 +1742,7 @@ function renderPracticeScore(report) {
   drawDegreeRadar(ps.degree_accuracy);
   renderTonicAdvisor(ps.tonic_advisor);
   renderStyleMatch(report.style_match);   // 🎓 شباهت سبک قاری
+  renderPhraseFeedback(report, ps);       // 🎙 فیدبک فرازبه‌فراز قابل‌پخش
   setTimeout(() => {
     document.getElementById('prGaugeArc').style.strokeDashoffset = String(326.7 * (1 - total / 100));
   }, 60);
@@ -1708,6 +1759,7 @@ function renderPracticeScore(report) {
     note_stability: 'پایداری نت‌ها',
     phrase_resting: 'نشستن روی قرار',
     tonic_steadiness: 'ثبات مرکز صدا',
+    vibrato: 'زینت (ویبرو)',
   };
   document.getElementById('prSubscores').innerHTML = Object.entries(ps.subscores || {}).map(([k, v]) => `
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
@@ -1871,7 +1923,10 @@ document.getElementById('vpCalibrate').onclick = async () => {
   }
   let stream, ctx, ws;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // 🎙 پردازش‌های مرورگر (حذف اکو/نویز/AGC) خاموش — وگرنه پرده صدا خراب می‌شود
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
   } catch (err) {
     status.textContent = '❌ دسترسی میکروفون ممکن نشد: ' + (err.message || err.name);
     return;
@@ -2001,6 +2056,58 @@ document.getElementById('sbBuild').onclick = async () => {
   btn.disabled = false;
 };
 
+// 🎙 فیدبک فرازبه‌فراز قابل‌پخش
+let prFeedbackAudio = null;
+
+function renderPhraseFeedback(report, ps) {
+  const wrap = document.getElementById('prPhraseFeedback');
+  const list = document.getElementById('prPhraseList');
+  if (!wrap || !list) return;
+  const items = ps && ps.phrase_feedback;
+  const audioUrl = ((report.meta || {}).audio_url);
+  if (!items || !items.length || !audioUrl) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  list.innerHTML = '';
+  items.forEach(ph => {
+    const color = ph.score >= 85 ? '#3ddc97' : ph.score >= 65 ? '#ffb703' : '#ff5cad';
+    const row = document.createElement('button');
+    row.style.cssText = `text-align:right; display:flex; gap:10px; align-items:center; width:100%; padding:8px 12px; border-radius:10px; cursor:pointer; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.10); color:#e8e9ff; font-family:inherit;`;
+    row.innerHTML = `<span style="color:${color}; font-weight:800; width:44px;">${Math.round(ph.score)}</span>
+      <span class="hint-text" style="width:90px;">فراز ${faNum(ph.index)}</span>
+      <span class="hint-text" style="flex:1;">${ph.start}s → ${ph.end}s · انطباق ${ph.in_maqam_pct}٪${ph.resting_fa ? ' · قرار: ' + ph.resting_fa : ''}</span>
+      <span>▶</span>`;
+    row.onclick = () => {
+      if (prFeedbackAudio) { try { prFeedbackAudio.pause(); } catch (e) {} }
+      const a = new Audio(audioUrl);
+      prFeedbackAudio = a;
+      a.currentTime = Math.max(0, (ph.start || 0) - 0.15);
+      a.play().catch(() => {});
+      const stopAt = (ph.end || 0) + 0.35;
+      const iv = setInterval(() => {
+        if (a.ended || a.currentTime >= stopAt || a.paused) { clearInterval(iv); try { a.pause(); } catch (e) {} }
+      }, 200);
+    };
+    list.appendChild(row);
+  });
+}
+
+// ⬇ خروجی CSV تاریخچه
+document.getElementById('prExportCsv').onclick = () => {
+  try {
+    const h = JSON.parse(localStorage.getItem('practice_history') || '[]');
+    if (!h.length) { document.getElementById('vpStatus').textContent = 'تاریخچه‌ای برای خروجی نیست.'; return; }
+    const rows = [['date', 'score', 'maqam', 'had_reference']].concat(
+      h.map(x => [x.d || '', x.t ?? '', String(x.m || '').replace(/,/g, ' ') || '', x.r ? 'yes' : 'no']));
+    const csv = '\ufeff' + rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'practice_history.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {}
+};
+
 function renderStyleMatch(sm) {
   const el = document.getElementById('prStyleMatch');
   if (!el) return;
@@ -2104,6 +2211,15 @@ function playSuggestion(sug, tonicHz, opts) {
         o.connect(g); g.connect(engineAudioCtx.destination);
         o.start(t); o.stop(t + dur + 0.25);
       });
+      // 🎭 ویبروی طبیعی روی نت‌های کشیده (۵٫۵Hz، ±۳۵¢)
+      if (dur >= 0.6) {
+        const vib = engineAudioCtx.createOscillator();
+        vib.type = 'sine'; vib.frequency.value = 5.5;
+        const vg = engineAudioCtx.createGain();
+        vg.gain.value = f * Math.pow(2, 35 / 1200) - f;
+        vib.connect(vg); vg.connect(o.frequency);
+        vib.start(t); vib.stop(t + dur + 0.25);
+      }
     }
     t += dur;
   });
@@ -2322,7 +2438,10 @@ liveMicBtn.onclick = async () => {
 
   liveMicStatus.textContent = '⏳ در حال درخواست دسترسی میکروفون از مرورگر...';
   try {
-    liveMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // 🎙 پردازش‌های مرورگر خاموش (دقت پرده‌یاب)
+    liveMicStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
   } catch (err) {
     liveMicStatus.textContent = '❌ ' + describeMicError(err);
     return;

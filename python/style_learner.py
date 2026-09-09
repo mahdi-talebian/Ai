@@ -23,6 +23,30 @@ from collections import Counter, defaultdict
 
 import numpy as np
 
+SMOOTH_ALPHA = 0.5   # هموارسازی لاپلاس ماتریس گذر — گذر «صفرِ مشاهداتی»
+                     # مطلقِ ناممکن نیست؛ تنوع تولید و انصاف شباهت حفظ شود
+
+
+def smooth_counter(counter, alpha=SMOOTH_ALPHA):
+    """وزن‌های هموارشده (dict) — هر کلید موجود و پله‌های همسایهٔ ±۲ پله."""
+    try:
+        out = dict(counter or {})
+        keys = list(out.keys())
+        for k in keys:
+            try:
+                a, b = k.split("->")
+                a, b = int(a), int(b)
+            except Exception:
+                continue
+            for da in (-2, -1, 1, 2):
+                for db in (-2, -1, 0, 1, 2):
+                    nk = f"{a+da}->{b+db}"
+                    out[nk] = out.get(nk, 0.0) + float(alpha) / 8.0
+        return out
+    except Exception:
+        return dict(counter or {})
+
+
 STYLES_DIR_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "styles")
 
 
@@ -84,9 +108,19 @@ def extract_features(report):
     if cand:
         tonics.append(float(cand))
 
+    # 🎼 الگوهای امضایی (سه‌تایی‌های گذر پرتکرار)
+    trigrams = defaultdict(Counter)
+    for ph in phrases:
+        maqam = ph.get("maqam") or "نامشخص"
+        sols = [s for s in (ph.get("notes_solfege") or []) if s.get("degree_index")]
+        steps = [s for s in (_step_of(x) for x in sols) if s is not None]
+        for a, b, c in zip(steps, steps[1:], steps[2:]):
+            trigrams[maqam][f"{a}->{b}->{c}"] += 1
+
     return {
         "dur_by_maqam": dict(dur_by_maqam),
         "transitions": {k: dict(v) for k, v in transitions.items()},
+        "trigrams": {k: dict(v) for k, v in trigrams.items()},
         "start_steps": {k: dict(v) for k, v in start_steps.items()},
         "end_steps": {k: dict(v) for k, v in end_steps.items()},
         "intervals": {k: dict(v) for k, v in intervals.items()},
@@ -106,7 +140,7 @@ def _pct(vals, q):
 # ساخت پروفایل سبک از چند گزارش
 # ============================================================================
 
-def build_profile(reports, name, style_id=None, source="files"):
+def build_profile(reports, name, style_id=None, source="files", _with_selfcheck=True):
     """reports = لیست گزارش‌های analyze_recitation → پروفایل سبک JSON-سازگار."""
     feats = [extract_features(r) for r in reports if r]
     feats = [f for f in feats if f["n_notes"] > 0]
@@ -126,6 +160,7 @@ def build_profile(reports, name, style_id=None, source="files"):
     n_notes_total = 0
     tonics = []
 
+    trigrams = defaultdict(Counter)
     for f in feats:
         n_notes_total += f["n_notes"]
         tonics.extend(f["tonics"])
@@ -137,6 +172,8 @@ def build_profile(reports, name, style_id=None, source="files"):
             maqam_usage[m] += w
         for m, c in f["transitions"].items():
             transitions[m].update(c)
+        for m, c in (f.get("trigrams") or {}).items():
+            trigrams[m].update(c)
         for m, c in f["start_steps"].items():
             start_steps[m].update(c)
         for m, c in f["end_steps"].items():
@@ -158,6 +195,7 @@ def build_profile(reports, name, style_id=None, source="files"):
         "maqam_usage": {m: round(w, 2) for m, w in
                         sorted(maqam_usage.items(), key=lambda kv: -kv[1])},
         "transitions": {m: dict(c) for m, c in transitions.items()},
+        "trigrams": {m: dict(c.most_common(12)) for m, c in trigrams.items()},
         "start_steps": {m: dict(c) for m, c in start_steps.items()},
         "end_steps": {m: dict(c) for m, c in end_steps.items()},
         "intervals": {m: dict(c) for m, c in intervals.items()},
@@ -170,6 +208,23 @@ def build_profile(reports, name, style_id=None, source="files"):
             "extent_median_cents": _pct(vib_extents, 50),
         },
     }
+
+    # 🧪 انسجام نمونه‌ها: میانگین شباهت هر گزارش به کل پروفایل + پراکندگی —
+    # سنجهٔ کیفیت سبک (نمونه‌های ناهم‌خوان، انسجام را پایین می‌آورند)
+    try:
+        sims = []
+        for r in reports:
+            s = style_similarity(r, profile)
+            if s:
+                sims.append(s["overall_pct"])
+        if len(sims) >= 3:
+            profile["self_check"] = {
+                "coherence_pct": round(float(np.mean(sims)), 1),
+                "spread": round(float(np.std(sims)), 1),
+                "n": len(sims),
+            }
+    except Exception:
+        pass
     return profile
 
 
@@ -252,7 +307,9 @@ def style_similarity(report, profile):
         return None
 
     u_tr = _norm_counter(feats["transitions"].get(maqam))
-    p_tr = _norm_counter((profile.get("transitions") or {}).get(maqam))
+    # 🌊 سمت پروفایل هموار می‌شود: گذر نزدیک هم‌پوشانی جزئی بگیرد، صفرِ
+    # مشاهداتی «دیوار» نسازد (انصاف برای فرازهای کوتاه کاربر)
+    p_tr = _norm_counter(smooth_counter((profile.get("transitions") or {}).get(maqam)))
     trans_sim = _cosine(u_tr, p_tr)
     n_user_tr = int(sum(u_tr.values()))
 
@@ -300,6 +357,11 @@ def style_similarity(report, profile):
     top_shared = [k for k, _ in joint[:4]]
     only_user = [k for k in u_tr if k not in p_tr][:4]
 
+    # 🎼 الگوهای امضایی مشترک (سه‌تایی‌ها)
+    u_tri = set((feats.get("trigrams") or {}).get(maqam) or {})
+    p_tri = set(((profile.get("trigrams") or {}).get(maqam)) or {})
+    shared_trigrams = list(u_tri & p_tri)[:4]
+
     if overall_pct >= 70:
         verdict = f"سبک خواندنت به «{profile.get('name')}» خیلی نزدیک است ✓"
     elif overall_pct >= 50:
@@ -324,5 +386,6 @@ def style_similarity(report, profile):
         },
         "shared_moves_fa": top_shared,
         "only_yours_fa": only_user,
+        "shared_trigrams_fa": shared_trigrams,
         "n_user_notes": feats["n_notes"],
     }

@@ -801,13 +801,28 @@ def segment_notes(times, freqs, min_duration=0.08, stability_cents=35):
             f0_std_cents = float(
                 np.std([freq_to_cents(f, f0_median) for f in segment_freqs])
             )
-            notes.append({
+            note = {
                 "start": round(float(times[i]), 3),
                 "end": round(float(times[j]), 3),
                 "duration": round(duration, 3),
                 "f0_hz": round(f0_median, 2),
                 "stability_cents": round(f0_std_cents, 1),
-            })
+            }
+            # 🎢 سُر (گلیساندو): پرده ثابت نمانده اما روند یک‌طرفهٔ معنادار
+            # دارد — به‌جای دور انداختن، برچسب بخورد تا ملوگراف/سبک‌سنج
+            # آن را «حرکت بین دو درجه» بفهمند نه لرزش.
+            if f0_std_cents > stability_cents and len(segment_freqs) >= 5:
+                first_c = freq_to_cents(segment_freqs[0], f0_median)
+                last_c = freq_to_cents(segment_freqs[-1], f0_median)
+                net = abs(last_c - first_c)
+                steps = np.diff([freq_to_cents(f, f0_median)
+                                 for f in segment_freqs])
+                same_dir = float(np.sum(steps > 0)) / max(len(steps), 1)
+                mono = max(same_dir, 1.0 - same_dir)
+                if net >= 60.0 and mono >= 0.72:
+                    note["glissando"] = True
+                    note["glissando_cents"] = round(float(last_c - first_c), 1)
+            notes.append(note)
         i = j + 1
     return notes
 
@@ -1001,6 +1016,45 @@ def _finalis_bonus(tonic_cents: float, finalis_cents):
     dist = abs(tonic_cents - float(finalis_cents)) % 1200.0
     dist = min(dist, 1200.0 - dist)
     return 1.0 + FINALIS_BONUS * max(0.0, 1.0 - dist / FINALIS_BONUS_RANGE_CENTS)
+
+
+def rerank_candidates_with_transitions(candidates, transition_prior,
+                                       weight=0.3):
+    """
+    🎓 ری‌رنک نامزدهای مقام با «درست‌نمایی گذر درجات» (قواعد سیر) —
+    وقتی پروفایل سبک یا آمار گذر مقام‌ها موجود باشد، امتیاز بهاتاچاریا
+    هیستوگرام با احتمال گذرهای مشاهده‌شدهٔ همان مقام ترکیب می‌شود:
+        score_adj = (1-w)·BH + w·norm_loglik(transitions)
+    این تمایز مقامات هم‌گام (بیاتی/کرد، رست/عجم) را که فقط در چند درجه
+    فرق دارند، از مسیر حرکت قاری بهتر می‌فهمد.
+    prior: {maqam_name: {"8->9": count, ...}} (پله‌ها ۰..۲۰)
+    خروجی: همان candidates مرتب‌شدهٔ جدید (فیلد sayr_bonus اضافه می‌شود).
+    """
+    try:
+        if not transition_prior or not candidates:
+            return candidates
+        import math as _math
+        scored = []
+        for cand in candidates:
+            # گذرهای قاری باید از گزارش استخراج شوند؛ اینجا فقط درصدهای
+            # آماده (dict از گذر به وزن نرمال) پذیرفته می‌شود.
+            prior = transition_prior.get(cand.get("maqam")) or {}
+            ev = cand.get("_transition_evidence") or {}
+            hit = sum(float(prior.get(k, 0.0)) * float(v)
+                      for k, v in ev.items())
+            tot = sum(float(v) for v in ev.values()) or 1.0
+            norm = hit / tot
+            bonus = weight * norm
+            c2 = dict(cand)
+            c2["sayr_bonus"] = round(float(bonus), 4)
+            c2["_adj_score"] = float(cand.get("score") or 0.0) + bonus
+            scored.append(c2)
+        scored.sort(key=lambda c: -c["_adj_score"])
+        for c in scored:
+            c.pop("_adj_score", None)
+        return scored
+    except Exception:
+        return candidates
 
 
 def detect_tonic_and_maqam(hist, top_k=3, finalis_cents=None):

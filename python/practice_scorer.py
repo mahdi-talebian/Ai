@@ -102,17 +102,48 @@ def score_recitation(report: dict) -> dict:
             tonic_steadiness = _clamp(100.0 * float(np.exp(-dev / 150.0)))
 
     # ------------------------------------------------------------------
-    # امتیاز کل — وزن‌ها: انطباق مهم‌ترین است
+    # ۵) زینت (ویبرو) — پوشش + نرخ مطلوب ۵–۷Hz و دامنهٔ ۳۰–۶۰¢
+    # ------------------------------------------------------------------
+    vibrato = None
+    try:
+        v_notes = [n for n in notes if n.get("vibrato")]
+        v_total = len([n for n in notes if n.get("duration")])
+        if v_total >= 4:
+            coverage = len(v_notes) / v_total
+            rates = [float(n["vibrato"]["rate_hz"]) for n in v_notes
+                     if (n.get("vibrato") or {}).get("rate_hz")]
+            extents = [float(n["vibrato"]["extent_cents"]) for n in v_notes
+                       if (n.get("vibrato") or {}).get("extent_cents")]
+            def _band(vals, lo, hi):
+                if not vals:
+                    return 0.5
+                ok = sum(1 for v in vals if lo <= v <= hi)
+                # نزدیکی نرم به بازه (هر ۲۰¢/۰٫۵Hz بیرون = ۱۰٪ جریمه)
+                soft = sum(
+                    max(0.0, 1.0 - (min(abs(v - lo), abs(v - hi)) / 20.0) * 0.1)
+                    for v in vals) / len(vals)
+                return 0.5 * (ok / len(vals)) + 0.5 * soft
+            rate_score = _band(rates, 5.0, 7.0)
+            extent_score = _band(extents, 30.0, 60.0)
+            vibrato = _clamp(100.0 * (0.4 * min(1.0, coverage / 0.45)
+                                      + 0.3 * rate_score + 0.3 * extent_score))
+    except Exception:
+        vibrato = None
+
+    # ------------------------------------------------------------------
+    # امتیاز کل — وزن‌ها: انطباق مهم‌ترین است (ویبرو به‌عنوان جزء پنجم)
     # ------------------------------------------------------------------
     parts = []
     if adherence is not None:
-        parts.append((adherence, 0.40))
+        parts.append((adherence, 0.36))
     if stability is not None:
-        parts.append((stability, 0.25))
+        parts.append((stability, 0.22))
     if resting is not None:
-        parts.append((resting, 0.20))
+        parts.append((resting, 0.18))
     if tonic_steadiness is not None:
-        parts.append((tonic_steadiness, 0.15))
+        parts.append((tonic_steadiness, 0.13))
+    if vibrato is not None:
+        parts.append((vibrato, 0.11))
     total = round(sum(v * w for v, w in parts) / sum(w for _, w in parts), 1) if parts else None
 
     grade, stars = _grade_of(total)
@@ -184,6 +215,7 @@ def score_recitation(report: dict) -> dict:
             "note_stability": _round1(stability),
             "phrase_resting": _round1(resting),
             "tonic_steadiness": _round1(tonic_steadiness),
+            "vibrato": _round1(vibrato),
         },
         "phrase_resting_counts": {"ok": n_rest_ok, "total": n_rest_total},
         "weakest_phrases": weakest,
@@ -192,6 +224,20 @@ def score_recitation(report: dict) -> dict:
         "tips": tips,
         "degree_accuracy": _degree_accuracy(phrases),
         "tonic_advisor": _tonic_advisor(report, notes, tonics),
+        "phrase_feedback": [
+            {
+                "index": i,
+                "start": ph.get("start"),
+                "end": ph.get("end"),
+                "maqam": ph.get("maqam"),
+                "in_maqam_pct": ph.get("in_maqam_pct"),
+                "resting_fa": (ph.get("resting_degree") or {}).get("absolute_fa"),
+                "score": round(0.7 * (ph.get("in_maqam_pct") or 0) +
+                               0.3 * (100.0 if (ph.get("resting_degree") or {}).get("degree_index") in (1, 5) else 30.0), 1),
+            }
+            for i, ph in enumerate(phrases, 1)
+            if ph.get("in_maqam_pct") is not None
+        ],
     }
 
 

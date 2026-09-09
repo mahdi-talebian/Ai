@@ -795,7 +795,7 @@ def dtw_align(seq_a: np.ndarray, seq_b: np.ndarray, band_radius: int = None):
     return D, path, normalized_cost
 
 
-def dtw_align_cost_matrix(cost_matrix: np.ndarray):
+def dtw_align_cost_matrix(cost_matrix: np.ndarray, dtw_band=None):
     """
     مشابه dtw_align، اما به‌جای محاسبه هزینه از روی فاصلهٔ اقلیدسی بین دو
     عدد اسکالر، یک ماتریس هزینهٔ از پیش‌محاسبه‌شده (n×m) می‌گیرد. این برای
@@ -808,10 +808,22 @@ def dtw_align_cost_matrix(cost_matrix: np.ndarray):
     """
     n, m = cost_matrix.shape
     INF = np.inf
+    # 🎯 نوار ساکو-چیبا (اختیاری): مسیر DTW محدود به |i/n − j/m| ≤ band
+    # — تطابق منطقی‌تر در فرازهای با تکرار و سریع‌تر.
+    band = None
+    try:
+        band = float(dtw_band) if dtw_band is not None else None
+    except Exception:
+        band = None
     D = np.full((n + 1, m + 1), INF)
     D[0, 0] = 0
     for i in range(1, n + 1):
-        for j in range(1, m + 1):
+        j_lo, j_hi = 1, m
+        if band is not None and n > 0 and m > 0:
+            center = (i - 1) * (m / n) + 1
+            j_lo = max(1, int(np.floor(center - band * m)))
+            j_hi = min(m, int(np.ceil(center + band * m)))
+        for j in range(j_lo, j_hi + 1):
             c = cost_matrix[i - 1, j - 1]
             D[i, j] = c + min(D[i - 1, j], D[i, j - 1], D[i - 1, j - 1])
 

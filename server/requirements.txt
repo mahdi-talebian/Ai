@@ -1,4 +1,5 @@
-fastapi
-uvicorn[standard]
-python-multipart
-websockets
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+websockets==17.1
+-r ../python/requirements.txt

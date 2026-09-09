@@ -60,6 +60,64 @@ from pitch_engine import extract_pitch_chunk, freq_to_note_info  # noqa: E402
 from practice_scorer import score_recitation  # noqa: E402
 
 app = FastAPI(title="تحلیلگر تلاوت قرآن - API")
+
+
+# ============================================================================
+# 🧹 استارتاپ: پاک‌سازی jobهای کهنه (>۲۴ ساعت) + بازیابی گزارش‌های done
+# ============================================================================
+
+JOB_TTL_SEC = 24 * 3600
+
+
+def _cleanup_old_jobs():
+    try:
+        now = time.time()
+        removed = 0
+        for d in JOBS_DIR.iterdir():
+            if not d.is_dir():
+                continue
+            try:
+                if now - d.stat().st_mtime > JOB_TTL_SEC:
+                    shutil.rmtree(d, ignore_errors=True)
+                    removed += 1
+            except Exception:
+                continue
+        if removed:
+            print(f"🧹 {removed} job کهنه پاک شد")
+    except Exception:
+        pass
+
+
+def _reload_done_jobs():
+    """♻️ ری‌استارت سرور، گزارش‌های تمام‌شده را از report.json برمی‌گرداند
+    (فایل‌ها از قبل روی دیسک‌اند — کاربر لینک/نتایجش را از دست نمی‌دهد)."""
+    restored = 0
+    try:
+        for d in JOBS_DIR.iterdir():
+            rp = d / "report.json"
+            if not d.is_dir() or not rp.exists():
+                continue
+            try:
+                with open(rp, encoding="utf-8") as f:
+                    report = json.load(f)
+                job = Job(d.name, "analyze")
+                job.status = "done"
+                job.progress = 1.0
+                job.result = report
+                JOBS[d.name] = job
+                restored += 1
+            except Exception:
+                continue
+        if restored:
+            print(f"♻️ {restored} گزارش قبلی بازیابی شد")
+    except Exception:
+        pass
+
+
+@app.on_event("startup")
+async def _on_startup():
+    _cleanup_old_jobs()
+    _reload_done_jobs()
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
@@ -239,6 +297,42 @@ async def start_analyze(job_id: str, denoise: bool = Form(False), top_k: int = F
             # 🎙 پروفایل صوتی کاربر (برای نمایش و مشاور تونیک)
             if voice_tonic_hz and voice_tonic_hz > 0:
                 report["voice_tonic_hz"] = float(voice_tonic_hz)
+
+            # 🎓 ری‌رنک گذری نامزدها با آمار سبک‌های موجود (سیرمحور)
+            try:
+                _styles = stl.list_profiles()
+                if _styles:
+                    prior = {}
+                    for _s in _styles:
+                        _p = stl.load_profile(_s["id"])
+                        for m, tr in (_p.get("transitions") or {}).items():
+                            bucket = prior.setdefault(m, {})
+                            for k, v in tr.items():
+                                bucket[k] = bucket.get(k, 0.0) + float(v)
+                    # نرمال‌سازی هر مقام به توزیع
+                    for m, b in prior.items():
+                        s = sum(b.values()) or 1.0
+                        prior[m] = {k: v / s for k, v in b.items()}
+                    # شواهد گذری کاربر از فرازهای خودش
+                    evidence = {}
+                    for ph in (report.get("phrase_breakdown") or []):
+                        _m = ph.get("maqam")
+                        if not _m:
+                            continue
+                        steps = []
+                        for so in (ph.get("notes_solfege") or []):
+                            try:
+                                steps.append(int(so["register_offset"]) * 7 + int(so["degree_index"]))
+                            except Exception:
+                                continue
+                        for aa, bb in zip(steps, steps[1:]):
+                            key = f"{aa}->{bb}"
+                            evidence[key] = evidence.get(key, 0.0) + 1.0
+                    if evidence:
+                        report["maqam_candidates"] = qma.rerank_candidates_with_transitions(
+                            report["maqam_candidates"], prior, weight=0.3)
+            except Exception:
+                traceback.print_exc()
 
             # 🎓 شباهت سبک با قاری انتخابی
             if style_id:
@@ -574,6 +668,11 @@ async def styles_delete(style_id: str):
 # دریافت وضعیت job (fallback در صورت عدم استفاده از وب‌سوکت)
 # ============================================================================
 
+@app.get("/api/health")
+async def health():
+    return {"ok": True, "jobs": len(JOBS), "styles": len(stl.list_profiles())}
+
+
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str):
     job = JOBS.get(job_id)
@@ -659,7 +758,10 @@ async def ws_live_pitch(websocket: WebSocket):
     sample_rate = 16000
     chunk_dur_sec = 4096 / sample_rate  # طول تقریبی هر قطعهٔ دریافتی از ScriptProcessor
 
-    # بافر رونده برای مقام لحظه‌ای (چند ثانیهٔ اخیر)
+    # 🎭 پایداری هینت: پیام فقط پس از انحرافِ تثبیت‌شده (بدون چشمک‌زدن)
+    hint_state = {"dir": None, "n": 0, "ok_announced": False}
+
+    # بافر رونده برای مقام لحظه‌ای (چون ثانیهٔ اخیر)
     LIVE_WINDOW_SEC = 6.0
     recent_freqs = []   # [(t, f0), ...]
 
@@ -799,11 +901,26 @@ async def ws_live_pitch(websocket: WebSocket):
                         t_fa, t_en, _ = qma.absolute_degree_name(nearest_c,
                                                 qma.MAQAMAT[c_maqam_name]["tonic_ladder_cents"])
                         if abs(off) <= 30:
-                            direction, hint = "ok", "درست است — نگه دار ✓"
+                            direction = "ok"
                         elif off < 0:
-                            direction, hint = "up", "کمی بالاتر ↑"
+                            direction = "up"
                         else:
-                            direction, hint = "down", "کمی پایین‌تر ↓"
+                            direction = "down"
+                        # هینت فقط وقتی جهت ≥۴ قطعه پایدار ماند (~۱٫۳ ثانیه)
+                        if direction == hint_state["dir"]:
+                            hint_state["n"] += 1
+                        else:
+                            hint_state["dir"] = direction
+                            hint_state["n"] = 1
+                            hint_state["ok_announced"] = False
+                        if direction == "ok":
+                            hint = "درست است — نگه دار ✓" if not hint_state["ok_announced"] else ""
+                            if hint:
+                                hint_state["ok_announced"] = True
+                        elif hint_state["n"] >= 4:
+                            hint = "کمی بالاتر ↑" if direction == "up" else "کمی پایین‌تر ↓"
+                        else:
+                            hint = ""
                         coach = {
                             "active": True,
                             "maqam": c_maqam_name,
