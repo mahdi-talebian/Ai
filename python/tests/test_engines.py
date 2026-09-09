@@ -45,9 +45,9 @@ seq1 = [n["cents"] for c in r1["continuations"] for n in c["notes"]]
 seq2 = [n["cents"] for c in r2["continuations"] for n in c["notes"]]
 check("قطعیت seed", seq1 == seq2)
 check("دو واریانت", len(r1["continuations"]) == 2)
-check("پرسش/پاسخ (قرار/غماز)",
+check("پرسش/پاسخ (قرار/غماز — غماز بیاتی روی نوا=۷۰۰)",
       r1["continuations"][0]["notes"][-1]["cents"] % 1200 == 0
-      and r1["continuations"][1]["notes"][-1]["cents"] % 1200 == 500)
+      and r1["continuations"][1]["notes"][-1]["cents"] % 1200 == 700)
 # ریتم کاربر: کشش‌های اول = الگوی IOI خود کاربر
 pat_notes = _notes([0, 150, 300, 500, 300], dur=0.4)
 pat_notes[1]["duration"] = 0.8
@@ -136,6 +136,74 @@ a = dtw_align_cost_matrix(cm)
 b = dtw_align_cost_matrix(cm, dtw_band=0.25)
 check("نوار ساکو-چیبا اجرا", a[1] and b[1] and len(a[1]) > 0 and len(b[1]) > 0)
 
+# ─────────────────────────────────────────────
+print("== جدول ۸ مقام بر پایهٔ دو ==")
+names = list(qma.MAQAMAT.keys())
+check("۸ مقام مرجع", len(names) == 8, f"{len(names)}")
+for n, info in qma.MAQAMAT.items():
+    assert info.get("degrees_fa") and len(info["degrees_fa"]) >= 7, n
+check("نام نت‌های فارسی برای همه", True)
+deg_saba = qma.maqam_degrees(qma.MAQAMAT["صبا (Saba)"]["scale_ascending"])
+check("صبا: بستهٔ نزولی (آخر ۱۱۰۰)", abs(deg_saba[-1] - 1100) < 1 and len(deg_saba) == 8, str(deg_saba))
+check("رست: سی نیم‌بمل ۱۰۵۰", qma.MAQAMAT["رست (Rast)"]["scale_ascending"][6] == 1050)
+check("بیاتی: میِ نیم‌بمل ۳۵۰", qma.MAQAMAT["بیاتی (Bayati)"]["scale_ascending"][2] == 350)
+check("سه‌گاه افزوده شد", "سه‌گاه (Segah)" in qma.MAQAMAT)
+check("صبا زمزم افزوده شد", "صبا زمزم (Saba Zamzam)" in qma.MAQAMAT)
+
+print("== سنجش کلی (setfit) مستقل از ترتیب ==")
+rng2 = np.random.RandomState(42)
+tonic_hz = 220.0
+rast_degs = [0, 200, 350, 500, 700, 900, 1050]
+perm = list(rng2.permutation(7))
+seq_c = [rast_degs[i] for i in perm] + [700 + 1200, 0, 900, 0]
+notes_r = [{"f0_hz": tonic_hz * 2 ** (c / 1200.0), "duration": 0.4} for c in seq_c]
+sf = qma.holistic_setfit(notes_r, "رست (Rast)", tonic_hz)
+check("پوشش کامل راست", sf and sf["coverage_pct"] >= 99, str(sf))
+noise_notes = notes_r + [{"f0_hz": tonic_hz * 2 ** (650 / 1200.0), "duration": 1.2}]
+sf2 = qma.holistic_setfit(noise_notes, "رست (Rast)", tonic_hz)
+check("نت بیرون‌گام پوشش را کم می‌کند", sf2["coverage_pct"] < sf["coverage_pct"] - 3,
+      f"{sf['coverage_pct']} → {sf2['coverage_pct']}")
+
+print("== تشخیص اجمالی ملودی پرشی (جملهٔ به‌هم‌ریخته) ==")
+def perm_melody(degs, seed):
+    r = np.random.RandomState(seed)
+    perm = list(r.permutation(len(degs)))
+    seq = [degs[i] for i in perm] + [0, degs[4] + 1200, 0, degs[-1], 0]
+    jit = r.normal(0, 10, len(seq))
+    return [{"f0_hz": tonic_hz * 2 ** ((c + j) / 1200.0), "duration": 0.4}
+            for c, j in zip(seq, jit)]
+def top_maqam(degs, seed):
+    notes = perm_melody(degs, seed)
+    hist = qma.build_qtet_histogram(notes)
+    cands = qma.detect_tonic_and_maqam(hist, top_k=3, finalis_cents=0.0, notes=notes)
+    return cands
+wins = 0
+for s in range(8):
+    if top_maqam(rast_degs, s)[0]["maqam"] == "رست (Rast)":
+        wins += 1
+check("راست پرشی → راست", wins >= 7, f"{wins}/8")
+c_r = top_maqam(rast_degs, 3)
+check("setfit در نامزد اول هست", c_r[0].get("setfit_pct") is not None)
+seg_degs = [0, 150, 350, 500, 700, 850, 1050]
+w_seg = sum(1 for s in range(8) if top_maqam(seg_degs, s)[0]["maqam"] == "سه‌گاه (Segah)")
+check("سه‌گاه پرشی → سه‌گاه", w_seg >= 6, f"{w_seg}/8")
+w_aj = sum(1 for s in range(8) if top_maqam([0, 200, 400, 500, 700, 900, 1100], s)[0]["maqam"] == "عجم (Ajam)")
+check("عجم پرشی → عجم", w_aj >= 6, f"{w_aj}/8")
+
+print("== ضدچشمک مقام زنده ==")
+st = {}
+check("اولین مقام فوراً", qma.update_with_hysteresis(st, "بیاتی (Bayati)", 30) == "بیاتی (Bayati)")
+for _ in range(3):
+    r = qma.update_with_hysteresis(st, "حجاز (Hijaz)", 5)
+check("چالشگر کم‌اختلاف عوضش نمی‌کند", r == "بیاتی (Bayati)", str(r))
+r = qma.update_with_hysteresis(st, "حجاز (Hijaz)", 5)
+check("پس از ۴ پنجرهٔ پیاپی عوض می‌شود", r == "حجاز (Hijaz)", str(r))
+st2 = {}
+qma.update_with_hysteresis(st2, "بیاتی (Bayati)", 30)
+r2 = qma.update_with_hysteresis(st2, "حجاز (Hijaz)", 45)
+check("اختلاف واضح فوری عوض می‌کند", r2 == "حجاز (Hijaz)", str(r2))
+
+# ─────────────────────────────────────────────
 print()
 if FAILED:
     print(f"✗ {len(FAILED)} تست شکست: {FAILED}")

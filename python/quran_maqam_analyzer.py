@@ -321,177 +321,105 @@ def build_degree_jins_map(maqam_name):
 
 
 MAQAMAT = {
+    # ═══ جدول مرجع ۸ مقام «بر پایهٔ دو» — منبع: کاربر، ملاک = نام نت‌ها ═══
+    # نیم‌بمل = −۵۰ سنت، بمل = −۱۰۰ سنت، دیز = +۱۰۰ سنت، بکار = طبیعی
     "رست (Rast)": {
         "cents": [0, 200, 350, 500, 700, 900, 1050, 1200],
         "scale_ascending": [0, 200, 350, 500, 700, 900, 1050, 1200],
         "scale_descending": [0, 200, 350, 500, 700, 900, 1050, 1200],
-        "tonic_ladder_cents": 0,   # تونیک روی درجهٔ «راست»
-        "jins_structure": "جنس رست (پرده+سوم نیم‌بمل) + جنس رست روی نوا",
+        "tonic_ladder_cents": 0,
+        "degrees_fa": ["دو", "ر", "می نیم‌بمل", "فا", "سل", "لا", "سی نیم‌بمل", "دو"],
+        "jins_structure": "جنس رست (پرده + سوم نیم‌بمل) + جنس رست روی نوا",
         "mood": "وقار، متانت، صلابت — مناسب قرائت‌های مجلسی و آغاز تلاوت",
         "family": "رست",
-
-        # MaqamWorld: «جنس راست روی تونیک، سپس جنس راست بالایی (یا نهاوند) روی درجهٔ ۵»
-        "jins_chain": [
-            {"jins": "rast", "on_degree": 1},
-            {"jins": "upper_rast", "on_degree": 5, "gap_cents": 200},
-        ],
-        "jins_alternatives": ["به‌جای جنس دوم، نهاوند روی درجهٔ ۵ نیز خوانده می‌شود (رست مصری)"],
-        },
+        "jins_chain": [{"jins": "rast", "on_degree": 1}, {"jins": "upper_rast", "on_degree": 5, "gap_cents": 200}],
+        "jins_alternatives": ["به‌جای جنس دوم، نهاوند روی درجهٔ ۵ نیز خوانده می‌شود (راست مصری)"],
+    },
     "بیاتی (Bayati)": {
-        "cents": [0, 150, 300, 500, 700, 800, 1000, 1200],
-        "scale_ascending": [0, 150, 300, 500, 700, 800, 1000, 1200],
-        "scale_descending": [0, 150, 300, 500, 700, 800, 1000, 1200],
-        "tonic_ladder_cents": 200,  # تونیک روی درجهٔ «دوگاه»
-        "jins_structure": "جنس بیاتی (پرده+پرده+پرده) + جنس نهاوند روی نوا",
-        "mood": "گرمی، صمیمیت، اندوه ملایم — رایج‌ترین مقام آغازین در تلاوت",
-        "family": "بیات",
-
-        # MaqamWorld: «جنس بیاتی روی تونیک، سپس نهاوند (یا راست) روی درجهٔ ۴»
-        "jins_chain": [
-            {"jins": "bayati", "on_degree": 1},
-            {"jins": "nahawand", "on_degree": 4},
-        ],
-        "jins_alternatives": ["به‌جای جنس دوم، راست روی درجهٔ ۴ نیز خوانده می‌شود (درجهٔ ۶ نیم‌بمل)"],
-        },
+        "cents": [0, 150, 350, 500, 700, 850, 1000, 1200],
+        "scale_ascending": [0, 150, 350, 500, 700, 850, 1000, 1200],
+        "scale_descending": [0, 150, 350, 500, 700, 850, 1000, 1200],
+        "tonic_ladder_cents": 0,
+        "degrees_fa": ["دو", "ر نیم‌بمل", "می نیم‌بمل", "فا", "سل", "لا نیم‌بمل", "سی بمل", "دو"],
+        "jins_structure": "جنس بیاتی (سه‌ربع + سه‌ربع) + چیرش بیاتی‌گونه روی نوا",
+        "mood": "درون‌مایهٔ آرام و سوزناک — پرکاربردترین مقام تلاوت",
+        "family": "بیاتی",
+        "jins_chain": [{"jins": "bayati", "on_degree": 1}, {"jins": "saba", "on_degree": 5, "gap_cents": 200}],
+        "jins_alternatives": [],
+    },
     "حجاز (Hijaz)": {
-        "cents": [0, 100, 400, 500, 700, 800, 1000, 1200],
-        "scale_ascending": [0, 100, 400, 500, 700, 800, 1000, 1200],
-        "scale_descending": [0, 100, 400, 500, 700, 800, 1000, 1200],
-        "tonic_ladder_cents": 200,  # تونیک روی درجهٔ «دوگاه»
-        "jins_structure": "جنس حجاز (نیم‌پرده+سه‌ودیما+نیم‌پرده) + جنس حجاز روی نوا",
-        "mood": "اشتیاق، بشارت، عشق و شور معنوی",
+        "cents": [0, 100, 400, 600, 700, 850, 1050, 1200],
+        "scale_ascending": [0, 100, 400, 600, 700, 850, 1050, 1200],
+        "scale_descending": [0, 100, 400, 600, 700, 850, 1050, 1200],
+        "tonic_ladder_cents": 0,
+        "degrees_fa": ["دو", "ر بمل", "می", "فا دیز", "سل", "لا نیم‌بمل", "سی نیم‌بمل", "دو"],
+        "jins_structure": "جنس حجاز (نیم‌پرده + یک‌ونیم‌پرده) با چهارم دیز + چیرش بیاتی‌گونه روی نوا",
+        "mood": "شور و حال احساسی — فرازهای تأثیرگذار و دعاها",
         "family": "حجاز",
-
-        # MaqamWorld: «جنس حجاز روی تونیک، سپس نهاوند (یا راست) روی درجهٔ ۴»
-        "jins_chain": [
-            {"jins": "hijaz", "on_degree": 1},
-            {"jins": "nahawand", "on_degree": 4},
-        ],
-        "jins_alternatives": ["به‌جای جنس دوم، راست روی درجهٔ ۴ نیز خوانده می‌شود (درجهٔ ۶ نیم‌بمل)"],
-        },
+        "jins_chain": [{"jins": "hijaz", "on_degree": 1}, {"jins": "bayati", "on_degree": 5, "gap_cents": 100}],
+        "jins_alternatives": [],
+    },
     "صبا (Saba)": {
-        # ساختار دقیق: جنس صبا (دوگاه — سیکاه — جهارکاه — حجاز: ۱۵۰+۱۵۰+۱۰۰)
-        # با «چهارم نیم‌بمل‌گرفته» (امضای اصلی صبا)، پرش سه‌ودیماً از حجاز به
-        # حسینی (هم‌پوشانی جنس حجاز روی درجهٔ ۳)، سپس جنس عجم روی درجهٔ ۶
-        # (مرجع: MaqamWorld / کنگره قاهره ۱۹۳۲)
-        "cents": [0, 150, 300, 400, 700, 800, 1000, 1200],
-        "scale_ascending": [0, 150, 300, 400, 700, 800, 1000, 1200],
-        "scale_descending": [0, 150, 300, 400, 700, 800, 1000, 1200],
-        "tonic_ladder_cents": 200,  # تونیک روی درجهٔ «دوگاه»
-        "jins_structure": "جنس صبا (پرده+پرده+نیم‌پرده، چهارم نیم‌بمل) + سه‌ودیما + جنس عجم روی درجهٔ ۶",
-        "mood": "حزن، اندوه عمیق، هشدار و بیداری",
+        # بستهٔ نزولی — اکتاوِ کامل ندارد: روی «دو بمل» (۱۱۰۰ سنت) می‌نشیند
+        "cents": [0, 150, 350, 500, 600, 900, 1000, 1100],
+        "scale_ascending": [0, 150, 350, 500, 600, 900, 1000, 1100],
+        "scale_descending": [0, 150, 350, 500, 600, 900, 1000, 1100],
+        "tonic_ladder_cents": 0,
+        "degrees_fa": ["دو", "ر نیم‌بمل", "می نیم‌بمل", "فا", "سل بمل", "لا", "سی بمل", "دو بمل"],
+        "jins_structure": "جنس صبا (سه‌ربع + سه‌ربع + نیم‌پرده) + چیرش روی درجهٔ ۶ (لا)",
+        "mood": "اندوه و سوز عمیق — عزاداری و تلاوت‌های تأثیرگذار",
         "family": "صبا",
-
-        # MaqamWorld: «جنس صبا روی تونیک، هم‌پوشان با جنس حجاز روی درجهٔ ۳،
-        # سپس جنس عجم (یا نکریز) روی درجهٔ ۶»
-        "jins_chain": [
-            {"jins": "saba", "on_degree": 1},
-            {"jins": "hijaz", "on_degree": 3, "overlap": True},
-            {"jins": "ajam", "on_degree": 6},
-        ],
-        "jins_alternatives": ["به‌جای جنس سوم، نکریز روی درجهٔ ۶ نیز خوانده می‌شود"],
-        },
+        "jins_chain": [{"jins": "saba", "on_degree": 1}, {"jins": "hijaz", "on_degree": 6, "gap_cents": 300}],
+        "jins_alternatives": [],
+    },
     "نهاوند (Nahawand)": {
-        "cents": [0, 200, 300, 500, 700, 800, 1100, 1200],
-        "scale_ascending": [0, 200, 300, 500, 700, 800, 1100, 1200],
-        # در نزول، درجهٔ ۷ (ماهور/سی) به کردانِ نیم‌بمل (عجم) نرم می‌شود — سیر مشهور نهاوند
+        "cents": [0, 200, 300, 500, 700, 800, 1000, 1200],
+        "scale_ascending": [0, 200, 300, 500, 700, 800, 1000, 1200],
         "scale_descending": [0, 200, 300, 500, 700, 800, 1000, 1200],
-        "tonic_ladder_cents": 0,   # تونیک روی درجهٔ «راست»
-        "jins_structure": "جنس نهاوند (پرده+نیم‌پرده+پرده) + جنس حجاز یا کرد روی نوا",
-        "descending_note": "در سرازیری، درجهٔ ۷ به عجم (نیم‌بمل) می‌رود",
-        "mood": "سرور معرفت، لطافت، امید به رحمت الهی",
+        "tonic_ladder_cents": 0,
+        "degrees_fa": ["دو", "ر", "می بمل", "فا", "سل", "لا بمل", "سی بمل", "دو"],
+        "jins_structure": "جنس نهاوند (پرده + نیم‌پرده) + جنس نهاوند روی نوا — هم‌خانوادهٔ مینور",
+        "mood": "حزن باشکوه — مرثیه و مناجات",
         "family": "نهاوند",
-
-        # MaqamWorld: «جنس نهاوند روی تونیک، سپس حجاز (یا کرد) روی درجهٔ ۵»
-        "jins_chain": [
-            {"jins": "nahawand", "on_degree": 1},
-            {"jins": "hijaz", "on_degree": 5, "gap_cents": 200},
-        ],
-        "jins_alternatives": ["به‌جای جنس دوم، کرد روی درجهٔ ۵ نیز خوانده می‌شود (نهاوند کُرد)"],
-        },
+        "jins_chain": [{"jins": "nahawand", "on_degree": 1}, {"jins": "nahawand", "on_degree": 5, "gap_cents": 200}],
+        "jins_alternatives": [],
+    },
     "عجم (Ajam)": {
         "cents": [0, 200, 400, 500, 700, 900, 1100, 1200],
         "scale_ascending": [0, 200, 400, 500, 700, 900, 1100, 1200],
         "scale_descending": [0, 200, 400, 500, 700, 900, 1100, 1200],
-        "tonic_ladder_cents": 1000,  # تونیک روی درجهٔ «عجم» (عجم عشیران)
-        "jins_structure": "جنس عجم (پرده+پرده+نیم‌پرده) + جنس عجم روی کردان — نزدیک به ماژور غربی",
-        "mood": "شادی و نشاط (نزدیک‌ترین مقام به ماژور غربی)",
+        "tonic_ladder_cents": 0,
+        "degrees_fa": ["دو", "ر", "می", "فا", "سل", "لا", "سی", "دو"],
+        "jins_structure": "جنس عجم (پرده + پرده + نیم‌پرده) + جنس عجم روی نوا — هم‌خانوادهٔ ماژور",
+        "mood": "شادابی و روشنی — مداحی‌های شادان",
         "family": "عجم",
-
-        # MaqamWorld: «جنس عجم روی تونیک، سپس عجم بالایی (یا نهاوند) روی درجهٔ ۵»
-        "jins_chain": [
-            {"jins": "ajam", "on_degree": 1},
-            {"jins": "upper_ajam", "on_degree": 5, "gap_cents": 200},
-        ],
-        "jins_alternatives": ["به‌جای جنس دوم، نهاوند روی درجهٔ ۵ نیز خوانده می‌شود"],
-        },
-    "کرد (Kurd)": {
-        "cents": [0, 100, 300, 500, 700, 800, 1000, 1200],
-        "scale_ascending": [0, 100, 300, 500, 700, 800, 1000, 1200],
-        "scale_descending": [0, 100, 300, 500, 700, 800, 1000, 1200],
-        "tonic_ladder_cents": 200,  # تونیک روی درجهٔ «دوگاه»
-        "jins_structure": "جنس کرد (نیم‌پرده+پرده+پرده، شبیه فریژین) + جنس کرد روی نوا",
-        "mood": "حزن عمیق، شبیه فریژین غربی",
-        "family": "کرد",
-
-        # MaqamWorld: «جنس کرد روی تونیک، سپس نهاوند روی درجهٔ ۴»
-        "jins_chain": [
-            {"jins": "kurd", "on_degree": 1},
-            {"jins": "nahawand", "on_degree": 4},
-        ],
-        },
-    "جهارکاه (Jiharkah)": {
-        "cents": [0, 200, 400, 500, 700, 900, 1050, 1200],
-        "scale_ascending": [0, 200, 400, 500, 700, 900, 1050, 1200],
-        "scale_descending": [0, 200, 400, 500, 700, 900, 1050, 1200],
-        "tonic_ladder_cents": 500,  # تونیک روی درجهٔ «جهارکاه»
-        "jins_structure": "جنس جهارکاه (پرده+پرده+نیم‌پرده، هفتم نیم‌بمل) — از فصیلهٔ رست",
-        "mood": "تأثر، حالت خاص و برجسته",
-        "family": "رست",
-
-        # MaqamWorld: «جنس جهارکاه روی تونیک، سپس راست بالایی روی درجهٔ ۵
-        # (تونیک جنس دوم روی درجهٔ ۸ — همین رازِ درجهٔ ۷ نیم‌بمل جهارکاه است)»
-        "jins_chain": [
-            {"jins": "jiharkah", "on_degree": 1},
-            {"jins": "upper_rast", "on_degree": 5, "gap_cents": 200},
-        ],
-        },
-    "سیکاه (Sikah)": {
-        # گام دقیق مقام سیکاه طبق زنجیرهٔ اجناس (MaqamWorld): جنس ثلاثی
-        # سیکاه (۱۵۰+۲۰۰) + راست بالایی روی درجهٔ ۳ + راست روی درجهٔ ۶ —
-        # یعنی درجهٔ ۵ = ۷۰۰ سنت؛ نسخهٔ ۶۵۰ (سی‌بمل) تعلق به خاندان حزام/عراق دارد.
-        "cents": [0, 150, 350, 550, 700, 850, 1050, 1200],
-        "scale_ascending": [0, 150, 350, 550, 700, 850, 1050, 1200],
-        "scale_descending": [0, 150, 350, 550, 700, 850, 1050, 1200],
-        "tonic_ladder_cents": 350,  # تونیک روی درجهٔ «سیکاه» (می نیم‌بمل)
-        "jins_structure": "جنس سیکاه (پرده+پردهٔ کبیر) + جنس بوسلیک/کرد روی حسینی — سیر نزولی به ناحیهٔ رست",
-        "mood": "هیجانات نفسانی، حالت خاص مقامات سیکاه",
-        "family": "سیکاه",
-
-        # MaqamWorld: «جنس سیکاه (ثلاثی) روی تونیک، سپس راست بالایی روی درجهٔ ۳
-        # (تونیکش روی درجهٔ ۶)، سپس جنس راست روی درجهٔ ۶»
-        "jins_chain": [
-            {"jins": "sikah", "on_degree": 1},
-            {"jins": "upper_rast", "on_degree": 3},
-            {"jins": "rast", "on_degree": 6},
-        ],
-        "jins_alternatives": ["نسخهٔ رایج در خاندان حزام/عراق: درجهٔ ۵ = ۶۵۰ (سی‌بمل، اثر جنس عجم/اوج)"],
+        "jins_chain": [{"jins": "ajam", "on_degree": 1}, {"jins": "upper_ajam", "on_degree": 5, "gap_cents": 200}],
+        "jins_alternatives": [],
     },
-    "نکریز (Nikriz)": {
-        "cents": [0, 200, 300, 600, 700, 900, 1000, 1200],
-        "scale_ascending": [0, 200, 300, 600, 700, 900, 1000, 1200],
-        "scale_descending": [0, 200, 300, 600, 700, 900, 1000, 1200],
-        "tonic_ladder_cents": 0,   # تونیک روی درجهٔ «راست»
-        "jins_structure": "جنس نکریز (پرده+نیم‌پرده+سه‌ودیما) + جنس کرد روی نوا",
-        "mood": "شکوه، فخامت، حالت حماسی",
-        "family": "نکریز",
-
-        # MaqamWorld: «جنس نکریز روی تونیک، سپس نهاوند روی درجهٔ ۵»
-        "jins_chain": [
-            {"jins": "nikriz", "on_degree": 1},
-            {"jins": "nahawand", "on_degree": 5, "gap_cents": 100},
-        ],
-        },
+    "سه‌گاه (Segah)": {
+        "cents": [0, 150, 350, 500, 700, 850, 1050, 1200],
+        "scale_ascending": [0, 150, 350, 500, 700, 850, 1050, 1200],
+        "scale_descending": [0, 150, 350, 500, 700, 850, 1050, 1200],
+        "tonic_ladder_cents": 0,
+        "degrees_fa": ["دو", "ر نیم‌بمل", "می نیم‌بمل", "فا", "سل", "لا نیم‌بمل", "سی نیم‌بمل", "دو"],
+        "jins_structure": "جنس سه‌گاه/سیکاه (سه‌ربع + پرده) + جنس رست روی درجهٔ ۴",
+        "mood": "تأمل و سوز درونی — از ارکان قرائت ایرانی و عثمانی",
+        "family": "سیکاه",
+        "jins_chain": [{"jins": "sikah", "on_degree": 1}, {"jins": "rast", "on_degree": 4, "gap_cents": 150}],
+        "jins_alternatives": [],
+    },
+    "صبا زمزم (Saba Zamzam)": {
+        "cents": [0, 100, 400, 500, 600, 900, 1000, 1200],
+        "scale_ascending": [0, 100, 400, 500, 600, 900, 1000, 1200],
+        "scale_descending": [0, 100, 400, 500, 600, 900, 1000, 1200],
+        "tonic_ladder_cents": 0,
+        "degrees_fa": ["دو", "ر بمل", "می بکار", "فا", "سل بمل", "لا", "سی بمل", "دو"],
+        "jins_structure": "شاخهٔ زمزم از خانوادهٔ صبا: جنس حجاز + سل بمل (۰٫۱۰۰٫۴۰۰٫۵۰۰)",
+        "mood": "حزن خاص حرم — شاخهٔ زمزم از صبا",
+        "family": "صبا",
+        "jins_chain": [{"jins": "hijaz", "on_degree": 1}, {"jins": "saba", "on_degree": 5, "gap_cents": 100}],
+        "jins_alternatives": [],
+    },
 }
 
 
@@ -587,6 +515,15 @@ def absolute_degree_name(cents_from_tonic: float, tonic_ladder_cents: int):
     return fa, en, register
 
 
+def maqam_degrees(maqam_cents):
+    """درجات گام بدون تکرار اکتاو. اگر آرایش با ۱۲۰۰ سنت تمام نشود
+    (مثل صبا که روی «دو بمل» = ۱۱۰۰ سنت می‌نشیند)، همهٔ درجه‌ها معتبرند."""
+    cs = list(maqam_cents)
+    if cs and abs(cs[-1] - 1200.0) < 1:
+        return cs[:-1]
+    return cs
+
+
 def refine_tonic_hz(notes, tonic_bin: int, maqam_name: str):
     """
     تونیک خامِ تشخیص‌داده‌شده (روی شبکهٔ ۵۰ سنتی) را با کمینه‌سازی خطای
@@ -594,7 +531,7 @@ def refine_tonic_hz(notes, tonic_bin: int, maqam_name: str):
     پالایش می‌کند. خروجی: (tonic_hz دقیق, دلتای سنت اعمال‌شده).
     """
     scale = MAQAMAT[maqam_name]
-    degree_sets = set(scale["scale_ascending"][:-1]) | set(scale["scale_descending"][:-1])
+    degree_sets = set(maqam_degrees(scale["scale_ascending"])) | set(maqam_degrees(scale["scale_descending"]))
     degrees = np.array(sorted(degree_sets), dtype=float)  # سنت از تونیک
 
     obs = []  # (سنت از A440, وزن=مدت)
@@ -943,8 +880,9 @@ def maqam_template_histogram(maqam_cents, sigma_cents=TEMPLATE_SIGMA_CENTS, n_bi
     template = np.zeros(n_bins)
     bin_width = 1200.0 / n_bins
     bins_cents = np.arange(n_bins) * bin_width
-    degree_weights = [1.4, 0.8, 1.0, 0.9, 1.3, 0.8, 0.9, 1.0]  # تونیک و غماز وزن بیشتر
-    for degree_cents, w in zip(maqam_cents[:-1], degree_weights):  # درجه ۸ = تکرار اکتاو، حذف
+    degrees_ = maqam_degrees(maqam_cents)
+    degree_weights = [1.4, 0.8, 1.0, 0.9, 1.3, 0.8, 0.9, 1.0][:len(degrees_)]  # تونیک و غماز وزن بیشتر
+    for degree_cents, w in zip(degrees_, degree_weights):
         diff = np.minimum(np.abs(bins_cents - degree_cents), 1200.0 - np.abs(bins_cents - degree_cents))
         template += w * np.exp(-0.5 * (diff / sigma_cents) ** 2)
     template /= template.sum()
@@ -1057,7 +995,143 @@ def rerank_candidates_with_transitions(candidates, transition_prior,
         return candidates
 
 
-def detect_tonic_and_maqam(hist, top_k=3, finalis_cents=None):
+def _folded_note_cents(notes, tonic_hz):
+    """نت‌ها تاًپ‌شده روی اکتاو نسبت به تونیک — [(سنت ۰..۱۲۰۰, وزن=کشش)]."""
+    out = []
+    for n in notes or []:
+        f = n.get("f0_hz") or 0
+        if not f or f <= 0 or not tonic_hz or tonic_hz <= 0:
+            continue
+        w = float(n.get("duration") or n.get("dur_sec") or 0.25)
+        out.append(((1200.0 * np.log2(f / tonic_hz)) % 1200.0, w))
+    return out
+
+
+def holistic_setfit(notes, maqam_name, tonic_hz, tol_cents=40.0):
+    """🎯 سنجش کلی/اجمالی گام: سهمِ جرمِ نت‌ها (وزن = کشش) که روی درجات مقام
+    نشسته — کاملاً مستقل از ترتیب. ملودیِ پرشی/خارج از ردیفِ صعودی هم درست
+    سنجیده می‌شود چون فقط «مجموعهٔ نت‌ها» ملاک است، نه توالی‌شان."""
+    info = MAQAMAT.get(maqam_name)
+    if not info or not tonic_hz or tonic_hz <= 0:
+        return None
+    folded = _folded_note_cents(notes, tonic_hz)
+    if not folded:
+        return None
+    degrees = maqam_degrees(info["scale_ascending"])
+    total = sum(w for _, w in folded)
+    if total <= 0:
+        return None
+    in_mass = 0.0
+    per_deg = [0.0] * len(degrees)
+    for pc, w in folded:
+        diffs = [min(abs(pc - d), 1200.0 - abs(pc - d)) for d in degrees]
+        i = int(np.argmin(diffs))
+        if diffs[i] <= tol_cents:
+            in_mass += w
+            per_deg[i] += w
+    return {
+        "coverage_pct": round(100.0 * in_mass / total, 1),
+        "degree_mass_pct": [round(100.0 * m / total, 1) for m in per_deg],
+        "n_notes": len(folded),
+    }
+
+
+def _signature_mass(folded, signature_cents, tol_cents=40.0):
+    total = sum(w for _, w in folded) or 1.0
+    m = sum(w for pc, w in folded
+            if any(min(abs(pc - d), 1200.0 - abs(pc - d)) <= tol_cents for d in signature_cents))
+    return m / total
+
+
+def holistic_signature_adjust(candidates, notes, weight=0.06, min_gap_cents=40.0, top_n=4, max_adj=0.06):
+    """🧭 تفکیک جفت‌های خلط‌شدنی با «درجه‌های ممیز»:
+    برای هر جفت از برترین نامزدها، درجه‌هایی که فقط در گامِ یکی هستند پیدا
+    می‌شود (مثل درجهٔ ۲ و ۶ میان راست/سه‌گاه، یا درجهٔ ۳ و ۷ میان راست/عجم)
+    و جرم واقعی نت‌ها دقیقاً روی همان درجه‌ها سنجیده می‌شود. اختلاف، پاداشی
+    ملایم به امتیاز بهاتاچاریا می‌افزاید — درجا روی score اعمال می‌شود تا
+    همهٔ مراحل بعدی (اطمینان، ری‌رنک گذری، UI) یک منطق ببینند.
+    همچنین setfit_pct (انطباق کلی گام) روی هر نامزد می‌نشیند."""
+    if len(candidates) < 2 or not notes:
+        return candidates
+    cands = candidates[:top_n]
+    for c in cands:
+        sf = holistic_setfit(notes, c["maqam"], c["tonic_freq_hz"])
+        c["setfit_pct"] = sf["coverage_pct"] if sf else None
+        c["bt_score"] = c["score"]
+    folded_by = {id(c): _folded_note_cents(notes, c["tonic_freq_hz"]) for c in cands}
+    degs_by = {id(c): maqam_degrees(MAQAMAT[c["maqam"]]["scale_ascending"]) for c in cands if c["maqam"] in MAQAMAT}
+
+    def _d(pc, d):
+        return min(abs(pc - d), 1200.0 - abs(pc - d))
+
+    for i in range(len(cands)):
+        for j in range(i + 1, len(cands)):
+            a, b = cands[i], cands[j]
+            if a["maqam"] not in MAQAMAT or b["maqam"] not in MAQAMAT:
+                continue
+            da, db = degs_by[id(a)], degs_by[id(b)]
+            sig_a = [d for d in da if min((_d(d, e) for e in db), default=999) >= min_gap_cents]
+            sig_b = [d for d in db if min((_d(d, e) for e in da), default=999) >= min_gap_cents]
+            if sig_a and sig_b:
+                diff = _signature_mass(folded_by[id(a)], sig_a) - _signature_mass(folded_by[id(b)], sig_b)
+            else:
+                sa, sb = a.get("setfit_pct"), b.get("setfit_pct")
+                if sa is None or sb is None:
+                    continue
+                diff = (sa - sb) / 100.0 * 0.5
+            d_adj = max(-max_adj, min(max_adj, weight * diff))
+            a["score"] += d_adj
+            b["score"] -= d_adj
+    # متن توضیح ممیز برای برندهٔ نهایی نسبت به نایب‌قهرمان
+    cands = [c for c in cands if c["maqam"] in MAQAMAT]
+    cands.sort(key=lambda r: r["score"], reverse=True)
+    if len(cands) >= 2:
+        win, sec = cands[0], cands[1]
+        dw, ds = degs_by.get(id(win)), degs_by.get(id(sec))
+        fa_names = MAQAMAT[win["maqam"]].get("degrees_fa") or []
+        if dw and ds:
+            sig = [d for d in dw if min((_d(d, e) for e in ds), default=999) >= min_gap_cents]
+            if sig:
+                names = []
+                for d in sig[:3]:
+                    idx = dw.index(d)
+                    names.append(fa_names[idx] if idx < len(fa_names) else f"{int(d)}¢")
+                sec_short = sec["maqam"].split(" (")[0]
+                win["signature_fa"] = "درجهٔ ممیز: " + "، ".join(names) + f" — جدا از {sec_short}"
+    return candidates
+
+
+def update_with_hysteresis(state, maqam_name, margin_pct,
+                           streak_needed=4, fast_margin_pct=25.0):
+    """🧷 ضدچشمک برای مقامِ نمایشی زنده: نمایش فقط وقتی عوض می‌شود که نامزد
+    جدید چند پنجرهٔ پیاپی برتر بماند یا اختلافش با رقیب واضح باشد.
+    state = dict سایت‌خواه با کلیدهای maqam/challenger/n."""
+    if not maqam_name:
+        return state.get("maqam")
+    cur = state.get("maqam")
+    if cur is None or maqam_name == cur:
+        state["maqam"] = maqam_name
+        state["challenger"] = None
+        state["n"] = 0
+        return maqam_name
+    if maqam_name == state.get("challenger"):
+        state["n"] = state.get("n", 0) + 1
+    else:
+        state["challenger"] = maqam_name
+        state["n"] = 1
+    try:
+        margin = float(margin_pct or 0)
+    except Exception:
+        margin = 0.0
+    if state["n"] >= streak_needed or margin >= fast_margin_pct:
+        state["maqam"] = maqam_name
+        state["challenger"] = None
+        state["n"] = 0
+        return maqam_name
+    return cur
+
+
+def detect_tonic_and_maqam(hist, top_k=3, finalis_cents=None, notes=None):
     """
     با ضریب بهاتاچاریای دایره‌ای بین نمایهٔ مشاهده‌شده (hist) و الگوی هر
     مقام در تمام جابه‌جایی‌های ممکن تونیک، بهترین ترکیب‌های (تونیک, مقام)
@@ -1126,6 +1200,15 @@ def detect_tonic_and_maqam(hist, top_k=3, finalis_cents=None):
         })
 
     results.sort(key=lambda r: r["score"], reverse=True)
+
+    # 🎯 سنجش کلی + تفکیک درجهٔ ممیز (وقتی نت‌ها در دسترس باشند)
+    results.sort(key=lambda r: r["score"], reverse=True)
+    if notes:
+        try:
+            holistic_signature_adjust(results, notes)
+            results.sort(key=lambda r: r["score"], reverse=True)
+        except Exception:
+            pass
 
     # حذف نتایج تکراری با تونیک خیلی نزدیک برای همان مقام (نگه‌داشتن بهترین)
     seen_maqam = set()
@@ -1236,7 +1319,7 @@ def build_maqam_timeline(notes, total_duration, window_sec=MAQAM_TIMELINE_WINDOW
         if len(window_notes) >= MAQAM_TIMELINE_MIN_NOTES_PER_WINDOW:
             hist = build_qtet_histogram(window_notes)
             finalis = freq_to_cents(window_notes[-1]["f0_hz"]) % 1200.0 if window_notes[-1]["f0_hz"] > 0 else None
-            candidates = detect_tonic_and_maqam(hist, top_k=1, finalis_cents=finalis)
+            candidates = detect_tonic_and_maqam(hist, top_k=1, finalis_cents=finalis, notes=window_notes)
             if candidates:
                 best = candidates[0]
                 entry["top_maqam"] = best["maqam"]
@@ -1353,7 +1436,7 @@ def build_phrase_breakdown(times, freqs, notes, pauses, top_k_per_phrase=1, phra
 
         hist = build_qtet_histogram(phrase_notes)
         finalis = freq_to_cents(phrase_notes[-1]["f0_hz"]) % 1200.0 if phrase_notes[-1]["f0_hz"] > 0 else None
-        candidates = detect_tonic_and_maqam(hist, top_k=top_k_per_phrase, finalis_cents=finalis)
+        candidates = detect_tonic_and_maqam(hist, top_k=top_k_per_phrase, finalis_cents=finalis, notes=phrase_notes)
         best = candidates[0] if candidates else None
 
         solfege_notes = []
@@ -1665,7 +1748,7 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
             tail_freqs = [n["f0_hz"] for n in tail if n["f0_hz"] > 0]
             if tail_freqs:
                 finalis_cents = freq_to_cents(tail_freqs[-1]) % 1200.0
-        maqam_candidates = detect_tonic_and_maqam(hist, top_k=top_k, finalis_cents=finalis_cents)
+        maqam_candidates = detect_tonic_and_maqam(hist, top_k=top_k, finalis_cents=finalis_cents, notes=notes)
 
         # --- پالایش دقیق تونیک برای همهٔ نامزدها (زیر شبکهٔ ۵۰ سنتی) ---
         # رجیستر تونیک با «قرار» (نت فرود تلاوت) تنظیم می‌شود، نه مرکز صدا —

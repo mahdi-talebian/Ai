@@ -220,6 +220,7 @@
         <button id="qTabPractice">🏆 تمرین و امتیاز</button>
         <button id="qTabCompare">🔍 مقایسه دو فراز</button>
         <button id="qTabLiveMic">🎙️ پیانوی زنده (میکروفون)</button>
+        <button id="qTabSolfege">🎓 آموزش سولفژ</button>
       </div>
 
       <!-- ================= پنل ۱: آپلود و تحلیل کامل ================= -->
@@ -460,6 +461,32 @@
         </div>
       </div>
 
+      <div id="qPanelSolfege" class="panel">
+        <p class="hint-text">🎓 آموزش سولفژ مقامی: سیستم جمله را <b>با انیمیشن بالا-پایین</b> می‌خواند
+          (نقطهٔ متحرک، پرش‌های ملودی را نشان می‌دهد). بعد با میکروفون خودتان همان جمله را بخوانید —
+          منحنی صدای شما روی نت‌های هدف رسم و نت‌به‌نت امتیاز می‌گیرید. تونیک پیش‌فرض از پروفایل صوتی شما می‌آید.</p>
+        <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin-bottom:14px;">
+          <div><div class="hint-text" style="margin-bottom:4px;">مقام</div>
+            <select id="solMaqam" style="padding:8px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); color:#e8e9ff; font-family:inherit;"></select></div>
+          <div><div class="hint-text" style="margin-bottom:4px;">نوع تمرین</div>
+            <select id="solKind" style="padding:8px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); color:#e8e9ff; font-family:inherit;">
+              <option value="scale">گام رونده (بالا/پایین)</option>
+              <option value="jumps">جملهٔ پرشی تصادفی</option>
+              <option value="jins">جنس‌به‌جنس (عقد به عقد)</option>
+            </select></div>
+          <div><div class="hint-text" style="margin-bottom:4px;">تونیک (Hz)</div>
+            <input type="number" id="solTonic" min="80" max="420" step="0.1" value="220" style="width:90px; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); color:#e8e9ff; font-family:inherit;"></div>
+          <div><div class="hint-text" style="margin-bottom:4px;">سرعت: <span id="solTempoVal">۸۰</span> ضرب</div>
+            <input type="range" id="solTempo" min="40" max="160" value="80" style="width:130px;"></div>
+          <button id="solPlay" class="primary-btn" style="padding:9px 18px;">▶ پخش نمونه</button>
+          <button id="solStop" class="secondary-btn" style="padding:9px 18px;">⏹ توقف</button>
+          <button id="solMic" class="primary-btn" style="padding:9px 18px;">🎤 شروع تمرین (بخوان!)</button>
+        </div>
+        <div id="solSyllable" style="text-align:center; font-size:2.1rem; font-weight:900; min-height:2.8rem; color:#23e0c2; text-shadow:0 0 18px rgba(35,224,194,.4);">—</div>
+        <canvas id="solCanvas" width="900" height="300" style="width:100%; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.08); border-radius:12px; direction:ltr;"></canvas>
+        <div id="solStatus" class="hint-text" style="margin-top:8px;">اول «▶ پخش نمونه» را گوش کن، بعد «🎤 شروع تمرین» — جمله پخش می‌شود و تو همزمان می‌خوانی.</div>
+        <div id="solScore"></div>
+      </div>
       <div id="qPanelCompare" class="panel">
         <div class="compare-grid">
           <div class="compare-col">
@@ -644,18 +671,21 @@ const qTabUpload = document.getElementById('qTabUpload');
 const qTabPractice = document.getElementById('qTabPractice');
 const qTabCompare = document.getElementById('qTabCompare');
 const qTabLiveMic = document.getElementById('qTabLiveMic');
+const qTabSolfege = document.getElementById('qTabSolfege');
 const qPanelPractice = document.getElementById('qPanelPractice');
 const qPanelUpload = document.getElementById('qPanelUpload');
 const qPanelCompare = document.getElementById('qPanelCompare');
 const qPanelLiveMic = document.getElementById('qPanelLiveMic');
+const qPanelSolfege = document.getElementById('qPanelSolfege');
 
 function switchQuranTab(which) {
-  [qTabUpload, qTabPractice, qTabCompare, qTabLiveMic].forEach(b => b.classList.remove('active'));
-  [qPanelUpload, qPanelPractice, qPanelCompare, qPanelLiveMic].forEach(p => p.classList.remove('active'));
+  [qTabUpload, qTabPractice, qTabCompare, qTabLiveMic, qTabSolfege].forEach(b => b.classList.remove('active'));
+  [qPanelUpload, qPanelPractice, qPanelCompare, qPanelLiveMic, qPanelSolfege].forEach(p => p.classList.remove('active'));
   if (which === 'upload') { qTabUpload.classList.add('active'); qPanelUpload.classList.add('active'); }
   if (which === 'practice') { qTabPractice.classList.add('active'); qPanelPractice.classList.add('active'); }
   if (which === 'compare') { qTabCompare.classList.add('active'); qPanelCompare.classList.add('active'); }
   if (which === 'mic') { qTabLiveMic.classList.add('active'); qPanelLiveMic.classList.add('active'); }
+  if (which === 'solfege') { qTabSolfege.classList.add('active'); qPanelSolfege.classList.add('active'); solResizeCanvas(); }
 }
 
 // ==========================================================================
@@ -812,6 +842,7 @@ qTabUpload.onclick = () => switchQuranTab('upload');
 qTabPractice.onclick = () => switchQuranTab('practice');
 qTabCompare.onclick = () => switchQuranTab('compare');
 qTabLiveMic.onclick = () => switchQuranTab('mic');
+qTabSolfege.onclick = () => switchQuranTab('solfege');
 
 // ==========================================================================
 // پنل ۱: آپلود و تحلیل کامل
@@ -1037,9 +1068,10 @@ function renderQuranReport(report) {
   maqamList.innerHTML = report.maqam_candidates.map((c, i) => `
     <div class="maqam-card">
       <span class="${i === 0 ? 'rank1' : ''}">${i + 1}. ${c.maqam}</span>
-      — اطمینان نسبی: ${c.confidence_pct}%
+      — اطمینان نسبی: ${c.confidence_pct}%${c.setfit_pct != null ? ` — انطباق کلی گام: <b style="color:#23e0c2;">${faNum(c.setfit_pct)}٪</b>` : ''}
       <div class="maqam-conf-bar"><div class="maqam-conf-fill" style="width:${c.confidence_pct}%"></div></div>
       <div style="font-size:0.82rem;color:#9294bd;margin-top:6px;">تونیک: ${c.tonic_freq_hz} Hz — ${c.mood}</div>
+      ${i === 0 && c.signature_fa ? `<div style="font-size:0.8rem;color:#ffb703;margin-top:4px;">🧭 ${c.signature_fa}</div>` : ''}
     </div>`).join('');
 
   // --- زنجیرهٔ اجناس مقام تشخیصی (نظریهٔ عقد و جنس) + جدول درجات ---
@@ -1512,8 +1544,7 @@ function describeMicError(err) {
 // 🏆 تب تمرین و امتیاز
 // ==========================================================================
 const MAQAM_OPTIONS = ["رست (Rast)", "بیاتی (Bayati)", "حجاز (Hijaz)", "صبا (Saba)",
-  "نهاوند (Nahawand)", "عجم (Ajam)", "کرد (Kurd)", "جهارکاه (Jiharkah)",
-  "سیکاه (Sikah)", "نکریز (Nikriz)"];
+  "نهاوند (Nahawand)", "عجم (Ajam)", "سه‌گاه (Segah)", "صبا زمزم (Saba Zamzam)"];
 const prMaqamSel = document.getElementById('prMaqam');
 MAQAM_OPTIONS.forEach(m => {
   const o = document.createElement('option'); o.value = m; o.textContent = m;
@@ -2550,6 +2581,351 @@ function stopLiveMic() {
   liveMicStatus.textContent = 'برای شروع کلیک کن';
   highlightPianoKey(null);
 }
+
+// ═══════════════ 🎓 تب آموزش سولفژ ═══════════════
+const SOLFEGE = {
+  maqamat: {}, seq: [], nodes: [], raf: null, ctx: null,
+  micStream: null, ws: null, processor: null, micSource: null,
+  recording: false, userPts: [], itemTimes: [], playGain: 0.14,
+};
+
+function solResizeCanvas() {
+  const cv = document.getElementById('solCanvas');
+  if (cv) { cv.width = Math.max(600, Math.min(1200, cv.clientWidth || 900)); solDraw(); }
+}
+window.addEventListener('resize', () => { if (document.getElementById('qPanelSolfege')?.classList.contains('active')) solResizeCanvas(); });
+
+async function solLoadMaqamat() {
+  const sel = document.getElementById('solMaqam');
+  try {
+    const r = await fetch('/api/maqamat');
+    const d = await r.json();
+    if (!Array.isArray(d) || !d.length) throw new Error('خالی');
+    sel.innerHTML = '';
+    d.forEach(m => {
+      SOLFEGE.maqamat[m.name] = m;
+      const o = document.createElement('option');
+      o.value = m.name; o.textContent = m.name;
+      sel.appendChild(o);
+    });
+  } catch (e) {
+    document.getElementById('solStatus').textContent = '⚠️ جدول مقام‌ها از سرور نیامد — سرور را بررسی کن.';
+  }
+  // تونیک پیش‌فرض: پروفایل صوتی فعال، وگرنه ۲۲۰
+  const vp = vpActive();
+  const tonic = (vp && vp.tonic_hz) ? vp.tonic_hz : 220;
+  document.getElementById('solTonic').value = Math.round(tonic * 10) / 10;
+}
+solLoadMaqamat();
+
+function solBuildSeq() {
+  const m = SOLFEGE.maqamat[document.getElementById('solMaqam').value];
+  if (!m) return [];
+  const sc = m.scale_cents, fa = m.degrees_fa;
+  const kind = document.getElementById('solKind').value;
+  const tempo = parseInt(document.getElementById('solTempo').value, 10) || 80;
+  const beat = 60 / tempo;
+  let idxs = [];
+  if (kind === 'scale') {
+    const asc = sc.map((_, i) => i);
+    idxs = asc.concat(asc.slice(0, -1).reverse());
+  } else if (kind === 'jins') {
+    let gi = (m.ghammaz_cents != null) ? sc.indexOf(m.ghammaz_cents) : -1;
+    if (gi <= 0) gi = Math.min(4, sc.length - 2);
+    const lower = []; for (let i = 0; i <= gi; i++) lower.push(i);
+    const upper = []; for (let i = gi; i < sc.length; i++) upper.push(i);
+    idxs = lower.concat(lower.slice(0, -1).reverse(), upper, [0]);
+  } else {
+    const pool = [];
+    sc.forEach((c, i) => {
+      const w = (c === 0 || c >= 1100) ? 3 : (m.ghammaz_cents === c ? 3 : 1);
+      for (let k = 0; k < w; k++) pool.push(i);
+    });
+    for (let k = 0; k < 12; k++) idxs.push(pool[Math.floor(Math.random() * pool.length)]);
+    idxs.push(0);
+  }
+  return idxs.map((ix, k) => ({
+    cents: sc[ix],
+    fa: fa[ix] || String(Math.round(sc[ix])),
+    dur: (k === 0 || k === idxs.length - 1) ? beat * 1.5 : beat,
+  }));
+}
+
+function solToneAt(t, f, dur, gain) {
+  const ctx = SOLFEGE.ctx;
+  const o = ctx.createOscillator();
+  o.type = 'triangle';
+  o.frequency.value = f;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(gain, t + 0.03);
+  g.gain.setValueAtTime(gain, t + Math.max(0.04, dur - 0.08));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.05);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t); o.stop(t + dur + 0.1);
+  SOLFEGE.nodes.push(o);
+}
+
+function solSchedule(playback) {
+  const tonic = parseFloat(document.getElementById('solTonic').value) || 220;
+  const ctx = SOLFEGE.ctx;
+  const lead = 0.75;
+  const t0 = ctx.currentTime + lead;
+  let t = t0;
+  SOLFEGE.itemTimes = SOLFEGE.seq.map(it => {
+    const f = tonic * Math.pow(2, it.cents / 1200);
+    solToneAt(t, f, it.dur * 0.92, playback);
+    const slot = { start: t, end: t + it.dur };
+    t += it.dur;
+    return slot;
+  });
+  return { t0, tEnd: t };
+}
+
+function solXY(cents) {
+  const cv = document.getElementById('solCanvas');
+  const seq = SOLFEGE.seq;
+  const cs = seq.map(s => s.cents);
+  const lo = Math.min(...cs) - 120, hi = Math.max(...cs) + 120;
+  const padL = 46, padR = 30, padT = 26, padB = 46;
+  return (c, i) => ({
+    x: padL + (seq.length > 1 ? i / (seq.length - 1) : 0.5) * (cv.width - padL - padR),
+    y: padT + (1 - (c - lo) / Math.max(1, hi - lo)) * (cv.height - padT - padB),
+  });
+}
+
+function solDraw(nowT) {
+  const cv = document.getElementById('solCanvas');
+  const c2 = cv.getContext('2d');
+  const seq = SOLFEGE.seq;
+  c2.clearRect(0, 0, cv.width, cv.height);
+  if (!seq.length) return;
+  const P = solXY();
+  // شبکهٔ افقی روی هر درجهٔ یکتا
+  const uniq = [...new Set(seq.map(s => s.cents))].sort((a, b) => a - b);
+  c2.strokeStyle = 'rgba(255,255,255,.05)';
+  uniq.forEach(c => {
+    const p = P(c, 0);
+    c2.beginPath(); c2.moveTo(40, p.y); c2.lineTo(cv.width - 24, p.y); c2.stroke();
+  });
+  // مسیر + نقاط هدف
+  c2.strokeStyle = 'rgba(124,92,255,.5)'; c2.lineWidth = 2;
+  c2.beginPath();
+  seq.forEach((s, i) => { const p = P(s.cents, i); i ? c2.lineTo(p.x, p.y) : c2.moveTo(p.x, p.y); });
+  c2.stroke();
+  let curIdx = -1;
+  if (nowT != null && SOLFEGE.itemTimes.length) {
+    curIdx = SOLFEGE.itemTimes.findIndex(s => nowT >= s.start && nowT < s.end);
+  }
+  seq.forEach((s, i) => {
+    const p = P(s.cents, i);
+    const active = i === curIdx;
+    c2.beginPath();
+    c2.arc(p.x, p.y, active ? 9 : 5, 0, Math.PI * 2);
+    c2.fillStyle = active ? '#23e0c2' : '#7c5cff';
+    c2.shadowColor = active ? '#23e0c2' : 'transparent';
+    c2.shadowBlur = active ? 16 : 0;
+    c2.fill();
+    c2.shadowBlur = 0;
+    c2.fillStyle = '#9294bd';
+    c2.font = '11px Tahoma, sans-serif';
+    c2.textAlign = 'center';
+    c2.fillText(s.fa, p.x, cv.height - 26);
+  });
+  // نقطهٔ متحرک (توپ)
+  if (nowT != null && curIdx >= 0) {
+    const slot = SOLFEGE.itemTimes[curIdx];
+    const frac = Math.min(1, Math.max(0, (nowT - slot.start) / Math.max(0.01, slot.end - slot.start)));
+    const a = P(seq[curIdx].cents, curIdx);
+    const nx = Math.min(seq.length - 1, curIdx + 1);
+    const b = P(seq[nx].cents, nx);
+    const x = a.x + (b.x - a.x) * frac * (nx !== curIdx ? 0.35 : 0);
+    const y = a.y;
+    c2.beginPath();
+    c2.arc(x, y, 7, 0, Math.PI * 2);
+    c2.fillStyle = '#ff2d5f';
+    c2.shadowColor = '#ff2d5f'; c2.shadowBlur = 18;
+    c2.fill();
+    c2.shadowBlur = 0;
+    document.getElementById('solSyllable').textContent = seq[curIdx].fa;
+  }
+  // منحنی کاربر
+  if (SOLFEGE.userPts.length) {
+    const tonic = parseFloat(document.getElementById('solTonic').value) || 220;
+    c2.fillStyle = 'rgba(35,224,194,.8)';
+    SOLFEGE.userPts.forEach(pt => {
+      const i = solItemIndexAt(pt.t);
+      if (i < 0) return;
+      const pc = 1200 * Math.log2(pt.f0 / tonic);
+      const k = Math.round((seq[i].cents - pc) / 1200);
+      const yc = pc + 1200 * k;
+      const p = P(yc, i);
+      c2.beginPath(); c2.arc(p.x, p.y, 2.6, 0, Math.PI * 2); c2.fill();
+    });
+  }
+}
+
+function solItemIndexAt(t) {
+  return SOLFEGE.itemTimes.findIndex(s => t >= s.start - 0.15 && t < s.end + 0.25);
+}
+
+function solAnimate(t0) {
+  if (!SOLFEGE.ctx) return;
+  const now = SOLFEGE.ctx.currentTime;
+  solDraw(now);
+  SOLFEGE.raf = requestAnimationFrame(() => solAnimate(t0));
+}
+
+function solStopAll(keepPts) {
+  SOLFEGE.nodes.forEach(n => { try { n.stop(); } catch (e) {} });
+  SOLFEGE.nodes = [];
+  if (SOLFEGE.raf) { cancelAnimationFrame(SOLFEGE.raf); SOLFEGE.raf = null; }
+  SOLFEGE.itemTimes = [];
+  if (!keepPts) SOLFEGE.userPts = [];
+  if (SOLFEGE.recording) solStopMic();
+}
+
+function solPlay() {
+  solStopAll(false);
+  if (!SOLFEGE.ctx) SOLFEGE.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (SOLFEGE.ctx.state === 'suspended') SOLFEGE.ctx.resume();
+  SOLFEGE.seq = solBuildSeq();
+  if (!SOLFEGE.seq.length) return;
+  const { tEnd } = solSchedule(SOLFEGE.playGain);
+  document.getElementById('solStatus').textContent = 'در حال پخش نمونه... (نت‌ها را با انیمیشن دنبال کن)';
+  document.getElementById('solScore').innerHTML = '';
+  solAnimate();
+  setTimeout(() => {
+    if (!SOLFEGE.recording && SOLFEGE.raf) {
+      cancelAnimationFrame(SOLFEGE.raf); SOLFEGE.raf = null;
+      SOLFEGE.itemTimes = [];
+      document.getElementById('solSyllable').textContent = '—';
+      solDraw();
+    }
+  }, (tEnd - SOLFEGE.ctx.currentTime + 0.3) * 1000);
+}
+
+// ── تمرین میکروفونی: پخش + ضبط + امتیاز ──
+async function solPractice() {
+  if (SOLFEGE.recording) { solStopAll(true); return; }
+  const tonic = parseFloat(document.getElementById('solTonic').value) || 220;
+  if (!SOLFEGE.ctx) SOLFEGE.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (SOLFEGE.ctx.state === 'suspended') SOLFEGE.ctx.resume();
+  try {
+    // 🎙 پردازش‌های مرورگر خاموش (دقت پرده‌یاب)
+    SOLFEGE.micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+  } catch (err) {
+    document.getElementById('solStatus').textContent = '❌ ' + (describeMicError ? describeMicError(err) : 'دسترسی به میکروفون رد شد.');
+    return;
+  }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  SOLFEGE.ws = new WebSocket(`${proto}://${location.host}/ws/live-pitch`);
+  SOLFEGE.ws.binaryType = 'arraybuffer';
+  SOLFEGE.ws.onopen = () => {
+    const vp = vpActive();
+    SOLFEGE.ws.send(JSON.stringify({ sample_rate: LIVE_SAMPLE_RATE,
+      maqam: document.getElementById('solMaqam').value,
+      tonic_hz: tonic,
+      voice_tonic_hz: (vp && vp.tonic_hz) || null }));
+    SOLFEGE.micSource = SOLFEGE.ctx.createMediaStreamSource(SOLFEGE.micStream);
+    SOLFEGE.processor = SOLFEGE.ctx.createScriptProcessor(4096, 1, 1);
+    SOLFEGE.micSource.connect(SOLFEGE.processor);
+    SOLFEGE.processor.connect(SOLFEGE.ctx.destination);
+    SOLFEGE.processor.onaudioprocess = (e) => {
+      if (SOLFEGE.ws.readyState !== WebSocket.OPEN) return;
+      SOLFEGE.ws.send(new Float32Array(e.inputBuffer.getChannelData(0)).buffer);
+    };
+    SOLFEGE.ws.onmessage = (ev) => {
+      try {
+        const d = JSON.parse(ev.data);
+        const f = d.note && d.note.f0_hz;
+        if (f && f > 0) SOLFEGE.userPts.push({ t: SOLFEGE.ctx.currentTime, f0: f });
+      } catch (e) {}
+    };
+    // جمله پخش می‌شود؛ تو همزمان می‌خوانی
+    solStopAll(false);
+    SOLFEGE.seq = solBuildSeq();
+    SOLFEGE.recording = true;
+    document.getElementById('solMic').textContent = '⏹ پایان تمرین';
+    document.getElementById('solStatus').textContent = '🎤 در حال تمرین — جمله می‌شنوی و همزمان می‌خوانی...';
+    document.getElementById('solScore').innerHTML = '';
+    solSchedule(SOLFEGE.playGain * 0.45);
+    solAnimate();
+    const total = SOLFEGE.itemTimes.length
+      ? (SOLFEGE.itemTimes[SOLFEGE.itemTimes.length - 1].end - SOLFEGE.ctx.currentTime) : 3;
+    SOLFEGE._finishTimer = setTimeout(() => solFinish(), (total + 1.0) * 1000);
+  };
+  SOLFEGE.ws.onerror = () => {
+    document.getElementById('solStatus').textContent = '❌ اتصال به سرور زنده برقرار نشد.';
+  };
+}
+
+function solStopMic() {
+  SOLFEGE.recording = false;
+  document.getElementById('solMic').textContent = '🎤 شروع تمرین (بخوان!)';
+  try { SOLFEGE.processor && SOLFEGE.processor.disconnect(); } catch (e) {}
+  try { SOLFEGE.micSource && SOLFEGE.micSource.disconnect(); } catch (e) {}
+  try { SOLFEGE.micStream && SOLFEGE.micStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  try { SOLFEGE.ws && SOLFEGE.ws.close(); } catch (e) {}
+  SOLFEGE.processor = SOLFEGE.micSource = SOLFEGE.micStream = SOLFEGE.ws = null;
+}
+
+function solFinish() {
+  if (!SOLFEGE.recording) return;
+  solStopMic();
+  if (SOLFEGE.raf) { cancelAnimationFrame(SOLFEGE.raf); SOLFEGE.raf = null; }
+  const tonic = parseFloat(document.getElementById('solTonic').value) || 220;
+  const seq = SOLFEGE.seq, times = SOLFEGE.itemTimes.slice();
+  if (!seq.length || !times.length) { solDraw(); return; }
+  const rows = [];
+  let sum = 0, sung = 0;
+  seq.forEach((it, i) => {
+    const slot = times[i];
+    const pts = SOLFEGE.userPts.filter(p => p.t >= slot.start - 0.1 && p.t < slot.end + 0.2);
+    if (pts.length < 3) {
+      rows.push({ fa: it.fa, state: '—', off: null });
+      return;
+    }
+    const offs = pts.map(p => {
+      let off = 1200 * Math.log2(p.f0 / tonic) - it.cents;
+      while (off > 600) off -= 1200;
+      while (off < -600) off += 1200;
+      return off;
+    }).sort((a, b) => a - b);
+    const med = offs[Math.floor(offs.length / 2)];
+    const score = Math.max(0, 100 - Math.max(0, Math.abs(med) - 30) * 1.2);
+    sum += score; sung += 1;
+    rows.push({ fa: it.fa, state: Math.abs(med) <= 50 ? 'ok' : Math.abs(med) <= 100 ? 'near' : 'miss',
+                off: Math.round(med) });
+  });
+  const coverage = sung / seq.length;
+  const overall = sung ? Math.round((sum / sung) * Math.pow(coverage, 0.5)) : 0;
+  solDraw();
+  const color = overall >= 85 ? '#3ddc97' : overall >= 60 ? '#ffb703' : '#ff5cad';
+  let html = `<div style="margin-top:12px; font-size:1.15rem; font-weight:900;">امتیاز جمله: <span style="color:${color};">${faNum(overall)}٪</span>
+    <span class="hint-text">(${faNum(sung)} از ${faNum(seq.length)} نت خوانده شد)</span></div>
+    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;">`;
+  rows.forEach(r => {
+    const c = r.state === 'ok' ? '#3ddc97' : r.state === 'near' ? '#ffb703' : r.state === 'miss' ? '#ff5cad' : '#9294bd';
+    const arrow = r.off == null ? '' : (r.off > 15 ? ' ↓' : r.off < -15 ? ' ↑' : ' ✓');
+    html += `<span style="background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:8px; padding:4px 9px; font-size:.85rem;">
+      ${r.fa} <b style="color:${c};">${r.state === '—' ? '—' : arrow + ' ' + faNum(Math.abs(r.off || 0)) + '¢'}</b></span>`;
+  });
+  html += '</div>';
+  document.getElementById('solScore').innerHTML = html;
+  document.getElementById('solStatus').textContent = '✅ تمرین تمام شد — منحنی سبز، صدای خودت روی نت‌های هدف است.';
+}
+
+document.getElementById('solPlay').onclick = solPlay;
+document.getElementById('solStop').onclick = () => { solStopAll(false); document.getElementById('solSyllable').textContent = '—'; solDraw(); };
+document.getElementById('solMic').onclick = solPractice;
+document.getElementById('solTempo').oninput = (e) => {
+  document.getElementById('solTempoVal').textContent = faNum(e.target.value);
+};
+document.getElementById('solTonic').addEventListener('change', () => solDraw());
+
 </script>
 </body>
 </html>

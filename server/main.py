@@ -668,6 +668,32 @@ async def styles_delete(style_id: str):
 # دریافت وضعیت job (fallback در صورت عدم استفاده از وب‌سوکت)
 # ============================================================================
 
+@app.get("/api/maqamat")
+async def api_maqamat():
+    """🎼 جدول مرجع ۸ مقام «بر پایهٔ دو» — درجات، نام نت‌ها و غماز.
+    برای تب آموزش سولفژ و شفافیت منطق تشخیص."""
+    out = []
+    for name, info in qma.MAQAMAT.items():
+        scale = info["scale_ascending"]
+        chain = info.get("jins_chain") or []
+        ghammaz = None
+        if len(chain) >= 2:
+            try:
+                idx = min(max(int(chain[1]["on_degree"]) - 1, 0), len(scale) - 1)
+                ghammaz = scale[idx]
+            except Exception:
+                pass
+        out.append({
+            "name": name,
+            "scale_cents": scale,
+            "degrees_fa": info.get("degrees_fa") or [],
+            "mood": info.get("mood"),
+            "family": info.get("family"),
+            "ghammaz_cents": ghammaz,
+        })
+    return out
+
+
 @app.get("/api/health")
 async def health():
     return {"ok": True, "jobs": len(JOBS), "styles": len(stl.list_profiles())}
@@ -760,6 +786,7 @@ async def ws_live_pitch(websocket: WebSocket):
 
     # 🎭 پایداری هینت: پیام فقط پس از انحرافِ تثبیت‌شده (بدون چشمک‌زدن)
     hint_state = {"dir": None, "n": 0, "ok_announced": False}
+    maqam_view_state = {"maqam": None, "challenger": None, "n": 0}  # 🧷 ضدچشمک مقام
 
     # بافر رونده برای مقام لحظه‌ای (چون ثانیهٔ اخیر)
     LIVE_WINDOW_SEC = 6.0
@@ -807,17 +834,24 @@ async def ws_live_pitch(websocket: WebSocket):
                     hist = qma.build_qtet_histogram(pseudo_notes)
                     live_finalis = recent_freqs[-1][1] if recent_freqs[-1][1] > 0 else None
                     live_finalis_cents = (1200.0 * np.log2(live_finalis / 440.0)) % 1200.0 if live_finalis else None
-                    candidates = qma.detect_tonic_and_maqam(hist, top_k=1, finalis_cents=live_finalis_cents)
+                    candidates = qma.detect_tonic_and_maqam(hist, top_k=3, finalis_cents=live_finalis_cents,
+                                                            notes=pseudo_notes)
                     if candidates:
                         best = candidates[0]
+                        # 🧷 ضدچشمک: تغییر مقام نمایشی فقط با ثبات پیاپی یا اختلاف واضح
+                        margin = (best.get("confidence_pct") or 0) - (
+                            (candidates[1].get("confidence_pct") or 0) if len(candidates) > 1 else 0)
+                        shown_name = qma.update_with_hysteresis(maqam_view_state, best["maqam"], margin)
+                        shown = next((c for c in candidates if c["maqam"] == shown_name), best)
                         live_maqam = {
-                            "maqam": best["maqam"],
-                            "confidence_pct": best["confidence_pct"],
-                            "tonic_freq_hz": best["tonic_freq_hz"],
+                            "maqam": shown["maqam"],
+                            "confidence_pct": shown["confidence_pct"],
+                            "tonic_freq_hz": shown["tonic_freq_hz"],
+                            "setfit_pct": shown.get("setfit_pct"),
                         }
                         if f0:
-                            tonic_hz = best["tonic_freq_hz"]
-                            maqam_cents = qma.MAQAMAT[best["maqam"]]["cents"]
+                            tonic_hz = shown["tonic_freq_hz"]
+                            maqam_cents = qma.MAQAMAT[shown["maqam"]]["cents"]
                             octave_shift = round(np.log2(f0 / tonic_hz)) if tonic_hz > 0 else 0
                             tonic_adj = tonic_hz * (2 ** octave_shift)
                             solfege = qma.note_to_solfege(f0, tonic_adj, maqam_cents,
@@ -835,7 +869,8 @@ async def ws_live_pitch(websocket: WebSocket):
                         hist = qma.build_qtet_histogram(pseudo_notes)
                         ph_finalis = phrase_freqs[-1][1] if phrase_freqs[-1][1] > 0 else None
                         ph_finalis_cents = (1200.0 * np.log2(ph_finalis / 440.0)) % 1200.0 if ph_finalis else None
-                        candidates = qma.detect_tonic_and_maqam(hist, top_k=1, finalis_cents=ph_finalis_cents)
+                        candidates = qma.detect_tonic_and_maqam(hist, top_k=1, finalis_cents=ph_finalis_cents,
+                                            notes=[{"f0_hz": f, "duration": d} for (_, f, d) in phrase_freqs if f and f > 0])
                         best = candidates[0] if candidates else None
                         sol_sequence = []
                         trend = None
@@ -889,7 +924,7 @@ async def ws_live_pitch(websocket: WebSocket):
                         c_tonic = None
                     if f0 and c_tonic:
                         c_cents = 1200.0 * np.log2(f0 / c_tonic)
-                        scale = qma.MAQAMAT[c_maqam_name]["scale_ascending"][:-1]
+                        scale = qma.maqam_degrees(qma.MAQAMAT[c_maqam_name]["scale_ascending"])
                         diffs = [min(abs((c_cents % 1200) - dc), 1200 - abs((c_cents % 1200) - dc))
                                  for dc in scale]
                         nearest_c = scale[int(np.argmin(diffs))]

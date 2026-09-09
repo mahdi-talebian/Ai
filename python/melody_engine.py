@@ -41,7 +41,7 @@ def _cents(f0, tonic_hz):
 
 def _scale_degrees(maqam_name):
     """درجات گام صعودی بدون تکرار اکتاو — لیست سنت (۷ درجه)."""
-    return list(qma.MAQAMAT[maqam_name]["scale_ascending"][:-1])
+    return list(qma.maqam_degrees(qma.MAQAMAT[maqam_name]["scale_ascending"]))
 
 
 def _ghammaz_cents(maqam_name):

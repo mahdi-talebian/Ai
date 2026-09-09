@@ -84,6 +84,7 @@ def freq_to_note_info(freq: float):
     is_valid_piano_range = PIANO_MIDI_MIN <= midi_round <= PIANO_MIDI_MAX
 
     return {
+        "f0_hz": round(float(freq), 2),
         "freq": freq,
         "midi": midi_round,
         "note_name": f"{note_name}{octave}",
