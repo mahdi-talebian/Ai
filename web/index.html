@@ -1040,18 +1040,42 @@ document.getElementById('refLibFetch').onclick = async () => {
   const ayah = +document.getElementById('refAyah').value;
   const info = document.getElementById('refLibInfo');
   info.textContent = '⏳ در حال دریافت از سرور...';
-  const url = `${API_BASE}/api/quran/audio?reciter=${encodeURIComponent(sel.value)}&surah=${surah}&ayah=${ayah}`;
+  const proxyUrl = `${API_BASE}/api/quran/audio?reciter=${encodeURIComponent(sel.value)}&surah=${surah}&ayah=${ayah}`;
+  const cdnUrl = `https://verses.quran.com/${sel.value}/mp3/${String(surah).padStart(3, '0')}${String(ayah).padStart(3, '0')}.mp3`;
+  // مسیر ۱: دانلود مستقیم مرورگر از CDN (اگر CORS اجازه دهد) — حتی وقتی
+  // سرور به اینترنت عمومی دسترسی ندارد (مثل sandbox) کار می‌کند و مرجع
+  // به‌صورت فایل آپلود می‌شود. مسیر ۲: پروکسی سرور.
+  let blobUrl = null, viaBrowser = false;
   try {
-    const resp = await fetch(url);
-    if (!resp.ok) {
-      let msg = 'خطا در دریافت';
-      try { msg = (await resp.json()).error || msg; } catch (e) {}
-      throw new Error(msg);
+    const r = await fetch(cdnUrl);
+    if (r.ok) { blobUrl = URL.createObjectURL(await r.blob()); viaBrowser = true; }
+  } catch (e) { /* CORS یا شبکه مرورگر -> مسیر پروکسی */ }
+  const url = blobUrl || proxyUrl;
+  try {
+    if (!viaBrowser) {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        let msg = 'خطا در دریافت';
+        try { msg = (await resp.json()).error || msg; } catch (e) {}
+        throw new Error(msg);
+      }
     }
-    refLib = { reciter: sel.value, surah, ayah };
+    if (viaBrowser) {
+      // مرجع مستقیم: به‌عنوان فایل در مقایسه آپلود می‌شود
+      const b = await (await fetch(blobUrl)).blob();
+      refLib = null;
+      refFile = new File([b], `quran_${sel.value.replace('/', '_')}_${surah}_${ayah}.mp3`, { type: 'audio/mpeg' });
+      document.getElementById('refFileInfo').textContent = `✅ از کتابخانه (مرورگر): ${sel.selectedOptions[0].textContent} — سورهٔ ${surah} آیهٔ ${ayah}`;
+      refSrcSwitch(false);
+      document.getElementById('refFileRow').style.display = 'none';
+      document.getElementById('refLibRow').style.display = 'block';
+    } else {
+      refLib = { reciter: sel.value, surah, ayah };
+    }
     const audio = document.getElementById('refLibAudio');
     audio.src = url; audio.style.display = 'block';
-    info.textContent = `✅ مرجع آماده: ${sel.selectedOptions[0].textContent} — سورهٔ ${surah} آیهٔ ${ayah}`;
+    info.textContent = `✅ مرجع آماده: ${sel.selectedOptions[0].textContent} — سورهٔ ${surah} آیهٔ ${ayah}` +
+      (viaBrowser ? ' (دانلود مستقیم مرورگر)' : ' (پروکسی سرور)');
     buildTrimCanvas(url, 'refLibWaveCanvas', 'refLibWaveWrap', 'refStart', 'refEnd', audio);
   } catch (e) {
     refLib = null;
