@@ -849,6 +849,31 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
         _progress("loudness", 0.84)
 
         pauses = detect_pauses(times, freqs)
+        pause_source = "praat-voiced-gaps"
+        # --- VAD اختیاری Silero: مرز سکوت/فراز مقاوم به نویز ---
+        # روی ضبط‌های نویزی، گاپ‌های unvoicedPraat می‌توانند فرازها را
+        # اشتباه بشکنند؛ اگر مدل ONNX موجود باشد، سکوت‌ها از VAD گرفته می‌شوند.
+        vad_intervals = None
+        try:
+            import vad as _vadmod
+            _snd = snd
+            if _snd is None:
+                import soundfile as _sf
+                _y, _sr = _sf.read(wav_path, dtype="float32")
+                if _y.ndim > 1:
+                    _y = _y.mean(axis=1)
+                _snd = (_y, _sr)
+            vad_intervals = _vadmod.speech_intervals(_snd[0], _snd[1])
+        except Exception:
+            vad_intervals = None
+        if vad_intervals is not None:
+            # نگهبان صداقت: اگر VAD تقریباً هیچ «گفتاری» نیافت (مثلاً سیگنال
+            # مصنوعی/تون خالص، یا خرابی مدل)، به روش قبلی برمی‌گردیم تا
+            # فرازها یک‌کاسهٔ کل فایل نشوند.
+            speech_ratio = (sum(e - s for s, e in vad_intervals) / max(duration_total, 1e-6))
+            if speech_ratio >= 0.2:
+                pauses = _vadmod.pauses_from_intervals(vad_intervals, duration_total)
+                pause_source = "silero-vad"
         ambitus = compute_ambitus(notes)
         voiced_ratio = float(np.mean(freqs > 0)) if len(freqs) else 0.0
 
@@ -889,6 +914,7 @@ def analyze_recitation(path, denoise=False, top_k=3, make_plot=True, plot_dir=No
 
                 "engine": "Praat (parselmouth) pitch-ac, very_accurate=True, two-pass refine"
                           + (", پردازش پنجره‌ای برای فایل طولانی" if use_windowed and duration_total > 90 else ""),
+                "pause_source": pause_source,
             },
             "basic": {
                 "duration_sec": round(duration_total, 2),

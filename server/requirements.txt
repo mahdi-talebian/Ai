@@ -2,3 +2,8 @@ fastapi
 uvicorn[standard]
 python-multipart
 websockets
+# ابزارهای اختیاری سرور
+# onnxruntime (Silero VAD) بالای requirements هست
+# torch/transformers فقط برای تشخیص آیات (ayah_sync) لازم است:
+# torch
+# transformers

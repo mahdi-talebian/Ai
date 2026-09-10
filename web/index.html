@@ -278,6 +278,12 @@
             <video id="qVideoPlayer" controls preload="auto" style="width:100%;border-radius:12px;"></video>
             <a id="qVideoDownloadBtn" class="secondary-btn" download style="display:block;text-align:center;text-decoration:none;">⬇️ دانلود ویدیو (mp4)</a>
           </div>
+
+          <div id="qAyahSection" style="margin-top:16px;">
+            <button id="qAyahBtn" class="secondary-btn" type="button">🕌 تشخیص آیات این تلاوت (ASR تخصصی قرآن)</button>
+            <div id="qAyahStatus" class="hint-text" style="margin-top:6px;"></div>
+            <div id="qAyahList" style="margin-top:8px;"></div>
+          </div>
         </div>
       </div>
 
@@ -286,11 +292,31 @@
         <div class="compare-grid">
           <div class="compare-col">
             <h4>🔵 فراز مرجع</h4>
-            <div class="dropzone small" id="refDropzone">
-              <span class="icon">🎵</span> انتخاب فایل مرجع
+            <div class="source-tabs" style="margin-bottom:10px;">
+              <button id="refSrcFile" class="active" type="button">آپلود فایل</button>
+              <button id="refSrcLib" type="button">کتابخانهٔ quran.com</button>
             </div>
-            <input type="file" id="refFileInput" accept="audio/*" />
-            <div class="fileinfo" id="refFileInfo"></div>
+            <div id="refFileRow">
+              <div class="dropzone small" id="refDropzone">
+                <span class="icon">🎵</span> انتخاب فایل مرجع
+              </div>
+              <input type="file" id="refFileInput" accept="audio/*" />
+              <div class="fileinfo" id="refFileInfo"></div>
+            </div>
+            <div id="refLibRow" style="display:none;">
+              <select id="refQuranReciter" style="width:100%;padding:10px;border-radius:10px;background:#17122b;color:#eef0ff;border:1px solid rgba(255,255,255,.15);font-family:inherit;"></select>
+              <div class="trim-row">
+                <label>سوره: <input type="number" id="refSurah" min="1" max="114" value="1"></label>
+                <label>آیه: <input type="number" id="refAyah" min="1" max="286" value="1"></label>
+              </div>
+              <button id="refLibFetch" class="secondary-btn" type="button" style="margin-top:8px;">📥 دریافت مرجع از کتابخانه</button>
+              <div class="fileinfo" id="refLibInfo"></div>
+              <audio id="refLibAudio" controls style="width:100%;margin-top:8px;display:none;"></audio>
+              <div class="waveform-wrap" id="refLibWaveWrap" style="display:none;margin-top:8px;">
+                <canvas id="refLibWaveCanvas"></canvas>
+              </div>
+              <div class="hint-text" style="margin-top:6px;">روی موج بالا درگ کن تا بازهٔ برش مرجع (شروع/پایان) انتخاب شود.</div>
+            </div>
             <div class="trim-row">
               <label>شروع (ثانیه): <input type="number" id="refStart" min="0" step="0.1" placeholder="اختیاری"></label>
               <label>پایان (ثانیه): <input type="number" id="refEnd" min="0" step="0.1" placeholder="اختیاری"></label>
@@ -932,6 +958,141 @@ function renderQuranReport(report) {
 // ==========================================================================
 
 let refFile = null, perfFile = null;
+let refLib = null;  // {reciter, surah, ayah} وقتی مرجع از کتابخانهٔ quran.com است
+
+// --- سوئیچ منبع مرجع: فایل آپلودی یا کتابخانهٔ quran.com ---
+function refSrcSwitch(toLib) {
+  document.getElementById('refSrcFile').classList.toggle('active', !toLib);
+  document.getElementById('refSrcLib').classList.toggle('active', toLib);
+  document.getElementById('refFileRow').style.display = toLib ? 'none' : 'block';
+  document.getElementById('refLibRow').style.display = toLib ? 'block' : 'none';
+  checkCompareReady();
+}
+document.getElementById('refSrcFile').onclick = () => refSrcSwitch(false);
+document.getElementById('refSrcLib').onclick = () => refSrcSwitch(true);
+
+(async function loadQuranReciters() {
+  try {
+    const d = await apiRequest(`${API_BASE}/api/quran/reciters`);
+    document.getElementById('refQuranReciter').innerHTML =
+      d.reciters.map(r => `<option value="${r.slug}">${r.name}</option>`).join('');
+  } catch (e) { /* کتابخانه در دسترس نباشد، تب همچنان با آپلود فایل کار می‌کند */ }
+})();
+
+// --- موج پیش‌نمایش + درگ برای انتخاب بازهٔ برش (بدون وابستگی خارجی) ---
+function buildTrimCanvas(url, canvasId, wrapId, startId, endId, audioEl) {
+  fetch(url).then(r => r.arrayBuffer())
+    .then(buf => new (window.AudioContext || window.webkitAudioContext)().decodeAudioData(buf))
+    .then(decoded => {
+      const ch = decoded.getChannelData(0);
+      const N = 600, peaks = [];
+      const per = Math.max(1, Math.floor(ch.length / N));
+      for (let i = 0; i < N; i++) {
+        let m = 0;
+        for (let j = i * per; j < (i + 1) * per; j += 7) { const v = Math.abs(ch[j]); if (v > m) m = v; }
+        peaks.push(m);
+      }
+      const wrap = document.getElementById(wrapId);
+      wrap.style.display = 'block';
+      const canvas = document.getElementById(canvasId);
+      const mx = Math.max(...peaks) || 1;
+      const draw = (a, b) => {
+        const w = wrap.clientWidth || 500, h = 110, dpr = window.devicePixelRatio || 1;
+        canvas.width = w * dpr; canvas.height = h * dpr;
+        canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+        for (let i = 0; i < N; i++) {
+          const bh = Math.max(1, peaks[i] / mx * (h - 8));
+          const frac = i / N;
+          ctx.fillStyle = (a !== null && frac >= a && frac <= b) ? '#7c5cff' : '#3b3663';
+          ctx.fillRect(frac * w, (h - bh) / 2, w / N - 0.6, bh);
+        }
+      };
+      draw(null, null);
+      let dragStart = null;
+      const frac = (e) => {
+        const r = canvas.getBoundingClientRect();
+        return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+      };
+      canvas.onmousedown = (e) => { dragStart = frac(e); };
+      canvas.onmousemove = (e) => { if (dragStart !== null) { const p = frac(e); draw(Math.min(dragStart, p), Math.max(dragStart, p)); } };
+      canvas.onmouseup = (e) => {
+        const p = frac(e), a = Math.min(dragStart, p), b = Math.max(dragStart, p);
+        dragStart = null;
+        const d = decoded.duration;
+        if (b - a < 0.01) {
+          draw(null, null);
+          document.getElementById(startId).value = '';
+          document.getElementById(endId).value = '';
+          return;
+        }
+        document.getElementById(startId).value = (a * d).toFixed(1);
+        document.getElementById(endId).value = (b * d).toFixed(1);
+        draw(a, b);
+      };
+    }).catch(err => console.warn('پیش‌نمایش موج مرجع آماده نشد:', err));
+}
+
+document.getElementById('refLibFetch').onclick = async () => {
+  const sel = document.getElementById('refQuranReciter');
+  const surah = +document.getElementById('refSurah').value;
+  const ayah = +document.getElementById('refAyah').value;
+  const info = document.getElementById('refLibInfo');
+  info.textContent = '⏳ در حال دریافت از سرور...';
+  const url = `${API_BASE}/api/quran/audio?reciter=${encodeURIComponent(sel.value)}&surah=${surah}&ayah=${ayah}`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      let msg = 'خطا در دریافت';
+      try { msg = (await resp.json()).error || msg; } catch (e) {}
+      throw new Error(msg);
+    }
+    refLib = { reciter: sel.value, surah, ayah };
+    const audio = document.getElementById('refLibAudio');
+    audio.src = url; audio.style.display = 'block';
+    info.textContent = `✅ مرجع آماده: ${sel.selectedOptions[0].textContent} — سورهٔ ${surah} آیهٔ ${ayah}`;
+    buildTrimCanvas(url, 'refLibWaveCanvas', 'refLibWaveWrap', 'refStart', 'refEnd', audio);
+  } catch (e) {
+    refLib = null;
+    info.textContent = '❌ ' + e.message;
+    document.getElementById('refLibAudio').style.display = 'none';
+    document.getElementById('refLibWaveWrap').style.display = 'none';
+  }
+  checkCompareReady();
+};
+
+// --- تشخیص آیات تلاوت (ASR) ---
+document.getElementById('qAyahBtn').onclick = async () => {
+  if (!currentJobId) return;
+  const st = document.getElementById('qAyahStatus');
+  st.textContent = '⏳ در حال تشخیص آیات با مدل تخصصی قرآن...';
+  document.getElementById('qAyahList').innerHTML = '';
+  try {
+    const d = await apiRequest(`${API_BASE}/api/ayah_sync/${currentJobId}`, { method: 'POST' });
+    const poll = setInterval(async () => {
+      try {
+        const s = await apiRequest(`${API_BASE}/api/status/${d.job_id}`);
+        if (s.status === 'done') {
+          clearInterval(poll); st.textContent = '';
+          const segs = s.result.ayah_segments || [];
+          document.getElementById('qAyahList').innerHTML = segs.length ? segs.map(s2 =>
+            `<div style="border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:8px 12px;margin-bottom:6px;">
+               <span style="color:#23e0c2;font-weight:700;">آیهٔ ${s2.ayah_start}${s2.ayah_end !== s2.ayah_start ? ' تا ' + s2.ayah_end : ''}</span>
+               <span style="color:#9294bd;"> [${s2.start_sec}s–${s2.end_sec}s — تطبیق ${Math.round(s2.score * 100)}%]</span>
+               <button class="phrase-jump-btn" onclick="document.getElementById('qAudioPlayer').currentTime=${s2.start_sec};document.getElementById('qAudioPlayer').play();">▶</button>
+               <div style="margin-top:4px;line-height:1.9;">${s2.text}</div>
+             </div>`).join('')
+            : '<div class="hint-text">هیچ آیه‌ای با اطمینان کافی تطبیق نخورد.</div>';
+        } else if (s.status === 'error') {
+          clearInterval(poll); st.textContent = '❌ ' + s.error;
+        } else {
+          st.textContent = `⏳ پردازش... ${Math.round((s.progress || 0) * 100)}%`;
+        }
+      } catch (e) { /* خطای شبکه گذرا در poll */ }
+    }, 1500);
+  } catch (e) { st.textContent = '❌ ' + e.message; }
+};
 
 function setupCompareDropzone(dzId, inputId, infoId, onSet) {
   const dz = document.getElementById(dzId);
@@ -950,7 +1111,7 @@ setupCompareDropzone('refDropzone', 'refFileInput', 'refFileInfo', (f) => refFil
 setupCompareDropzone('perfDropzone', 'perfFileInput', 'perfFileInfo', (f) => perfFile = f);
 
 function checkCompareReady() {
-  document.getElementById('compareBtn').disabled = !(refFile && perfFile);
+  document.getElementById('compareBtn').disabled = !((refFile || refLib) && perfFile);
 }
 
 document.getElementById('compareBtn').onclick = async () => {
@@ -985,7 +1146,13 @@ document.getElementById('compareBtn').onclick = async () => {
   progress.update('در حال آپلود فایل‌ها...', 0.02);
 
   const form = new FormData();
-  form.append('reference', refFile);
+  if (refFile) {
+    form.append('reference', refFile);
+  } else if (refLib) {
+    form.append('ref_quran_reciter', refLib.reciter);
+    form.append('ref_quran_surah', refLib.surah);
+    form.append('ref_quran_ayah', refLib.ayah);
+  }
   form.append('performance', perfFile);
   if (refStart) form.append('ref_start', refStart);
   if (refEnd) form.append('ref_end', refEnd);

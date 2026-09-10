@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 import traceback
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -229,10 +230,67 @@ async def start_video(job_id: str, fps: int = Form(12)):
 # مرحله ۴: مقایسه دو فراز (مرجع + کاربر، با برش زمانی اختیاری)
 # ============================================================================
 
+# ============================================================================
+# کتابخانهٔ مرجع quran.com: فهرست قاری‌ها + پروکسی صوت هر آیه
+# (سرور دانلود می‌کند تا هم مشکل CORS نباشد و هم مقایسه سمت سرور ممکن شود)
+# ============================================================================
+
+QURAN_RECITERS = [
+    {"slug": "AbdulBaset/Mujawwad", "name": "عبدالباسط عبدالصمد — مجوّد"},
+    {"slug": "AbdulBaset/Murattil", "name": "عبدالباسط عبدالصمد — مرتل"},
+    {"slug": "Alafasy", "name": "مشاری العفاسی"},
+    {"slug": "MaherAlMuaiqly", "name": "ماهر المعیقل"},
+    {"slug": "Abdurrahmaan_As-Sudais", "name": "عبدالرحمن السدیس"},
+    {"slug": "Minshawi/Mujawwad", "name": "محمد صدیق منشاوی — مجوّد"},
+    {"slug": "Husary", "name": "محمود خلیل الحصری"},
+    {"slug": "MuhammadAyyoub", "name": "محمد ایوب"},
+]
+REF_CACHE = JOBS_DIR / "_refcache"
+REF_CACHE.mkdir(exist_ok=True)
+
+
+def _fetch_quran_ayah(slug: str, surah: int, ayah: int, dest: Path) -> Path:
+    if dest.exists() and dest.stat().st_size > 1000:
+        return dest
+    url = f"https://verses.quran.com/{slug}/mp3/{surah:03d}{ayah:03d}.mp3"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "quran-analyzer/1.0"})
+        with urllib.request.urlopen(req, timeout=90) as r, open(dest, "wb") as f:
+            shutil.copyfileobj(r, f)
+    except Exception as e:
+        if dest.exists():
+            dest.unlink()
+        raise RuntimeError(
+            f"دسترسی به CDN قرآن (verses.quran.com) ممکن نشد: {e}. "
+            "این سرور احتمالاً به اینترنت عمومی دسترسی ندارد؛ فایل مرجع را دستی آپلود کنید."
+        ) from e
+    return dest
+
+
+@app.get("/api/quran/reciters")
+async def quran_reciters():
+    return {"reciters": QURAN_RECITERS}
+
+
+@app.get("/api/quran/audio")
+async def quran_audio(reciter: str, surah: int, ayah: int):
+    if not any(r["slug"] == reciter for r in QURAN_RECITERS):
+        return JSONResponse({"error": "قاری ناشناخته"}, status_code=404)
+    dest = REF_CACHE / f"{reciter.replace('/', '_')}_{surah}_{ayah}.mp3"
+    try:
+        _fetch_quran_ayah(reciter, surah, ayah, dest)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+    return FileResponse(str(dest), media_type="audio/mpeg")
+
+
 @app.post("/api/compare")
 async def start_compare(
-    reference: UploadFile = File(...),
     performance: UploadFile = File(...),
+    reference: UploadFile = File(None),
+    ref_quran_reciter: str = Form(None),
+    ref_quran_surah: int = Form(None),
+    ref_quran_ayah: int = Form(None),
     ref_start: float = Form(None),
     ref_end: float = Form(None),
     perf_start: float = Form(None),
@@ -242,14 +300,27 @@ async def start_compare(
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    ref_ext = Path(reference.filename).suffix or ".wav"
     perf_ext = Path(performance.filename).suffix or ".wav"
-    ref_path = job_dir / f"reference{ref_ext}"
     perf_path = job_dir / f"performance{perf_ext}"
-    with open(ref_path, "wb") as f:
-        shutil.copyfileobj(reference.file, f)
     with open(perf_path, "wb") as f:
         shutil.copyfileobj(performance.file, f)
+
+    if reference is not None:
+        ref_ext = Path(reference.filename).suffix or ".wav"
+        ref_path = job_dir / f"reference{ref_ext}"
+        with open(ref_path, "wb") as f:
+            shutil.copyfileobj(reference.file, f)
+    elif ref_quran_reciter and ref_quran_surah and ref_quran_ayah:
+        ref_path = REF_CACHE / f"{ref_quran_reciter.replace('/', '_')}_{ref_quran_surah}_{ref_quran_ayah}.mp3"
+        try:
+            _fetch_quran_ayah(ref_quran_reciter, ref_quran_surah, ref_quran_ayah, ref_path)
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=502)
+    else:
+        return JSONResponse(
+            {"error": "یا فایل مرجع آپلود کنید یا قاری+آیه از کتابخانهٔ quran.com بدهید"},
+            status_code=400,
+        )
 
     job = Job(job_id, "compare")
     job._loop = asyncio.get_running_loop()
@@ -318,6 +389,48 @@ def _maybe_trim(path, start, end, job_dir, out_name):
     cmd += [out_path]
     subprocess.run(cmd, capture_output=True, check=True)
     return out_path
+
+
+# ============================================================================
+# مرحله ۵: همگام‌سازی آیات (ASR تخصصی قرآن — اختیاری)
+# ============================================================================
+
+@app.post("/api/ayah_sync/{job_id}")
+async def start_ayah_sync(job_id: str):
+    job_dir = JOBS_DIR / job_id
+    input_files = list(job_dir.glob("input.*"))
+    if not input_files:
+        return JSONResponse({"error": "job یا فایل ورودی پیدا نشد"}, status_code=404)
+    input_path = str(input_files[0])
+
+    import ayah_sync as asynca
+    if not asynca.model_available():
+        return JSONResponse({
+            "error": "مدل تشخیص آیه روی این سرور نصب نیست. برای فعال‌سازی: "
+                     "pip install torch transformers و دانلود مدل "
+                     "tarteel-ai/whisper-base-ar-quran در server/models/whisper-quran "
+                     "(اسکریپت setup_env.sh این کار را در استقرار واقعی انجام می‌دهد).",
+        }, status_code=503)
+
+    job = Job(job_id + "_ayah", "ayah")
+    job._loop = asyncio.get_running_loop()
+    JOBS[job.id] = job
+    job.status = "running"
+
+    def _worker():
+        try:
+            def progress_cb(stage, frac):
+                job.update(stage, frac)
+            segments = asynca.analyze_ayahs(input_path, progress=progress_cb)
+            with open(job_dir / "ayah_segments.json", "w", encoding="utf-8") as f:
+                json.dump(segments, f, ensure_ascii=False, indent=2)
+            job.finish({"ayah_segments": segments})
+        except Exception as e:
+            traceback.print_exc()
+            job.fail(str(e))
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"job_id": job.id, "status": "started"}
 
 
 # ============================================================================

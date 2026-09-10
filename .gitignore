@@ -10,3 +10,6 @@ __pycache__/
 server/jobs/
 *.mp4
 .venv/
+server/models/
+server/data/
+eval/results_otmm.json
