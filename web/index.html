@@ -265,6 +265,12 @@
     .saveGrid{gap:6px}
     .saveGrid a.btn{font-size:.8rem}
   }
+  #offlineBadge{
+    display:none; align-items:center; gap:6px; margin-top:10px;
+    font-size:.78rem; color:#bfe6c8; background:rgba(46,160,90,.13);
+    border:1px solid rgba(46,160,90,.35); border-radius:999px; padding:6px 12px;
+    width:max-content; max-width:100%;
+  }
   @media (display-mode:standalone){
     .wrap{padding-top:calc(var(--safe-t) + 10px)}
   }
@@ -275,6 +281,9 @@
   <header>
     <h1>🎚 ردِّ صدا</h1>
     <p>بالاترین و پایین‌ترین نتی که خوانده می‌شود، گسترهٔ صدا، و حرکت نرم صدا روی خطوط نت.</p>
+    <div id="offlineBadge" style="display:none">
+      🔒 ۱۰۰٪ روی همین دستگاه — بدون اینترنت، بدون سرور
+    </div>
   </header>
 
   <nav class="tabbar" role="tablist" aria-label="بخش‌ها">
@@ -472,21 +481,28 @@
       <h2>⚡ حالت لحظه‌ای</h2>
       <div class="hint">
         در این حالت هیچ صدایی ذخیره نمی‌شود: صدا فقط همان لحظه تحلیل و دور ریخته می‌شود.
-        با بستن میکروفون، همه‌چیز پاک می‌شود و چیزی روی دستگاه یا سرور نمی‌ماند.
+        با بستن میکروفون، همه‌چیز پاک می‌شود و چیزی روی دستگاه ذخیره نمی‌ماند.
         اگر می‌خواهی خوانده‌هایت بماند، «⏺ با ضبط» را انتخاب کن.
       </div>
     </div>
   </section>
 </div>
 
+<!-- موتور آفلاین: همهٔ تحلیل روی همین دستگاه، بدون هیچ سروری -->
+<script src="engine.js"></script>
+<script src="parallel.js"></script>
+<script src="offline.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════
    ابزارهای پایه
    ═══════════════════════════════════════════════════════════════════ */
-/* آدرس سرور: پیش‌فرض همان مبدأ (وب). در اپ اندروید آینده می‌توان با
-   ?api=https://server.example   یا  localStorage.api_base  سرور را جدا کرد. */
-const API = ((new URLSearchParams(location.search).get('api')
-  || localStorage.getItem('api_base') || '') + '').replace(/\/+$/, '');
+/* آدرس سرور: در حالت آفلاین (پیش‌فرض) خالی است و همهٔ کارها محلی انجام
+   می‌شود. برای اجرای نسخهٔ سروری می‌توان با ?engine=server و
+   ?api=https://server.example (یا localStorage.api_base) سرور را جدا کرد. */
+const API = (window.LocalOffline && window.LocalOffline.enabled)
+  ? ''      /* حالت آفلاین: هیچ سروری در کار نیست */
+  : (((new URLSearchParams(location.search).get('api')
+      || localStorage.getItem('api_base') || '') + '').replace(/\/+$/, ''));
 
 /** آدرس WebSocket بر اساس API (اگر API خالی باشد، همان مبدأ صفحه) */
 function wsUrl(path) {
@@ -500,6 +516,11 @@ function wsUrl(path) {
     return `${proto}://${location.host}${path}`;
   }
 }
+/* آدرس‌های نسبیِ برگشتی از سرور (مثل /api/file/…) در اپ اندروید — که صفحه از
+   مبدأ دیگری باز می‌شود — باید به آدرس سرور چسبانده شوند. در نسخهٔ وب API خالی
+   است و این تابع رشته را دست‌نخورده برمی‌گرداند */
+const apiPath = p => (!p ? p : ((API && String(p).charAt(0) === '/') ? API + p : p));
+
 const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const faN = n => String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
 const midiName = m => (m == null || isNaN(m)) ? '—' : NOTE_NAMES[Math.round(m) % 12] + (Math.floor(Math.round(m) / 12) - 1);
@@ -514,14 +535,14 @@ const fmtClock = s => {
 async function apiRequest(url, options = {}) {
   let res;
   try { res = await fetch(url, options); }
-  catch (e) { throw new Error('اتصال به سرور برقرار نشد — سرور در حال اجراست؟'); }
+  catch (e) { throw new Error('پردازش محلی شروع نشد — صفحه را یک‌بار تازه کن.'); }
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('application/json')) {
     const txt = await res.text();
-    throw new Error('پاسخ نامعتبر از سرور: ' + txt.slice(0, 140));
+    throw new Error('پاسخ نامعتبر از موتور محلی: ' + txt.slice(0, 140));
   }
   const data = await res.json();
-  if (!res.ok || data.error) throw new Error(data.error || ('خطای سرور ' + res.status));
+  if (!res.ok || data.error) throw new Error(data.error || ('خطای موتور محلی ' + res.status));
   return data;
 }
 
@@ -573,13 +594,26 @@ function setFile(f) {
    پیشرفت
    ═══════════════════════════════════════════════════════════════════ */
 const STAGE_FA = {
-  loading: 'بارگذاری فایل', pitch: 'استخراج پردهٔ صدا', clean: 'پاک‌سازی و هموارسازی',
-  notes: 'تفکیک نت‌ها', plot: 'ساخت تصویر', video: 'رندر ویدیو',
+  loading: 'بارگذاری فایل', preparing: 'آماده‌سازی صدا', pitch: 'استخراج پردهٔ صدا',
+  octave: 'اصلاح اکتاو', pyin: 'هم‌سنجی دو موتور', clean: 'پاک‌سازی و هموارسازی',
+  notes: 'تفکیک نت‌ها', refine: 'پالایش هر نت', plot: 'ساخت تصویر', video: 'رندر ویدیو',
   analyzing: 'تحلیل ضبط', uploading: 'ارسال ضبط', done: 'پایان'
 };
+
+/* نشان موازی‌سازی: چند هسته در حال کار است */
+function parallelTag() {
+  try {
+    const p = LocalOffline && LocalOffline.parallel ? LocalOffline.parallel() : null;
+    if (p && p.available) return ' ⚡' + faN(p.cores) + ' هسته';
+  } catch (e) {}
+  return '';
+}
+
 function setProgress(prefix, stage, frac) {
   $(prefix + 'Wrap').style.display = 'block';
-  $(prefix + 'Label').textContent = (STAGE_FA[stage] || stage || 'در حال پردازش') + '…';
+  const heavy = (stage === 'pitch' || stage === 'pyin' || stage === 'refine');
+  $(prefix + 'Label').textContent =
+    (STAGE_FA[stage] || stage || 'در حال پردازش') + (heavy ? parallelTag() : '') + '…';
   const pct = Math.round(frac * 100);
   $(prefix + 'Fill').style.width = pct + '%';
   $(prefix + 'Pct').textContent = faN(pct) + '٪';
@@ -711,16 +745,16 @@ function renderReport(r) {
   /* ── دکمه‌های ذخیرهٔ آفلاین ── */
   const dls = (r.meta && r.meta.downloads) || {};
   if (dls.original) {
-    $('dlOriginal').href = dls.original;
+    $('dlOriginal').href = apiPath(dls.original);
     $('dlOriginal').setAttribute('download', (r.meta && r.meta.original_name) || 'original');
   }
-  if (dls.image) $('dlImage').href = dls.image;
-  if (dls.report) $('dlReport').href = dls.report;
+  if (dls.image) $('dlImage').href = apiPath(dls.image);
+  if (dls.report) $('dlReport').href = apiPath(dls.report);
   $('dlVideo').style.display = 'none';
   $('galleryBox').style.display = 'none';
 
   const audio = $('audioPlayer');
-  audio.src = r.meta.audio_url;
+  audio.src = apiPath(r.meta.audio_url);
   $('results').style.display = 'block';
   $('videoBox').style.display = 'none';
   $('videoStatus').textContent = '';
@@ -831,6 +865,12 @@ function galleryMessage(msg, isErr) {
 }
 
 function triggerDownload(url, name) {
+  /* در اپ اندروید، مرورگرِ درون‌برنامه‌ای blob را ذخیره نمی‌کند؛ پل بومی جایش می‌نشیند.
+     در مرورگر، NativeBridge وجود ندارد و مسیر زیر دقیقاً مثل قبل اجرا می‌شود. */
+  if (window.NativeBridge && window.NativeBridge.available) {
+    window.NativeBridge.save(url, name);
+    return;
+  }
   const a = document.createElement('a');
   a.href = url;
   a.download = name || '';
@@ -850,9 +890,17 @@ async function saveVideoToGallery() {
   const base = (STATE.file && STATE.file.name) ? String(STATE.file.name).replace(/\.[^.]+$/, '')
              : ((STATE.report && STATE.report.meta && STATE.report.meta.original_name)
                 ? String(STATE.report.meta.original_name).replace(/\.[^.]+$/, '') : '');
-  const name = (base || 'radde-seda') + '-radde-seda.mp4';
+  const vname = STATE.videoName || 'radde-seda.mp4';
+  const ext = (vname.match(/\.[a-z0-9]+$/i) || ['.mp4'])[0];
+  const name = (base || 'radde-seda') + '-radde-seda' + ext;
 
   try {
+    /* در اپ اندروید: ویدیو مستقیم در گالری (پوشهٔ Movies) ذخیره می‌شود */
+    if (window.NativeBridge && window.NativeBridge.available) {
+      window.NativeBridge.saveToGallery(url, name);
+      galleryMessage('ویدیو در حال ذخیره در گالری است… اگر پیام «ذخیره شد» نیامد، از دکمهٔ «🎬 فایل ویدیو» استفاده کن.');
+      return;
+    }
     let file = null;
     try {
       const res = await fetch(url);
@@ -873,7 +921,7 @@ async function saveVideoToGallery() {
       setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
       galleryMessage('فایل ویدیو ذخیره شد. اگر در گالری دیده نشد، از پوشهٔ «دانلودها» به گالری منتقلش کن.');
     } else {
-      // آخرین راه: لینک مستقیم سرور (فایل با نام گالری‌پسند ذخیره می‌شود)
+      // آخرین راه: لینک مستقیم فایل (در حالت آفلاین همان blob محلی است)
       triggerDownload(url, name);
       galleryMessage('در حال دانلود فایل ویدیو…');
     }
@@ -905,12 +953,13 @@ $('videoBtn').onclick = async () => {
     const res = await waitJob(r.job_id, 'vProg');
     hideProgress('vProg');
 
-    $('videoPlayer').src = res.video_url;
+    $('videoPlayer').src = apiPath(res.video_url);
     $('videoBox').style.display = 'block';
 
     const dl = $('dlVideo');
     dl.href = `${API}/api/download/${STATE.jobId}/video`;
-    dl.setAttribute('download', 'radde-seda.mp4');
+    dl.setAttribute('download', res.video_name || 'radde-seda.mp4');
+    STATE.videoName = res.video_name || 'radde-seda.mp4';
     dl.style.display = 'inline-flex';
     $('galleryBox').style.display = 'block';
 
@@ -1250,7 +1299,10 @@ const LIVE = {
   mode: 'live',               // live | rec
   ws: null, ctx: null, stream: null, node: null, recNode: null, on: false,
   midi: null, hi: null, lo: null, points: [], startAt: 0,
-  chunks: [], recStart: 0, recTimer: null, takes: []
+  chunks: [], recStart: 0, recTimer: null, takes: [],
+  /* نمایش نرم: target از موتور می‌آید، shown با میان‌یابی نرم به آن می‌رسد */
+  target: null, shown: null, dotAlpha: 0, silent: true,
+  raf: null, lastTs: 0, lastDraw: 0, lastLabel: ''
 };
 
 const MODE_HINT = {
@@ -1290,6 +1342,7 @@ checkIframe();
 
 function resetSession() {
   LIVE.hi = null; LIVE.lo = null; LIVE.points = []; LIVE.midi = null;
+  LIVE.target = null; LIVE.shown = null; LIVE.dotAlpha = 0; LIVE.lastLabel = '';
   $('liveHi').textContent = '—'; $('liveLo').textContent = '—';
   $('liveSpan').textContent = '—'; $('liveDur').textContent = '—';
   $('liveNote').textContent = '—';
@@ -1341,6 +1394,8 @@ $('micBtn').onclick = async () => {
   LIVE.ws.onopen = () => {
     LIVE.ws.send(JSON.stringify({ sample_rate: LIVE.ctx.sampleRate, reset: true }));
     LIVE.on = true;
+    LIVE.target = null; LIVE.shown = null; LIVE.dotAlpha = 0; LIVE.lastLabel = '';
+    startLiveLoop();
     LIVE.startAt = performance.now() / 1000;
     LIVE.recStart = Date.now();
     $('micBtn').classList.add('on');
@@ -1356,20 +1411,33 @@ $('micBtn').onclick = async () => {
   LIVE.ws.onmessage = ev => {
     try {
       const d = JSON.parse(ev.data);
+      LIVE.silent = !!d.silent;
+
       if (d.note) {
-        LIVE.midi = d.note.midi_exact;
+        LIVE.target = d.note.midi_exact;
         LIVE.points.push({ t: performance.now() / 1000, m: d.note.midi_exact });
         if (LIVE.points.length > 1600) LIVE.points.shift();
-        $('liveNote').textContent = d.note.note_name;
+        /* متن فقط وقتی عوض شود که واقعاً عوض شده (بدون لرزش و چیدمان مجدد) */
+        if (d.note.note_name !== LIVE.lastLabel) {
+          LIVE.lastLabel = d.note.note_name;
+          $('liveNote').textContent = d.note.note_name;
+        }
         $('liveSub').textContent =
           `${d.note.f0_hz} Hz · ${d.note.cents_offset > 0 ? '+' : ''}${d.note.cents_offset} سنت`;
+      } else if (d.silent) {
+        LIVE.target = null;
+        LIVE.lastLabel = '';
+        $('liveNote').textContent = '—';
+        $('liveSub').textContent = '🔇 سکوت — صدایی شنیده نمی‌شود';
       }
+      /* بستهٔ «نگه‌داشت» بین دو نت عمداً نمایش را تغییر نمی‌دهد */
+
       const s = d.session || {};
       if (s.highest) { LIVE.hi = s.highest; $('liveHi').textContent = s.highest.note_name; }
       if (s.lowest) { LIVE.lo = s.lowest; $('liveLo').textContent = s.lowest.note_name; }
       if (s.span_semitones != null) $('liveSpan').textContent = faN(s.span_semitones) + ' نیم‌پرده';
       $('liveDur').textContent = fmtClock((performance.now() / 1000) - LIVE.startAt);
-      drawLive();
+      /* رسم در حلقهٔ rAF انجام می‌شود، نه در هر پیام */
     } catch (e) {}
   };
   LIVE.ws.onclose = () => { if (LIVE.on) stopLive(); };
@@ -1394,6 +1462,8 @@ $('micBtn').onclick = async () => {
 };
 
 function stopLive() {
+  stopLiveLoop();
+  LIVE.target = null; LIVE.shown = null; LIVE.dotAlpha = 0;
   const wasRec = LIVE.mode === 'rec' && LIVE.chunks.length > 0;
   const sampleRate = LIVE.ctx ? LIVE.ctx.sampleRate : 0;
   const chunks = LIVE.chunks.slice();
@@ -1485,8 +1555,8 @@ function renderTakes() {
         </div>
         <button data-act="play" data-id="${t.id}" title="پخش">▶</button>
         <a href="${t.url}" download="${t.name}" title="ذخیرهٔ صدا">⬇</a>
-        ${dls.image ? `<a href="${dls.image}" title="ذخیرهٔ تصویر">🖼</a>` : ''}
-        ${dls.report ? `<a href="${dls.report}" title="ذخیرهٔ گزارش">📄</a>` : ''}
+        ${dls.image ? `<a href="${apiPath(dls.image)}" title="ذخیرهٔ تصویر">🖼</a>` : ''}
+        ${dls.report ? `<a href="${apiPath(dls.report)}" title="ذخیرهٔ گزارش">📄</a>` : ''}
         ${t.report ? `<button data-act="open" data-id="${t.id}" title="نمایش تحلیل">🎚</button>` : ''}
       </div>`;
   }).join('');
@@ -1520,7 +1590,7 @@ async function analyzeTake(take) {
 
     const report = await waitJob(up.job_id, 'prog');
     take.report = report;
-    take.imageUrl = report.meta.visualization_url;
+    take.imageUrl = apiPath(report.meta.visualization_url);
     take.downloads = report.meta.downloads;
     take.busy = false;
     renderTakes();
@@ -1540,6 +1610,58 @@ function openTake(take) {
   STATE.report = take.report;
   renderReport(take.report);
   switchTab('Upload');
+}
+
+/* ═══════════ حلقهٔ نمایش نرم زنده (rAF + میان‌یابی) ═══════════
+   پیام‌ها هر ~۱۲۰ms می‌رسند، ولی صفحه ۶۰ بار در ثانیه رسم می‌شود؛ 따라서
+   نقطه روی خطوط نت «می‌لغزد» نه اینکه بپرد. متن‌ها فقط با تغییر واقعی نت
+   عوض می‌شوند تا چیدمان صفحه هر ۱۲۰ms بازچینی نشود. */
+/* rAF در همهٔ WebViewهای قدیمی هم هست، ولی اگر نبود به تایمر برمی‌گردیم */
+const raf = (fn) => (typeof requestAnimationFrame === 'function')
+  ? requestAnimationFrame(fn) : setTimeout(() => fn(performance.now()), 33);
+const caf = (id) => {
+  try {
+    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id);
+    else clearTimeout(id);
+  } catch (e) {}
+};
+
+function startLiveLoop() {
+  if (LIVE.raf) return;
+  LIVE.lastTs = 0;
+  LIVE.raf = raf(liveFrame);
+}
+
+function stopLiveLoop() {
+  if (LIVE.raf) caf(LIVE.raf);
+  LIVE.raf = null;
+  LIVE.lastTs = 0;
+}
+
+function liveFrame(ts) {
+  if (!LIVE.on) { LIVE.raf = null; return; }
+  LIVE.raf = raf(liveFrame);
+
+  const dt = LIVE.lastTs ? Math.min(0.06, (ts - LIVE.lastTs) / 1000) : 0.016;
+  LIVE.lastTs = ts;
+
+  /* نزدیک شدن نرم به نت هدف (بدون پرش، بدون تأخیر محسوس) */
+  if (LIVE.target != null) {
+    if (LIVE.shown == null || Math.abs(LIVE.target - LIVE.shown) > 6) {
+      LIVE.shown = LIVE.target;               // پرش بزرگ = نت جدید، نه لغزش
+    } else {
+      const k = 1 - Math.exp(-dt / 0.055);
+      LIVE.shown += (LIVE.target - LIVE.shown) * k;
+      if (Math.abs(LIVE.target - LIVE.shown) < 0.004) LIVE.shown = LIVE.target;
+    }
+    LIVE.dotAlpha = Math.min(1, LIVE.dotAlpha + dt / 0.10);
+  } else {
+    LIVE.dotAlpha = Math.max(0, LIVE.dotAlpha - dt / 0.18);
+    if (LIVE.dotAlpha <= 0) LIVE.shown = null;
+  }
+
+  /* حداکثر ~۳۰ رسم در ثانیه: نرم برای چشم، سبک برای باتری */
+  if (ts - LIVE.lastDraw >= 32) { LIVE.lastDraw = ts; drawLive(); }
 }
 
 /* ═══════════ بوم زنده (مختصات CSS + DPR) ═══════════ */
@@ -1562,8 +1684,9 @@ function drawLive() {
   g.strokeStyle = 'rgba(120,152,205,.28)'; g.lineWidth = 1.4;
   roundRect(g, 3, 3, W - 6, H - 6, 14); g.stroke();
 
-  let center = LIVE.midi;
-  if (center == null) center = LIVE.hi ? LIVE.hi.midi : 60;
+  let center = (LIVE.shown != null) ? LIVE.shown
+             : (LIVE.target != null) ? LIVE.target
+             : (LIVE.hi ? LIVE.hi.midi : 60);
   const loLim = Math.round(center) - 12;
   const hiLim = Math.round(center) + 12;
   const yOf = m => MT + (1 - (m - loLim) / (hiLim - loLim)) * (H - MT - MB);
@@ -1609,9 +1732,11 @@ function drawLive() {
     g.fillText(`${tag} ${rec.note_name}`, tx, y - 4);
   });
 
-  // نقطهٔ جاری
-  if (LIVE.midi != null) {
-    const y = yOf(LIVE.midi);
+  // نقطهٔ جاری (با محو شدن نرم وقتی صدا قطع می‌شود)
+  if (LIVE.shown != null && LIVE.dotAlpha > 0.01) {
+    g.save();
+    g.globalAlpha = LIVE.dotAlpha;
+    const y = yOf(LIVE.shown);
     const x = W / 2;
     const R = phone ? 28 : 24;
     const glow = g.createRadialGradient(x, y, 0, x, y, R);
@@ -1622,6 +1747,7 @@ function drawLive() {
     g.beginPath(); g.arc(x, y, R, 0, Math.PI * 2); g.fill();
     g.fillStyle = '#fffaf0';
     g.beginPath(); g.arc(x, y, phone ? 5.5 : 4.6, 0, Math.PI * 2); g.fill();
+    g.restore();
   }
 }
 
@@ -1648,11 +1774,13 @@ window.addEventListener('beforeunload', e => {
 });
 
 /* ثبت Service Worker (آفلاین + نصب‌پذیری) */
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && !window.NativeApp) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   });
 }
 </script>
+<!-- پل بومی اپ اندروید (در مرورگر بی‌اثر است) -->
+<script src="native.js"></script>
 </body>
 </html>
