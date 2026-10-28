@@ -27,18 +27,13 @@
 
 import argparse
 import json
+import math
 import os
 from datetime import datetime
 
 import numpy as np
 
-from pitch_engine import (
-    clean_pitch_contour,
-    extract_pitch_contour_max_accuracy,
-    freq_to_note_info,
-    segment_notes,
-    smooth_pitch_contour,
-)
+from pitch_engine import freq_to_note_info
 
 # نت‌هایی که کمتر از این کشش دارند «گذرا» هستند و در تعیین بالاترین/پایین‌ترین
 # نتِ خوانده‌شدهٔ کاربر حساب نمی‌شوند (جلوگیری از اثر نویز و لرزش‌های لحظه‌ای).
@@ -98,52 +93,6 @@ def _extract_audio_ffmpeg(path, out_path, sr=None):
     return out_path
 
 
-def _prepare_wav(path, denoise=False, work_dir=None, keep_work_wav=False):
-    """
-    ورودی را به یک WAV مونو تبدیل می‌کند (در صورت نیاز denoise).
-
-    خروجی: (wav_path, temp_path_or_None)
-    فایل موقت با نام ثابت `audio_for_video.wav` ساخته می‌شود تا همان صدای
-    تحلیل‌شده (مثلاً نویزگرفته‌شده) برای mux ویدیو استفاده شود — بدون
-    کپی اضافه. با keep_work_wav=True دست‌نخورده می‌ماند (پاک‌سازی نهایی با
-    TTL پوشهٔ job انجام می‌شود).
-
-    ورودی می‌تواند **ویدیو** هم باشد (mp4/mkv/mov/webm): در این حالت صدا با
-    ffmpeg جدا و به WAV تبدیل می‌شود.
-    """
-    ext = os.path.splitext(path)[1].lower()
-    base = work_dir or os.path.dirname(os.path.abspath(path))
-    tmp = os.path.join(base, "audio_for_video.wav")
-
-    if ext in AUDIO_NATIVE_EXT and not denoise:
-        return path, None
-
-    try:
-        import librosa
-        import soundfile as sf
-
-        try:
-            y, sr = librosa.load(path, sr=None, mono=True)
-        except Exception:
-            # ویدیو یا کانتینر ناشناخته → اول صدا را با ffmpeg بیرون بکش
-            _extract_audio_ffmpeg(path, tmp)
-            y, sr = librosa.load(tmp, sr=None, mono=True)
-
-        if denoise:
-            try:
-                import noisereduce as nr
-                y = nr.reduce_noise(y=y, sr=sr, stationary=False)
-            except ImportError:
-                print("هشدار: noisereduce نصب نیست — کاهش نویز انجام نشد.")
-
-        sf.write(tmp, y, sr)
-        return tmp, (None if keep_work_wav else tmp)
-    except Exception:
-        # آخرین تلاش: فقط ffmpeg (مثلاً اگر librosa در دسترس نبود)
-        _extract_audio_ffmpeg(path, tmp)
-        return tmp, (None if keep_work_wav else tmp)
-
-
 # ============================================================================
 # تحلیل
 # ============================================================================
@@ -166,6 +115,8 @@ def _fmt_note(note):
         "start": round(float(note.get("start") or 0.0), 2),
         "duration": round(float(note.get("duration") or 0.0), 2),
         "stability_cents": round(float(note.get("stability_cents") or 0.0), 1),
+        "confidence": round(float(note.get("confidence") or 0.0), 2),
+        "glide_cents": round(float(note.get("glide_cents") or 0.0), 1),
     }
 
 
@@ -260,28 +211,34 @@ def analyze_range(path, denoise=False, make_plot=True, plot_dir=None,
             progress_callback(stage, frac)
 
     _cb("loading", 0.02)
-    wav_path, tmp_path = _prepare_wav(path, denoise=denoise, work_dir=work_dir,
-                                      keep_work_wav=keep_work_wav)
+    tmp_path = None
 
     try:
-        _cb("pitch", 0.05)
+        # ── موتور استاندارد (analysis_engine) ────────────────────────────────
+        # تفاوت کلیدی با نسخهٔ قبلی: پیش از هر تحلیلی، ورودی به یک «مبنای
+        # ثابت» تبدیل می‌شود (مونو، ۲۲٬۰۵۰ هرتز، بدون DC، بالاگذر ۴۵ هرتز،
+        # پیک ۰٫۹). بنابراین همان اجرا فارغ از نرخ نمونه/تعداد کانال/بلندی/
+        # فرمت، خروجی یکسان می‌دهد. سپس F0 با Praat (very_accurate)،
+        # اصلاح «نردبان هارمونیک» (اکتاو/پنجم/چهارم و گم‌شدن فرکانس پایه)،
+        # هم‌سنجی با pYIN و تفکیک نت با هیسترزیس انجام می‌شود.
+        from analysis_engine import analyze_pitch
 
-        def _pitch_progress(done, total):
-            _cb("pitch", 0.05 + 0.70 * (done / max(total, 1e-9)))
+        def _pitch_progress(stage, frac):
+            _cb(stage, 0.02 + 0.80 * float(frac))
 
-        times, freqs, sr, duration = extract_pitch_contour_max_accuracy(
-            wav_path, progress_callback=_pitch_progress,
+        pitch = analyze_pitch(
+            path, work_dir=(work_dir or os.path.dirname(os.path.abspath(path))),
+            denoise=denoise, progress_callback=_pitch_progress,
         )
-        times = np.asarray(times, dtype=float)
-        freqs = np.asarray(freqs, dtype=float)
-
-        _cb("clean", 0.78)
-        freqs = clean_pitch_contour(freqs)
-        freqs = smooth_pitch_contour(freqs, median_window=5)
+        times = np.asarray(pitch["times"], dtype=float)
+        freqs = np.asarray(pitch["freqs"], dtype=float)
+        sr = pitch["sr"]
+        duration = pitch["duration"]
+        wav_path = pitch["wav_path"]
+        quality = pitch.get("quality") or {}
 
         _cb("notes", 0.85)
-        notes_raw = segment_notes(times, freqs, min_duration=0.06,
-                                  stability_cents=60)
+        notes_raw = pitch["notes"]
         notes = [n for n in (_fmt_note(n) for n in notes_raw) if n]
         notes.sort(key=lambda n: n["start"])
 
@@ -360,13 +317,15 @@ def analyze_range(path, denoise=False, make_plot=True, plot_dir=None,
         meta = {
             "file": os.path.basename(path),
             "analyzed_at": datetime.now().isoformat(timespec="seconds"),
-            "engine": "Praat pitch-ac (very_accurate, two-pass, windowed)",
+            "engine": "radde-seda v2 — standardized input + Praat (very_accurate) "
+                      "+ harmonic-ladder octave correction + pYIN cross-check",
             "sample_rate": int(sr),
             "denoise": bool(denoise),
         }
 
         report = {
             "meta": meta,
+            "quality": quality,
             "basic": {
                 "duration_sec": round(float(duration), 2),
                 "voiced_ratio_pct": round(voiced_ratio, 1),
@@ -425,9 +384,32 @@ def analyze_range(path, denoise=False, make_plot=True, plot_dir=None,
                 pass
 
 
+def json_safe(obj):
+    """
+    هر مقدار را به چیزی تبدیل می‌کند که در JSON معتبر باشد.
+
+    مقادیر NaN/بی‌نهایت (که از نهیچ محاسبهٔ آماری‌ای نباید به مرورگر برسند)
+    به null تبدیل می‌شوند؛ در غیر این صورت پاسخ API با خطای ۵۰۰ می‌شکند.
+    """
+    if isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return json_safe(obj.tolist())
+    if isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating, float)):
+        f = float(obj)
+        return f if math.isfinite(f) else None
+    return obj
+
+
 def public_report(report):
-    """نسخهٔ JSON-سازگار گزارش (حذف کلیدهای خصوصی)."""
-    return {k: v for k, v in report.items() if not k.startswith("_")}
+    """نسخهٔ JSON-سازگار گزارش (حذف کلیدهای خصوصی + پاک‌سازی NaN)."""
+    return json_safe({k: v for k, v in report.items() if not k.startswith("_")})
 
 
 # ============================================================================

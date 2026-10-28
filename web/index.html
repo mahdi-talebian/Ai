@@ -155,6 +155,18 @@
     font-variant-numeric:tabular-nums;
   }
   .chip.gold{background:rgba(247,209,113,.13);border-color:rgba(247,209,113,.3);color:var(--gold2)}
+  /* ── نشان کیفیت تحلیل ── */
+  .qual{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .qualBadge{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;
+    font-size:.72rem;font-weight:700;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05)}
+  .qualBadge.excellent{background:rgba(120,224,164,.14);border-color:rgba(120,224,164,.34);color:#8ff0b8}
+  .qualBadge.good{background:rgba(140,196,255,.13);border-color:rgba(140,196,255,.3);color:#a9d1ff}
+  .qualBadge.fair{background:rgba(247,209,113,.13);border-color:rgba(247,209,113,.32);color:var(--gold2)}
+  .qualBadge.poor{background:rgba(255,138,138,.13);border-color:rgba(255,138,138,.32);color:#ffb3b3}
+  .qualMeta{font-size:.68rem;color:var(--muted);direction:ltr}
+  .qualWarn{margin-top:8px;font-size:.73rem;line-height:1.75;color:#ffd9a8;
+    background:rgba(247,209,113,.07);border:1px solid rgba(247,209,113,.16);border-radius:10px;padding:8px 10px}
+  .qualWarn b{color:var(--gold2)}
   .octMini{display:flex;align-items:center;gap:10px;margin-top:9px}
   .octDots{display:flex;gap:3px;flex:1}
   .octDot{height:7px;flex:1;border-radius:99px;background:rgba(255,255,255,.09)}
@@ -324,6 +336,11 @@
           </div>
         </div>
         <div class="hint" id="rawHint" style="display:none;margin-top:10px;font-size:.74rem"></div>
+        <div class="qual" id="qualBox" style="display:none">
+          <span class="qualBadge" id="qualBadge">—</span>
+          <span class="qualMeta" id="qualMeta"></span>
+        </div>
+        <div class="qualWarn" id="qualWarn" style="display:none"></div>
 
         <div class="miniGrid">
           <div class="mini"><div class="cap">🎯 مرکز صدا</div><div class="val" id="centerVal">—</div></div>
@@ -662,6 +679,9 @@ function renderReport(r) {
   $('rawHint').textContent = raw;
   $('rawHint').style.display = raw ? 'block' : 'none';
 
+  /* ── نشان کیفیت + هشدارهای موتور تحلیل ── */
+  renderQuality(r.quality);
+
   $('centerVal').textContent = rg.center ? rg.center.note_name : '—';
   $('notesVal').textContent = faN((r.basic || {}).num_notes_detected ?? '—');
   $('sungVal').textContent = faN((r.basic || {}).sung_sec ?? '—') + ' s';
@@ -703,6 +723,43 @@ function renderReport(r) {
   audio.onended = () => { $('liveBadge').style.display = 'none'; drawTrace(); };
 
   setTimeout(() => $('results').scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
+}
+
+/* نشان کیفیت تحلیل: وضعیت موتور + هشدارها + آماره‌های اتکاپذیری */
+function renderQuality(q) {
+  const box = $('qualBox'), warn = $('qualWarn');
+  if (!q || !q.status) { box.style.display = 'none'; warn.style.display = 'none'; return; }
+  const map = {
+    excellent: { t: '✅ دقت بالا', d: 'ورودی سالم بود؛ نتیجه کاملاً قابل اتکاست.' },
+    good:      { t: '👍 دقت خوب', d: 'نتیجه قابل اتکاست، اما جای بهبود در ضبط هست.' },
+    fair:      { t: '⚠️ دقت متوسط', d: 'شرایط ضبط محدودکننده بود؛ عددها را با احتیاط ببین.' },
+    poor:      { t: '❗ دقت پایین', d: 'ضبط برای تحلیل مناسب نبود؛ با ضبط بهتری دوباره امتحان کن.' }
+  };
+  const m = map[q.status] || map.good;
+  const b = $('qualBadge');
+  b.className = 'qualBadge ' + q.status;
+  b.textContent = m.t;
+  b.title = m.d;
+
+  const bits = [];
+  if (q.pyin_agreement_pct != null) bits.push(`two-engine ${Math.round(q.pyin_agreement_pct)}%`);
+  if (q.mean_note_confidence != null) bits.push(`note conf ${q.mean_note_confidence}`);
+  if (q.sample_rate_in && q.sample_rate_in !== q.sample_rate_used) bits.push(`${q.sample_rate_in}→${q.sample_rate_used} Hz`);
+  if (q.channels_in > 1) bits.push(`${q.channels_in}ch→mono`);
+  if (q.downmix && String(q.downmix).indexOf('phase_safe') >= 0) bits.push('phase-safe');
+  const oct = q.octave_fixes || {};
+  const fixes = (oct.halved || 0) + (oct.doubled || 0);
+  if (fixes > 0) bits.push(`${faN(fixes)} اصلاح اکتاو`);
+  $('qualMeta').textContent = bits.join(' · ');
+  $('qualBox').style.display = 'flex';
+
+  const ws = q.warnings || [];
+  if (ws.length) {
+    warn.innerHTML = '<b>نکته‌های ضبط:</b><br>' + ws.map(w => '• ' + w).join('<br>');
+    warn.style.display = 'block';
+  } else {
+    warn.style.display = 'none';
+  }
 }
 
 /* گستره به همهٔ شکل‌ها: نیم‌پرده، پرده، اکتاو + باقی‌مانده، درصد اکتاو */

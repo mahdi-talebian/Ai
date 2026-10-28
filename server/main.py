@@ -51,7 +51,7 @@ CACHE_DIR.mkdir(exist_ok=True)
 
 sys.path.insert(0, str(PYTHON_DIR))
 
-from range_analyzer import analyze_range, public_report          # noqa: E402
+from range_analyzer import analyze_range, json_safe, public_report   # noqa: E402
 from pitch_engine import extract_pitch_chunk, freq_to_note_info  # noqa: E402
 import trace_video                                               # noqa: E402
 
