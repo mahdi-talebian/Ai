@@ -120,12 +120,25 @@ def _fmt_note(note):
     }
 
 
+def _harmonic_ok(n):
+    """
+    آیا این نت در طیف خودش «شاهد» دارد؟
+
+    هر نت با «برازش هارمونیک» بررسی می‌شود و تعداد هارمونیک‌های واقعی‌اش
+    ذخیره می‌شود؛ نتی که هیچ هارمونیکی ندارد (نویز/جهش لحظه‌ای) نباید
+    بالاترین یا پایین‌ترین نتِ کاربر را تعیین کند.
+    """
+    h = n.get("harmonics")
+    return True if h is None else int(h) >= 1
+
+
 def _pick(notes, choose_max):
     """بالاترین/پایین‌ترین نت پایدار."""
     usable = [n for n in notes
               if (n.get("duration") or 0) >= MIN_NOTE_SEC
               and (n.get("stability_cents") is None
                    or n.get("stability_cents") <= MAX_STABILITY_CENTS)
+              and _harmonic_ok(n)
               and (n.get("f0_hz") or 0) > 0]
     if not usable:
         usable = [n for n in notes if (n.get("f0_hz") or 0) > 0]
@@ -145,6 +158,8 @@ def _robust_extremes(notes, sung_total):
     agg = {}
     for n in notes:
         if not (n.get("f0_hz") or 0) > 0:
+            continue
+        if not _harmonic_ok(n):
             continue
         key = int(n["midi"])
         row = agg.setdefault(key, {"sec": 0.0, "count": 0, "best": n})

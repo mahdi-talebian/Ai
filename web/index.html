@@ -377,11 +377,19 @@
         <div class="saveGrid">
           <a class="btn secondary" id="dlOriginal" href="#"><span class="em">🎵</span> فایل اصلی</a>
           <a class="btn secondary" id="dlImage" href="#"><span class="em">🖼</span> تصویر تحلیل</a>
-          <a class="btn secondary" id="dlVideo" href="#" style="display:none"><span class="em">🎬</span> ویدیو</a>
+          <a class="btn secondary" id="dlVideo" href="#" style="display:none"><span class="em">🎬</span> فایل ویدیو</a>
           <a class="btn secondary" id="dlReport" href="#"><span class="em">📄</span> گزارش JSON</a>
         </div>
+        <div id="galleryBox" style="display:none;margin-top:10px">
+          <button class="primary block" id="saveVideoBtn"><span class="em">📥</span> ذخیرهٔ ویدیو در گالری</button>
+          <div class="hint" id="galleryHint" style="margin-top:6px;font-size:.73rem">
+            در اندروید پنجرهٔ اشتراک‌گذاری باز می‌شود؛ «ذخیره در گالری/Photos» را بزن.
+            در آیفون از همان پنجره «Save Video» را انتخاب کن تا در برنامهٔ Photos بیاید.
+          </div>
+        </div>
         <div class="hint" style="margin-top:8px;font-size:.73rem">
-          در اندروید فایل در پوشهٔ «دانلودها» ذخیره می‌شود.
+          بقیهٔ فایل‌ها در پوشهٔ «دانلودها» ذخیره می‌شوند. برای ذخیرهٔ ویدیو،
+          دکمهٔ «ذخیرهٔ ویدیو در گالری» بهترین مسیر در موبایل است.
         </div>
       </div>
 
@@ -613,6 +621,8 @@ $('analyzeBtn').onclick = async () => {
   }
 };
 
+if ($('saveVideoBtn')) $('saveVideoBtn').onclick = saveVideoToGallery;
+
 function waitJob(jobId, prefix) {
   return new Promise((resolve, reject) => {
     let done = false;
@@ -707,6 +717,7 @@ function renderReport(r) {
   if (dls.image) $('dlImage').href = dls.image;
   if (dls.report) $('dlReport').href = dls.report;
   $('dlVideo').style.display = 'none';
+  $('galleryBox').style.display = 'none';
 
   const audio = $('audioPlayer');
   audio.src = r.meta.audio_url;
@@ -810,6 +821,74 @@ function renderSpan(rg) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   📥 ذخیرهٔ ویدیو در گالری (Web Share) با پشتیبان دانلود ساده
+   ═══════════════════════════════════════════════════════════════════ */
+function galleryMessage(msg, isErr) {
+  const h = $('galleryHint');
+  if (!h) return;
+  if (msg) { h.textContent = msg; h.style.display = 'block'; }
+  h.style.color = isErr ? '#ffb3b3' : '';
+}
+
+function triggerDownload(url, name) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name || '';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function saveVideoToGallery() {
+  if (!STATE.jobId) return;
+  const btn = $('saveVideoBtn');
+  const label = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ در حال آماده‌سازی ویدیو…'; }
+  galleryMessage('');
+  const url = `${API}/api/download/${STATE.jobId}/video`;
+  const base = (STATE.file && STATE.file.name) ? String(STATE.file.name).replace(/\.[^.]+$/, '')
+             : ((STATE.report && STATE.report.meta && STATE.report.meta.original_name)
+                ? String(STATE.report.meta.original_name).replace(/\.[^.]+$/, '') : '');
+  const name = (base || 'radde-seda') + '-radde-seda.mp4';
+
+  try {
+    let file = null;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('دانلود ویدیو ناموفق بود');
+      const blob = await res.blob();
+      file = new File([blob], name, { type: 'video/mp4' });
+    } catch (e) {
+      file = null;
+    }
+
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      // مسیر اصلی در موبایل: پنجرهٔ اشتراک‌گذاری بومی → «ذخیره در گالری/Photos»
+      await navigator.share({ files: [file], title: 'ردِّ صدا' });
+      galleryMessage('اگر ذخیره نشد، در همان پنجره «Save Video / ذخیره در گالری» را انتخاب کن.');
+    } else if (file) {
+      const objUrl = URL.createObjectURL(file);
+      triggerDownload(objUrl, name);
+      setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
+      galleryMessage('فایل ویدیو ذخیره شد. اگر در گالری دیده نشد، از پوشهٔ «دانلودها» به گالری منتقلش کن.');
+    } else {
+      // آخرین راه: لینک مستقیم سرور (فایل با نام گالری‌پسند ذخیره می‌شود)
+      triggerDownload(url, name);
+      galleryMessage('در حال دانلود فایل ویدیو…');
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') galleryMessage('ذخیره لغو شد.');
+    else {
+      triggerDownload(url, name);
+      galleryMessage('اشتراک‌گذاری در این مرورگر ممکن نشد؛ فایل ویدیو دانلود شد.', true);
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = label || '📥 ذخیرهٔ ویدیو در گالری'; }
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    🎬 ساخت ویدیو + لینک ذخیره
    ═══════════════════════════════════════════════════════════════════ */
 $('videoBtn').onclick = async () => {
@@ -831,9 +910,11 @@ $('videoBtn').onclick = async () => {
 
     const dl = $('dlVideo');
     dl.href = `${API}/api/download/${STATE.jobId}/video`;
+    dl.setAttribute('download', 'radde-seda.mp4');
     dl.style.display = 'inline-flex';
+    $('galleryBox').style.display = 'block';
 
-    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا ذخیره‌اش کن.';
+    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.';
     $('videoStatus').className = 'status ok';
   } catch (e) {
     hideProgress('vProg');

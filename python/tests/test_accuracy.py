@@ -204,6 +204,51 @@ def run_case(name, degrade, tmpdir, verbose=False):
     }
 
 
+def check_invariance(tmpdir):
+    """
+    آزمون «یکسانی بیان»: همان اجرا با تغییرهای بی‌ربط (سکوت اضافه، بلندی،
+    قطبیت) باید خروجیِ یکسان بدهد. این همان چیزی است که کاربر می‌دید:
+    «با بعضی آپلودها درست است و با بعضی نه».
+    """
+    y, sr = synth_voice(None)
+    base = os.path.join(tmpdir, "inv_base.wav")
+    sf.write(base, y, sr)
+    variants = {
+        "پایه": y,
+        "۲ ثانیه سکوت در ابتدا": np.concatenate([np.zeros(2 * sr, np.float32), y]),
+        "۶۰ ثانیه سکوت در ابتدا": np.concatenate([np.zeros(60 * sr, np.float32), y]),
+        "نیم‌بلندی (۶dB کم‌تر)": (y * 0.5).astype(np.float32),
+        "قطبیت برعکس": (-y).astype(np.float32),
+    }
+    rows = []
+    for i, (label, arr) in enumerate(variants.items()):
+        p = os.path.join(tmpdir, f"inv_{i}.wav")
+        sf.write(p, arr, sr)
+        rep = analyze_pitch(p, work_dir=os.path.join(tmpdir, f"inv_w{i}"))
+        notes = rep["notes"]
+        hi = max(notes, key=lambda n: n["f0_hz"])
+        lo = min(notes, key=lambda n: n["f0_hz"])
+        span = 1200 * np.log2(hi["f0_hz"] / lo["f0_hz"]) / 100.0
+        rows.append({"label": label, "hi": hi["f0_hz"], "lo": lo["f0_hz"],
+                     "span": span, "n": len(notes)})
+
+    print("-" * 88)
+    print("یکسانی بیان (همان اجرا با تغییرهای بی‌ربط):")
+    for r in rows:
+        print(f"  {r['label']:<28} بالاترین {r['hi']:8.2f}  پایین‌ترین {r['lo']:8.2f}  "
+              f"گستره {r['span']:6.2f}  نت {r['n']}")
+    his = np.array([r["hi"] for r in rows])
+    los = np.array([r["lo"] for r in rows])
+    ns = np.array([r["n"] for r in rows])
+    hi_spread = 1200 * np.log2(his.max() / his.min())
+    lo_spread = 1200 * np.log2(los.max() / los.min())
+    ok = hi_spread <= 5 and lo_spread <= 5 and int(ns.max() - ns.min()) <= 1
+    print(f"  پراکندگی: بالاترین {hi_spread:.2f}¢ · پایین‌ترین {lo_spread:.2f}¢ · "
+          f"اختلاف تعداد نت {int(ns.max() - ns.min())}")
+    print("  " + ("✅ یکسان" if ok else "✗ ناهمخوان"))
+    return ok
+
+
 CASES = [
     ("wav_44k", None),
     ("wav_16k", "16k"),
@@ -283,7 +328,9 @@ def main():
 
     print("=" * 88)
     print("✅ همهٔ نسخه‌ها درست و یکسان" if ok else "❌ ناهمخوانی یا خطا دیده شد")
-    return 0 if ok else 1
+
+    inv_ok = check_invariance(tmpdir)
+    return 0 if (ok and inv_ok) else 1
 
 
 if __name__ == "__main__":

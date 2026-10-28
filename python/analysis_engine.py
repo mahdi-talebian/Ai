@@ -44,8 +44,12 @@ HIGHPASS_HZ = 45.0         # حذف رامبل/هوم/باد
 PEAK_TARGET = 0.9          # نرمال‌سازی پیک
 MIN_F0 = 55.0
 MAX_F0 = 1200.0
-TIME_STEP_SHORT = 0.005    # ≤۹۰ ثانیه: دقت دوبرابر ویبراتو/گلیساندو
-TIME_STEP_LONG = 0.01
+# گام زمانی ثابت برای همهٔ فایل‌ها. اگر گام به طول فایل وابسته باشد، همان
+# اجرا با چند ثانیه سکوتِ بیشتر در ابتدا/انتها نتیجهٔ دیگری می‌دهد — یعنی
+# «یکسان نبودن بین آپلودها». پس همیشه ۵ میلی‌ثانیه (۲۰۰ فریم در ثانیه).
+TIME_STEP = 0.005
+TIME_STEP_SHORT = TIME_STEP      # سازگاری با کد/گزارش‌های قدیمی
+TIME_STEP_LONG = TIME_STEP
 SHORT_FILE_SEC = 90.0
 PYIN_MAX_SEC = 180.0       # برای فایل‌های بلندتر، pYIN اجرا نمی‌شود (هزینه)
 WINDOW_SEC = 120.0
@@ -709,27 +713,24 @@ def fuse_with_pyin(times, freqs, strength, f0_pyin, prob_pyin, hop=0.01):
 
     p_f0 = align(f0_pyin)
     p_prob = align(prob_pyin) if prob_pyin is not None else np.ones(n)
+    weak = np.asarray(strength, dtype=float) < 0.45
 
     both = (freqs > 0) & np.isfinite(p_f0) & (np.nan_to_num(p_prob) > 0.25)
     agree = both & (np.abs(_cents(np.where(both, freqs, 1.0),
                                  np.where(both, np.nan_to_num(p_f0), 1.0))) <= 70.0)
 
+    # پیکربندی منحنی **تغییر نمی‌کند**: خروجی فقط از Praat + اصلاح نردبان
+    # می‌آید. pYIN موتور دومِ مستقل است و تنها برای «اطمینان» و «درصد
+    # هم‌رأیی» استفاده می‌شود. دلیلش صریح است: اگر pYIN جایی منحنی را عوض
+    # کند، نتیجه به اجرا‌شدن یا نشدنِ pYIN (که به طول فایل بسته است) وابسته
+    # می‌شود — همان ناهم‌خوانی بین آپلودها.
     out = freqs.copy()
-
-    # اختلاف اکتاوی: به pYIN اعتماد نکن مگر سیگنال ضعیف باشد
-    octave_diff = both & (np.abs(np.abs(_cents(np.where(both, freqs, 1.0),
-                                              np.where(both, np.nan_to_num(p_f0), 1.0))) - 1200.0) < 120.0)
-    weak = strength < 0.45
-    fix_mask = octave_diff & weak & (np.nan_to_num(p_prob) > 0.6)
-    out[fix_mask] = p_f0[fix_mask]
-
-    # پرکردن جاهای بی‌صدا که pYIN مطمئن است (ضبط‌های کم‌صدا)
-    fill = (freqs <= 0) & np.isfinite(p_f0) & (np.nan_to_num(p_prob) > 0.72)
-    out[fill] = p_f0[fill]
 
     conf = np.where(agree, np.minimum(1.0, conf + 0.25), conf)
     conf = np.where(both & ~agree, conf * 0.75, conf)
     conf = np.where(out > 0, np.maximum(conf, 0.25), 0.0)
+    # فریم‌های ضعیف در حضور توافق دو موتور کمی اعتبار می‌گیرند (بدون تغییر f0)
+    conf = np.where(weak & agree, np.minimum(1.0, conf + 0.1), conf)
 
     voiced = (freqs > 0)
     agreement_pct = (100.0 * float(np.sum(agree)) / float(np.sum(voiced))) if np.sum(voiced) else 0.0
@@ -866,6 +867,148 @@ def segment_notes_v2(times, freqs, confidence=None, sr=22050,
 
 
 # ============================================================================
+# ۵٫۵) پالایش هر نت با «برازش هارمونیک» (دقت زیر-سنت)
+# ============================================================================
+
+def _parabolic_peak(mag, i):
+    """اوج واقعی بین سه بین (درون‌یابی سهمی) → دقت بهتر از یک بین."""
+    if i <= 0 or i >= len(mag) - 1:
+        return float(i)
+    a, b, c = float(mag[i - 1]), float(mag[i]), float(mag[i + 1])
+    den = (a - 2.0 * b + c)
+    if abs(den) < 1e-12:
+        return float(i)
+    return float(i) + 0.5 * (a - c) / den
+
+
+def _note_spectrum(fh, sr, t0, t1, win_sec=0.06, nfft=16384):
+    """میانگین دامنهٔ طیف بخشِ میانیِ یک نت (بدون فریم‌های شروع/پایان)."""
+    dur = max(0.0, t1 - t0)
+    pad = min(0.15 * dur, 0.08)
+    a, b = t0 + pad, t1 - pad
+    if b - a < 0.04:
+        a, b = t0, t1
+    win_n = int(round(sr * win_sec))
+    i0 = int(max(0, round(a * sr) - win_n // 2))
+    i1 = int(min(len(fh), round(b * sr) + win_n))
+    if i1 - i0 < win_n:
+        return None
+    fh.seek(i0)
+    seg = np.asarray(fh.read(i1 - i0, dtype="float32", always_2d=False),
+                     dtype=np.float32).reshape(-1)
+    starts = np.arange(int(max(0, round(a * sr)) - i0),
+                       int(max(0, round(b * sr)) - i0),
+                       max(1, win_n // 2))
+    starts = starts[starts + win_n <= len(seg)]
+    if len(starts) == 0:
+        starts = np.array([max(0, len(seg) // 2 - win_n // 2)])
+    idx = starts[:, None] + np.arange(win_n)[None, :]
+    window = np.hanning(win_n).astype(np.float32)
+    S = np.abs(np.fft.rfft(seg[idx] * window, n=nfft, axis=1))
+    return S.mean(axis=0).astype(np.float32)
+
+
+def refine_note_f0(fh, sr, t0, t1, f0, nfft=16384, max_k=10, max_hz=4000.0):
+    """
+    فرکانس یک نت را با «برازش هارمونیک» دقیق می‌کند.
+
+    چرا؟ میانگین‌گیری روی فریم‌ها به لرزش و به یک فریمِ لبه حساس است و
+    دقتش در حد چند سنت است. اینجا جای هر هارمونیک در طیف با درون‌یابی
+    سهمی (بهتر از یک بین) پیدا و بعد f0 با کمترین مربعات روی همهٔ
+    هارمونیک‌ها برازش می‌شود: خطای نتیجه معمولاً زیر ۱ سنت است و به طول
+    فایل/نرخ نمونه/مرزهای نت وابسته نیست.
+    """
+    if f0 <= 0 or t1 - t0 < 0.08:
+        return None, 0
+    mag = _note_spectrum(fh, sr, t0, t1, nfft=nfft)
+    if mag is None or len(mag) < 16:
+        return None, 0
+    bin_hz = sr / float(nfft)
+    n_bins = len(mag)
+
+    # «پشتیبانی هارمونیک»: چند هارمونیک واقعاً در طیف دیده می‌شود؟ نتِ
+    # زیرهارمونیک (خطای اکتاو/پنجم) در فرکانس خودش هیچ هارمونیک فرد ندارد،
+    # پس این شمارش، نویز و نت‌های شبح‌وار را از نتیجه کنار می‌گذارد.
+    support = 0
+    max_mag = float(np.max(mag)) + 1e-12
+    for k in range(1, max_k + 1):
+        target = k * float(f0)
+        if target > min(max_hz, bin_hz * (n_bins - 3)):
+            break
+        span = target * (2 ** (45 / 1200.0) - 1)
+        lo = max(1, int(np.floor((target - span) / bin_hz)))
+        hi = min(n_bins - 2, int(np.ceil((target + span) / bin_hz)))
+        if hi <= lo:
+            continue
+        pk = float(np.max(mag[lo:hi + 1]))
+        if 20.0 * np.log10(pk / max_mag) >= -30.0:
+            support += 1
+
+    est = float(f0)
+    for _ in range(3):
+        num = den = 0.0
+        for k in range(1, max_k + 1):
+            target = k * est
+            if target > min(max_hz, bin_hz * (n_bins - 3)):
+                break
+            # جست‌وجو در ±۴۵ سنت حول هارمونیک مورد انتظار
+            span = target * (2 ** (45 / 1200.0) - 1)
+            lo = max(1, int(np.floor((target - span) / bin_hz)))
+            hi = min(n_bins - 2, int(np.ceil((target + span) / bin_hz)))
+            if hi <= lo:
+                continue
+            i = lo + int(np.argmax(mag[lo:hi + 1]))
+            peak_hz = _parabolic_peak(mag, i) * bin_hz
+            if peak_hz <= 0:
+                continue
+            # پیک باید به هارمونیکِ همین فرض نزدیک باشد و از نویز جدا باشد
+            if abs(1200.0 * np.log2(peak_hz / target)) > 45.0:
+                continue
+            w = float(mag[i]) / (k ** 0.5)          # هارمونیک‌های پایین مطمئن‌تر
+            num += w * k * peak_hz
+            den += w * k * k
+        if den <= 0:
+            break
+        new_est = num / den
+        if not np.isfinite(new_est) or new_est <= 0:
+            break
+        if abs(1200.0 * np.log2(new_est / est)) < 0.05:
+            est = float(new_est)
+            break
+        est = float(new_est)
+
+    if not np.isfinite(est) or est <= 0:
+        return None, support
+    if abs(1200.0 * np.log2(est / f0)) > 70.0:     # از محدودهٔ منطقی خارج شده
+        return None, support
+    return float(est), support
+
+
+def refine_notes(wav_path, sr, notes):
+    """
+    برای همهٔ نت‌ها f0 را پالایش می‌کند (بدون تغییر مرزها).
+
+    علاوه بر f0، «پایداری» هم نسبت به همین مقدار پالایش‌شده بازمحاسبه
+    نمی‌شود؛ فقط f0 جایگزین می‌شود تا خروجی با نسخهٔ قبلی سازگار بماند.
+    """
+    import soundfile as sf
+
+    if not notes:
+        return notes
+    refined = 0
+    with sf.SoundFile(wav_path) as fh:
+        for nt in notes:
+            new, support = refine_note_f0(fh, sr, nt["start"], nt["end"], nt["f0_hz"])
+            nt["harmonics"] = int(support)
+            if new is None:
+                continue
+            nt["f0_hz_coarse"] = nt["f0_hz"]
+            nt["f0_hz"] = round(new, 3)
+            refined += 1
+    return notes, refined
+
+
+# ============================================================================
 # ۶) خط لولهٔ کامل
 # ============================================================================
 
@@ -887,10 +1030,15 @@ def analyze_pitch(path, work_dir=None, denoise=False, progress_callback=None,
     wav, sr, duration, diag = prep["path"], prep["sr"], prep["duration"], prep["diag"]
 
     _cb("range", 0.06)
-    fmin, fmax = estimate_f0_bounds(wav, sr, duration)
+    # بازهٔ جست‌وجو **ثابت** است، نه برگرفته از خود فایل: اگر بازه با محتوا
+    # (یا با چند ثانیه سکوتِ اضافه) تغییر کند، خروجی هم تغییر می‌کند.
+    # ۵۵–۱۲۰۰ هرتز کل صدای انسان (باس تا سوپرانو) را می‌پوشاند و اصلاح
+    # نردبان هارمونیک، خطای اکتاو/هارمونیکِ ناشی از بازهٔ باز را می‌گیرد.
+    fmin, fmax = MIN_F0, MAX_F0
     diag["f0_range_hz"] = [round(fmin), round(fmax)]
+    diag["f0_range_mode"] = "fixed"
 
-    time_step = TIME_STEP_SHORT if duration <= SHORT_FILE_SEC else TIME_STEP_LONG
+    time_step = TIME_STEP                     # ثابت و مستقل از طول فایل
     diag["time_step_sec"] = time_step
 
     _cb("pitch", 0.10)
@@ -919,6 +1067,10 @@ def analyze_pitch(path, work_dir=None, denoise=False, progress_callback=None,
 
     _cb("notes", 0.92)
     notes = segment_notes_v2(times, freqs, conf, sr=sr)
+
+    _cb("refine", 0.95)
+    notes, n_refined = refine_notes(wav, sr, notes)
+    diag["notes_refined"] = int(n_refined)
 
     voiced = freqs > 0
     diag.update({

@@ -449,24 +449,32 @@ async def download_asset(job_id: str, kind: str):
             return JSONResponse({"error": "فایل ورودی پیدا نشد"}, status_code=404)
         path = files[0]
         name = original_name if Path(original_name).suffix else path.name
-    elif kind == "image":
+    stem = Path(original_name).stem if original_name else ""
+    stem = "".join(ch for ch in stem if ch.isprintable()).strip()[:60] or "radde-seda"
+    if kind == "image":
         path = job_dir / "range_trace.png"
-        name = "range-trace.png"
+        name = f"{stem}-radde-seda.png"
     elif kind == "report":
         path = job_dir / "report.json"
-        name = "range-report.json"
+        name = f"{stem}-radde-seda.json"
     elif kind == "video":
         path = job_dir / "range_trace.mp4"
-        name = "range-trace.mp4"
+        # نام گالری‌پسند: از نام فایل کاربر + پسوند mp4 (گالری‌ها بر اساس نام
+        # مرتب می‌کنند و «range_trace» برای کاربر بی‌معنا بود)
+        name = f"{stem}-radde-seda.mp4"
     else:
         return JSONResponse({"error": "نوع خروجی نامعتبر است"}, status_code=400)
 
     if not path.exists():
         return JSONResponse({"error": "این خروجی هنوز ساخته نشده است"}, status_code=404)
 
-    return FileResponse(str(path), filename=name,
-                        media_type="application/octet-stream" if kind == "report" else None,
-                        headers={"Cache-Control": "public, max-age=3600"})
+    media = {"report": "application/json",
+             "image": "image/png",
+             "video": "video/mp4"}.get(kind)
+    return FileResponse(str(path), filename=name, media_type=media,
+                        headers={"Cache-Control": "public, max-age=3600",
+                                 # برای ذخیرهٔ سمت مرورگر (fetch → Web Share)
+                                 "Access-Control-Expose-Headers": "Content-Disposition"})
 
 
 @app.get("/api/file/{job_id}/{filename}")
