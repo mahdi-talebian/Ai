@@ -396,37 +396,9 @@
      ۲) رندرر «ردِّ صدا» روی canvas (پورت trace_video.py)
      ══════════════════════════════════════════════════════════════════════ */
   var LAYOUT = { W: 1280, H: 720, ML: 74, MR: 46, MT: 78, MB: 64 };
-  /* پنجرهٔ نوار لغزان ویدیو: به‌اندازهٔ «۸ نت» تنظیم می‌شود (نه ثانیهٔ ثابت).
-     VIDEO_WINDOW_SEC فقط سقف/جانشین است وقتی نت کافی برای اندازه‌گیری نیست. */
-  var VIDEO_NOTES_WINDOW = 8;
+  /* عرض پنجرهٔ نوار لغزان در ویدیو (ثانیه) */
   var VIDEO_WINDOW_SEC = 15;
-  var VIDEO_WINDOW_MIN = 3.5;
-  var VIDEO_WINDOW_MAX = 26;
   var GAP_BRIDGE_SEC = 0.75;
-
-  /* پهنای پنجره از روی ریتم خودِ اجرا: میانهٔ بازهٔ «۸ نت پشت‌سرهم».
-     اگر نت‌ها کم باشند، همان طول کل (نمای کامل) برمی‌گردد. */
-  function windowForNotes(notes, fallbackSec) {
-    var ns = (notes || []).filter(function (n) {
-      return n && isFinite(n.start) && (n.duration || 0) > 0.02;
-    }).sort(function (a, b) { return a.start - b.start; });
-    var k = VIDEO_NOTES_WINDOW;
-    if (ns.length < k) {
-      var first = ns.length ? ns[0].start : 0;
-      var last = ns.length ? (ns[ns.length - 1].start + ns[ns.length - 1].duration) : 0;
-      var whole = last - first;
-      return whole > VIDEO_WINDOW_MIN ? whole : 0;
-    }
-    var spans = [];
-    for (var i = 0; i + k <= ns.length; i++) {
-      var e = ns[i + k - 1];
-      spans.push((e.start + (e.duration || 0)) - ns[i].start);
-    }
-    spans.sort(function (a, b) { return a - b; });
-    var q = spans[Math.min(spans.length - 1, Math.floor(0.75 * (spans.length - 1)))];
-    q = Math.max(VIDEO_WINDOW_MIN, Math.min(VIDEO_WINDOW_MAX, q + 0.25));
-    return (fallbackSec > 0 && q > fallbackSec) ? Math.min(q, VIDEO_WINDOW_MAX) : q;
-  }
 
   function TraceRenderer(canvas, times, freqs, notes, opts) {
     opts = opts || {};
@@ -649,45 +621,6 @@
     g.closePath();
   };
 
-  /* بلوک هر نت با نامش (پشت منحنی) — نمایش دقیق مرزها و نام نت */
-  TraceRenderer.prototype.drawNoteBlocks = function (g, view, X) {
-    var self = this;
-    (this.notes || []).forEach(function (n) {
-      var f0 = n.f0_hz;
-      if (!f0 || f0 <= 0) return;
-      var t0 = n.start || 0, t1 = t0 + (n.duration || 0);
-      if (t1 < view.t0 || t0 > view.t1) return;
-      var x0 = Math.max(LAYOUT.ML, X(t0));
-      var x1 = Math.min(self.W - LAYOUT.MR, X(t1));
-      var w = x1 - x0;
-      if (w < 2.5) return;
-      var y = self.yOfMidi(CORE.hzToMidi(f0));
-      var h = 16;
-
-      /* نوار نت (نقش پیانو-رول): یک نگاه = یک نت */
-      g.fillStyle = 'rgba(240,214,138,0.085)';
-      g.fillRect(x0, y - h / 2, w, h);
-      g.strokeStyle = 'rgba(240,214,138,0.30)';
-      g.lineWidth = 1;
-      g.beginPath(); g.moveTo(x0, y - h / 2); g.lineTo(x1, y - h / 2); g.stroke();
-      g.beginPath(); g.moveTo(x0, y + h / 2); g.lineTo(x1, y + h / 2); g.stroke();
-
-      /* مرزهای دقیق نت: تیک کوتاه، نه خط سراسری (تا شلوغ نشود) */
-      g.strokeStyle = 'rgba(240,214,138,0.55)';
-      g.lineWidth = 1.4;
-      g.beginPath(); g.moveTo(x0, y - h / 2 - 5); g.lineTo(x0, y + h / 2 + 5); g.stroke();
-      g.beginPath(); g.moveTo(x1, y - h / 2 - 5); g.lineTo(x1, y + h / 2 + 5); g.stroke();
-
-      /* نام و مدت نت، فقط اگر جا دارد */
-      if (w > 52) {
-        var nm = n.note_name || CORE.midiToName(CORE.hzToMidi(f0));
-        g.font = '12px system-ui, sans-serif';
-        g.fillStyle = 'rgba(255,238,190,0.62)';
-        g.fillText(nm, x0 + 5, y - h / 2 - 7);
-      }
-    });
-  };
-
   TraceRenderer.prototype.currentMidi = function (t) {
     var times = this.times, mids = this.midi;
     if (!times.length) return null;
@@ -720,10 +653,10 @@
   /* منحنی: limitT = تا چه زمانی (null = همهٔ بازهٔ دید)، faded = لایهٔ محو آینده */
   TraceRenderer.prototype.drawCurve = function (g, view, X, limitT, faded) {
     var styles = faded
-      ? [[3, 'rgba(86,120,160,0.41)']]
-      : [[7, 'rgba(255,214,126,0.14)'],
-         [3.8, 'rgba(255,214,126,0.32)'],
-         [2.0, 'rgba(252,222,148,1)']];
+      ? [[4, 'rgba(86,120,160,0.41)']]
+      : [[12, 'rgba(255,214,126,0.13)'],
+         [7, 'rgba(255,214,126,0.31)'],
+         [4, 'rgba(247,209,113,1)']];
     g.lineJoin = 'round';
     g.lineCap = 'round';
     for (var s = 0; s < this.segs.length; s++) {
@@ -752,39 +685,6 @@
     }
   };
 
-  /* دنبالهٔ درخشان: از from تا to با گرادیان روشن‌شونده — «حرکت نت» را
-     به‌صورت نور زرد دنبال می‌کند (به‌جای خط یکنواخت). */
-  TraceRenderer.prototype.drawTail = function (g, view, X, from, to) {
-    if (!(to > from) || !this.segs) return;
-    var x0 = X(Math.max(from, view.t0)), x1 = X(to);
-    if (!(x1 > x0)) return;
-    var grad = g.createLinearGradient(x0, 0, x1, 0);
-    grad.addColorStop(0, 'rgba(255,206,110,0)');
-    grad.addColorStop(0.45, 'rgba(255,220,140,0.30)');
-    grad.addColorStop(0.80, 'rgba(255,235,175,0.62)');
-    grad.addColorStop(1, 'rgba(255,248,222,0.95)');
-    var widths = [11, 5, 2.4];
-    g.lineJoin = 'round'; g.lineCap = 'round';
-    for (var k = 0; k < widths.length; k++) {
-      g.strokeStyle = grad;
-      g.lineWidth = widths[k];
-      for (var s = 0; s < this.segs.length; s++) {
-        var seg = this.segs[s], pts = [];
-        for (var i = 0; i < seg.length; i++) {
-          var p = seg[i];
-          if (p.t < from) { pts = [p]; continue; }
-          if (p.t > to) { pts.push(p); break; }
-          pts.push(p);
-        }
-        if (pts.length < 2) continue;
-        g.beginPath();
-        g.moveTo(X(pts[0].t), pts[0].y);
-        for (var j = 1; j < pts.length; j++) g.lineTo(X(pts[j].t), pts[j].y);
-        g.stroke();
-      }
-    }
-  };
-
   TraceRenderer.prototype.draw = function (time) {
     var t = Math.max(0, Math.min(time, this.duration));
     var g = this.ctx, W = this.W, H = this.H;
@@ -797,8 +697,6 @@
     if (!this._bg) this._bg = this.buildBackground();
     g.clearRect(0, 0, W, H);
     g.drawImage(this._bg, 0, 0);
-    /* لایهٔ «نت‌ها»: بلوک + نام + مرز (نمای دقیق) */
-    this.drawNoteBlocks(g, view, X);
 
     /* در حالت نوار لغزان، هر چیزی که به x وابسته است همین‌جا رسم می‌شود */
     g.save();
@@ -828,8 +726,6 @@
     // منحنی طلایی تا لحظهٔ t (سه لایه = درخشش)
     var endT = this.windowSec ? Math.min(t, view.t1) : t;
     this.drawCurve(g, view, X, endT, false);
-    /* دنبالهٔ نور زرد پشت نقطهٔ جاری: حرکت نت را واضح می‌کند */
-    this.drawTail(g, view, X, Math.max(view.t0, endT - 1.3), endT);
 
     // نقطه‌های طلایی روی نت‌های خوانده‌شده
     (this.notes || []).forEach(function (n) {
@@ -840,8 +736,8 @@
       if (!f0 || f0 <= 0) return;
       var x = X(start + (n.duration || 0) / 2);
       var y = self.yOfMidi(CORE.hzToMidi(f0));
-      var r = (n.duration || 0) < 0.35 ? 2.4 : 3.2;
-      g.fillStyle = 'rgba(255,236,178,0.92)';
+      var r = (n.duration || 0) < 0.35 ? 4.6 : 6.0;
+      g.fillStyle = 'rgb(255,228,155)';
       g.beginPath();
       g.arc(x, y, r, 0, Math.PI * 2);
       g.fill();
@@ -860,38 +756,19 @@
     var mNow = this.currentMidi(t);
     if (mNow != null) {
       var yn = this.yOfMidi(mNow);
-
-      /* ردِ حرکت: چند نقطهٔ محو پشت سر (جهت حرکت دیده شود) */
-      for (var gh = 5; gh >= 1; gh--) {
-        var tg = t - gh * 0.055;
-        if (tg < 0) continue;
-        var mg = this.currentMidi(tg);
-        if (mg == null) continue;
-        var a = 0.26 * (1 - gh / 6);
-        var rgh = 7 - gh * 0.9;
-        var gg = g.createRadialGradient(X(tg), this.yOfMidi(mg), 0, X(tg), this.yOfMidi(mg), rgh);
-        gg.addColorStop(0, 'rgba(255,236,180,' + a.toFixed(3) + ')');
-        gg.addColorStop(1, 'rgba(255,236,180,0)');
-        g.fillStyle = gg;
-        g.beginPath(); g.arc(X(tg), this.yOfMidi(mg), rgh, 0, Math.PI * 2); g.fill();
-      }
-
-      var halo = g.createRadialGradient(xn, yn, 0, xn, yn, 34);
-      halo.addColorStop(0, 'rgba(255,232,160,0.62)');
-      halo.addColorStop(0.35, 'rgba(255,228,155,0.30)');
+      var halo = g.createRadialGradient(xn, yn, 0, xn, yn, 30);
+      halo.addColorStop(0, 'rgba(255,228,155,0.55)');
+      halo.addColorStop(0.45, 'rgba(255,228,155,0.18)');
       halo.addColorStop(1, 'rgba(255,228,155,0)');
       g.fillStyle = halo;
-      g.beginPath(); g.arc(xn, yn, 34, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(xn, yn, 30, 0, Math.PI * 2); g.fill();
 
-      var core = g.createRadialGradient(xn, yn, 0, xn, yn, 15);
-      core.addColorStop(0, 'rgb(255,252,238)');
-      core.addColorStop(0.5, 'rgba(255,242,200,0.95)');
+      var core = g.createRadialGradient(xn, yn, 0, xn, yn, 12);
+      core.addColorStop(0, 'rgb(255,250,232)');
+      core.addColorStop(0.6, 'rgba(255,240,205,0.85)');
       core.addColorStop(1, 'rgba(255,240,205,0)');
       g.fillStyle = core;
-      g.beginPath(); g.arc(xn, yn, 15, 0, Math.PI * 2); g.fill();
-
-      g.fillStyle = 'rgba(255,255,255,0.95)';
-      g.beginPath(); g.arc(xn, yn, 3.4, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(xn, yn, 12, 0, Math.PI * 2); g.fill();
     }
 
     // راهنمای بالاترین/پایین‌ترین نت
@@ -916,11 +793,7 @@
 
     // برچسب‌ها
     var cur = (mNow == null) ? '—'
-      : CORE.midiToName(mNow) + '   ' + (CORE.midiToHz(mNow)).toFixed(1) + ' Hz'
-        + (function () {
-            var c = 100 * (mNow - Math.round(mNow));
-            return '   (' + (c >= 0 ? '+' : '') + c.toFixed(0) + '¢)';
-          })();
+      : CORE.midiToName(mNow) + '   ' + (CORE.midiToHz(mNow)).toFixed(1) + ' Hz';
     g.font = 'bold 24px system-ui, sans-serif';
     g.fillStyle = 'rgba(238,234,214,0.92)';
     g.textAlign = 'left';
@@ -979,9 +852,7 @@
     /* نوار لغزان: پنجرهٔ ۱۵ ثانیه‌ای با نقطهٔ میخ‌شده در وسط.
        فایل کوتاه‌تر از پنجره ⇒ همان نمای کامل (بدون فضای خالیِ دو طرف). */
     var full = new TraceRenderer(canvas, pitch.times, trace, notes);
-    /* «۸ نت در قاب»: پهنای پنجره از فاصلهٔ خود نت‌ها می‌آید */
-    var win = windowForNotes(notes, full.duration > VIDEO_WINDOW_SEC ? VIDEO_WINDOW_SEC : 0);
-    if (win > full.duration) win = 0;
+    var win = full.duration > VIDEO_WINDOW_SEC + 2 ? VIDEO_WINDOW_SEC : 0;
     var renderer = win
       ? new TraceRenderer(canvas, pitch.times, trace, notes, { windowSec: win })
       : full;
@@ -1461,7 +1332,6 @@
     report: CORE.buildReport,
     TraceRenderer: TraceRenderer,
     renderVideo: renderVideoBlob,
-    windowForNotes: windowForNotes,
     jobs: jobs,
     version: '1.0.0'
   };

@@ -281,14 +281,6 @@
   @media (display-mode:standalone){
     .wrap{padding-top:calc(var(--safe-t) + 10px)}
   }
-.editList{max-height:300px;overflow:auto;-webkit-overflow-scrolling:touch;display:flex;flex-direction:column;gap:6px}
-.editRow{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07)}
-.editRow .editTime{font-size:.74rem;color:var(--dim);direction:ltr;margin-inline-end:auto}
-.editRow button{border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:inherit;
-  font:inherit;font-size:.8rem;padding:4px 9px;border-radius:9px;cursor:pointer;line-height:1.2}
-.editRow button:active{transform:scale(.96)}
-.editRow.edited{background:rgba(247,209,113,.10);border-color:rgba(247,209,113,.35)}
-.editTag{font-size:.68rem;color:#f7d171;margin-inline-start:2px}
 </style>
 </head>
 <body>
@@ -433,19 +425,6 @@
           </table>
         </div>
       </div>
-
-      <div class="card" id="editCard" style="display:none">
-        <h2>✏️ اصلاح دستی نت‌ها <span style="font-weight:400;font-size:.74rem;color:var(--dim)">(یک لمس)</span></h2>
-        <div class="hint" style="margin-bottom:8px">
-          اگر موتور نتی را اشتباه دید، همین‌جا درستش کن: حذف یا جابه‌جایی یک اکتاو.
-          تغییر روی نمودار و گزارش JSON اعمال می‌شود.
-        </div>
-        <div id="editList" class="editList"></div>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
-          <button class="btn secondary" id="editReset" style="flex:0 0 auto">↩️ بازگردانی</button>
-          <span class="hint" id="editStatus" style="flex:1;font-size:.73rem"></span>
-        </div>
-      </div>
     </div>
   </section>
 
@@ -582,7 +561,7 @@ function switchTab(name) {
 /* ═══════════════════════════════════════════════════════════════════
    وضعیت
    ═══════════════════════════════════════════════════════════════════ */
-const STATE = { file: null, jobId: null, report: null, baseReport: null, edits: [], reportUrl: null };
+const STATE = { file: null, jobId: null, report: null };
 
 /* ═══════════════════════════════════════════════════════════════════
    انتخاب فایل
@@ -720,12 +699,7 @@ function waitJob(jobId, prefix) {
 /* ═══════════════════════════════════════════════════════════════════
    نمایش گزارش
    ═══════════════════════════════════════════════════════════════════ */
-function renderReport(r, keepEdits) {
-  if (!keepEdits) {
-    try { STATE.baseReport = JSON.parse(JSON.stringify(r)); } catch (e) { STATE.baseReport = null; }
-    STATE.edits = [];
-  }
-  STATE.report = r;
+function renderReport(r) {
   const rg = r.range || {};
   const hi = rg.highest, lo = rg.lowest;
 
@@ -800,91 +774,7 @@ function renderReport(r, keepEdits) {
   audio.onseeked = drawTrace;
   audio.onended = () => { $('liveBadge').style.display = 'none'; drawTrace(); };
 
-  renderNoteEditor();
   setTimeout(() => $('results').scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
-}
-
-/* ═══════════════════════════════════════════════════════════════════
-   ✏️ اصلاح دستی نت‌ها — یک لمس
-   ═══════════════════════════════════════════════════════════════════ */
-function noteKey(t) { return Math.round((t || 0) * 100); }
-
-function renderNoteEditor() {
-  const card = $('editCard'), list = $('editList'), st = $('editStatus');
-  const r = STATE.report;
-  if (!card || !r) return;
-  card.style.display = 'block';
-  const notes = (r.notes || []).slice().sort((a, b) => a.start - b.start);
-  if (!notes.length) {
-    list.innerHTML = '<div class="hint">نتی برای اصلاح نمانده است.</div>';
-  } else {
-    list.innerHTML = notes.map(n => `
-      <div class="editRow${n.edited ? ' edited' : ''}">
-        <span class="chip gold">${n.note_name}</span>
-        <span class="editTime">${faN(n.start.toFixed(1))}s</span>
-        <button data-edit="down" data-start="${n.start}" title="یک اکتاو پایین‌تر">−۱۲</button>
-        <button data-edit="up" data-start="${n.start}" title="یک اکتاو بالاتر">+۱۲</button>
-        <button data-edit="del" data-start="${n.start}" title="حذف این نت">🗑</button>
-      </div>`).join('');
-  }
-  const n = (STATE.edits || []).length;
-  if (st) {
-    st.textContent = n ? `${faN(n)} اصلاح اعمال شد — در گزارش JSON ذخیره می‌شود.` : 'هنوز اصلاحی اعمال نشده است.';
-  }
-  if ($('editReset')) $('editReset').disabled = !n;
-}
-
-function refreshFromEdits() {
-  if (!STATE.baseReport) return;
-  let edited;
-  try {
-    edited = LocalEngineCore.applyNoteEdits(JSON.parse(JSON.stringify(STATE.baseReport)), STATE.edits);
-  } catch (e) {
-    if ($('editStatus')) $('editStatus').textContent = '❌ اصلاح اعمال نشد: ' + (e && e.message ? e.message : e);
-    return;
-  }
-  renderReport(edited, true);
-  publishEditedReport(edited);
-  if (typeof buildTraceData === 'function') { buildTraceData(edited); drawTrace(); }
-}
-
-function publishEditedReport(r) {
-  const el = $('dlReport');
-  if (!el || !(STATE.edits || []).length) return;
-  try {
-    if (STATE.reportUrl) URL.revokeObjectURL(STATE.reportUrl);
-    STATE.reportUrl = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' }));
-    const base = (STATE.file && STATE.file.name) ? String(STATE.file.name).replace(/\.[^.]+$/, '')
-      : ((r.meta && r.meta.original_name) ? String(r.meta.original_name).replace(/\.[^.]+$/, '') : 'radde-seda');
-    el.href = STATE.reportUrl;
-    el.setAttribute('download', (base || 'radde-seda') + '-report.json');
-  } catch (e) { /* بی‌صدا: لینک قبلی می‌ماند */ }
-}
-
-function editNote(start, action) {
-  const key = noteKey(start);
-  STATE.edits = (STATE.edits || []).filter(e => noteKey(e.start) !== key);
-  if (action === 'del') STATE.edits.push({ start: start, action: 'delete' });
-  else STATE.edits.push({ start: start, action: 'octave', semitones: action === 'up' ? 12 : -12 });
-  refreshFromEdits();
-}
-
-if ($('editList')) {
-  $('editList').addEventListener('click', ev => {
-    const btn = ev.target.closest('button[data-edit]');
-    if (!btn) return;
-    editNote(parseFloat(btn.dataset.start), btn.dataset.edit);
-  });
-}
-if ($('editReset')) {
-  $('editReset').addEventListener('click', () => {
-    STATE.edits = [];
-    if (STATE.reportUrl) { URL.revokeObjectURL(STATE.reportUrl); STATE.reportUrl = null; }
-    refreshFromEdits();
-    if ($('dlReport') && STATE.report && STATE.report.meta && STATE.report.meta.downloads && STATE.report.meta.downloads.report) {
-      $('dlReport').href = apiPath(STATE.report.meta.downloads.report);
-    }
-  });
 }
 
 /* نشان کیفیت تحلیل: وضعیت موتور + هشدارها + آماره‌های اتکاپذیری */

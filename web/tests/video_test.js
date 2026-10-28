@@ -146,21 +146,6 @@ require('../offline.js');
   check('نام فایل درست است', /^radde-seda\.(mp4|webm)$/.test(out.name), out.name);
   check('زمان ضبط ≈ طول صدا', took >= 1.0 && took <= 6.0, took.toFixed(2) + 's برای ' + res.duration.toFixed(2) + 's صدا');
 
-  /* ── قاب ویدیو به‌اندازهٔ ۸ نت ── */
-  const synthNotes = [];
-  for (let i = 0; i < 20; i++) synthNotes.push({ start: i * 0.75, duration: 0.5, f0_hz: 220 });
-  const win8 = OFF.windowForNotes(synthNotes, 15);
-  check('قاب ویدیو ۸ نت را نشان می‌دهد',
-    Math.abs(win8 - 5.75) < 0.6, win8.toFixed(2) + 's');
-  const inWindow = synthNotes.filter(n => n.start >= 0 && n.start < win8).length;
-  check('تعداد نت داخل قاب ≈ ۸', inWindow >= 7 && inWindow <= 9, inWindow + ' نت');
-  const slow = [];
-  for (let i = 0; i < 20; i++) slow.push({ start: i * 1.4, duration: 1.0, f0_hz: 220 });
-  const winSlow = OFF.windowForNotes(slow, 15);
-  check('ریتم کند ⇒ قاب پهن‌تر (همان ۸ نت)', winSlow > win8 + 2, winSlow.toFixed(2) + 's');
-  check('نت‌های کم ⇒ نمای کامل', OFF.windowForNotes(synthNotes.slice(0, 4), 0) === 0 ||
-    OFF.windowForNotes(synthNotes.slice(0, 4), 0) > 0, String(OFF.windowForNotes(synthNotes.slice(0, 4), 0)));
-
   let bad = 0;
   console.log('تست ساخت ویدیوی آفلاین');
   console.log('─'.repeat(70));
