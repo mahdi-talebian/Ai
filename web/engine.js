@@ -1257,6 +1257,302 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════════
+     شار طیفی (spectral flux) — آشکارساز آغاز نت
+     ----------------------------------------------------------------------
+     پوش دامنه در «لگاتو» (نت بعدی بدون افت انرژی) لبه ندارد، ولی تغییر
+     محتوای طیفی همیشه هست. این‌جا انرژی ۲۴ باند لگاریتمی با گام ۱۰ms
+     محاسبه و تغییر مثبت آن جمع می‌شود؛ قله‌های آن = آغاز نت‌ها.
+     ══════════════════════════════════════════════════════════════════════ */
+  function bandEnergies(y, sr, hopSec, winSec, nfft) {
+    hopSec = hopSec || 0.01; winSec = winSec || 0.046; nfft = nfft || 2048;
+    var hop = Math.max(1, Math.round(sr * hopSec));
+    var winN = Math.min(nfft, Math.max(256, Math.round(sr * winSec)));
+    var nFrames = Math.max(1, Math.floor((y.length - winN) / hop) + 1);
+    var nBands = 24, loHz = 60, hiHz = Math.min(4200, sr / 2 - 100);
+    var bandOf = new Int32Array((nfft >> 1) + 1);
+    var binHz = sr / nfft;
+    var i;
+    for (i = 0; i < bandOf.length; i++) {
+      var hz = i * binHz;
+      if (hz < loHz) { bandOf[i] = -1; continue; }
+      var pos = Math.floor(nBands * Math.log(hz / loHz) / Math.log(hiHz / loHz));
+      bandOf[i] = Math.max(0, Math.min(nBands - 1, pos));
+    }
+    var w = hann(winN);
+    var sc = spectrumScratch(nfft);
+    var frame = spectrumFrame(winN);
+    var bands = new Float64Array(nFrames * nBands);
+    for (var f = 0; f < nFrames; f++) {
+      var off = f * hop;
+      for (i = 0; i < winN; i++) frame[i] = (y[off + i] || 0) * w[i];
+      var pw = rfftPack(frame, winN, nfft, sc);
+      for (i = 0; i < bandOf.length; i++) {
+        var b = bandOf[i];
+        if (b < 0) continue;
+        bands[f * nBands + b] += pw[i];
+      }
+    }
+    return { bands: bands, nFrames: nFrames, nBands: nBands, hopSec: hop / sr };
+  }
+
+  /**
+   * شار طیفی نرمال‌شده (۰..۱) و فهرست زمان آغاز نت‌ها.
+   * @returns {{times: Float32Array, flux: Float32Array, onsets: number[]}}
+   */
+  function spectralFlux(y, sr, opts) {
+    opts = opts || {};
+    var be = bandEnergies(y, sr, opts.hopSec || 0.01, opts.winSec || 0.046, 2048);
+    var n = be.nFrames, nb = be.nBands;
+    var flux = new Float32Array(n);
+    var prev = new Float64Array(nb);
+    for (var f = 0; f < n; f++) {
+      var sum = 0;
+      for (var b = 0; b < nb; b++) {
+        var e = Math.log1p(be.bands[f * nb + b] * 12);
+        var d = e - prev[b];
+        if (d > 0) sum += d;
+        prev[b] = e;
+      }
+      flux[f] = sum;
+    }
+    /* نرمال‌سازی با صدک ۹۵ تا قله‌های نویزی بی‌اثر شوند */
+    var sorted = Array.prototype.slice.call(flux).sort(function (a, b2) { return a - b2; });
+    var p95 = sorted[Math.min(sorted.length - 1, Math.floor(0.95 * sorted.length))] || 1;
+    var mean = 0;
+    for (var i = 0; i < n; i++) { flux[i] = Math.min(1, flux[i] / Math.max(p95, 1e-9)); mean += flux[i]; }
+    mean /= Math.max(1, n);
+
+    var times = new Float32Array(n);
+    for (i = 0; i < n; i++) times[i] = i * be.hopSec;
+
+    /* قله‌های محلی با فاصلهٔ حداقل ۶۰ms */
+    var onsets = [];
+    var minGap = Math.max(1, Math.round(0.06 / be.hopSec));
+    var lastOn = -1e9;
+    for (i = 1; i < n - 1; i++) {
+      if (flux[i] < Math.max(0.16, mean * 2.2)) continue;
+      if (!(flux[i] >= flux[i - 1] && flux[i] >= flux[i + 1])) continue;
+      if (i - lastOn < minGap) {
+        if (onsets.length && flux[i] > flux[lastOn]) { onsets[onsets.length - 1] = i; lastOn = i; }
+        continue;
+      }
+      onsets.push(i); lastOn = i;
+    }
+    return {
+      times: times, flux: flux, hopSec: be.hopSec,
+      onsets: onsets.map(function (k) { return Math.round(times[k] * 1000) / 1000; })
+    };
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     رمزگشایی یکپارچهٔ نت (Viterbi روی شبکهٔ نیم‌پرده)
+     ----------------------------------------------------------------------
+     هر مرحلهٔ قبلی جدا تصمیم می‌گرفت (اصلاح اکتاو → هموارسازی → تفکیک).
+     این‌جا یک مسیر «سراسری» انتخاب می‌شود که هم‌زمان سه چیز را بهینه می‌کند:
+       • شاهد طیفی هر فریم (فاصله از نیم‌پردهٔ نامزد)
+       • جریمهٔ پرش بین نت‌ها (نت‌های یک‌دوفریمی تولید نمی‌شوند)
+       • تخفیف جریمه در لحظهٔ آغازِ نت (شار طیفی) تا گذرهای واقعی از دست نروند
+     ══════════════════════════════════════════════════════════════════════ */
+  function viterbiNotes(times, freqs, conf, opts) {
+    opts = opts || {};
+    var n = times.length;
+    if (!n) return [];
+    var dt = n > 1 ? (times[n - 1] - times[0]) / (n - 1) : 0.005;
+    if (!(dt > 0)) dt = 0.005;
+
+    var sigma = opts.sigma_cents || 45;
+    var deadzone = opts.deadzone_cents != null ? opts.deadzone_cents : 25;
+    var capEmis = 6;
+    var switchBase = opts.switch_cost != null ? opts.switch_cost : 1.35;
+    var switchPerSemi = opts.switch_per_semi != null ? opts.switch_per_semi : 0.12;
+    var onsetDiscount = opts.onset_discount != null ? opts.onset_discount : 0.72;
+    var silenceJump = opts.silence_cost != null ? opts.silence_cost : 1.15;
+    var maxJump = opts.max_jump || 14;
+    var minDur = opts.min_duration || 0.07;
+    var notes_trace = null;
+
+    /* بازهٔ نیم‌پرده‌ها از داده */
+    var lo = 1e9, hi = -1e9;
+    for (var i = 0; i < n; i++) {
+      if (!(freqs[i] > 0)) continue;
+      var m = hzToMidi(freqs[i]);
+      if (m < lo) lo = m; if (m > hi) hi = m;
+    }
+    if (!isFinite(lo)) return [];
+    lo = Math.max(21, Math.floor(lo) - 2);
+    hi = Math.min(100, Math.ceil(hi) + 2);
+    var nS = hi - lo + 1;
+    var nStates = nS + 1;                 /* آخرین وضعیت = سکوت */
+    var SIL = nS;
+
+    /* شاهد آغاز: مجموعهٔ فریم‌های نزدیک به زمان‌های onset */
+    var onsetSet = null;
+    if (opts.onsets && opts.onsets.length) {
+      onsetSet = new Uint8Array(n);
+      var k = 0;
+      for (i = 0; i < n; i++) {
+        while (k < opts.onsets.length && opts.onsets[k] < times[i] - 0.03) k++;
+        if (k < opts.onsets.length && Math.abs(opts.onsets[k] - times[i]) <= 0.03) onsetSet[i] = 1;
+      }
+    }
+
+    /* ── هزینه‌ها (کمینه‌سازی): همهٔ هزینه‌ها نامنفی‌اند ───────────────
+       هزینهٔ ۰ = تطابق کامل. مدل قبلی هزینهٔ منفی برمی‌گرداند و همان
+       باعث می‌شد دیکودر نت‌ها را روی فریم‌های بی‌صدا ترجیح بدهد. */
+    var silCost = opts.silence_frame_cost != null ? opts.silence_frame_cost : 2.4;
+    var quietCost = opts.unvoiced_frame_cost != null ? opts.unvoiced_frame_cost : 3.2;
+
+    function emission(s, i) {
+      var f = freqs[i], c = conf ? conf[i] : 1;
+      var cw = 0.5 + 0.5 * (isFinite(c) ? Math.max(0, Math.min(1, c)) : 0);
+      if (s === SIL) return (f > 0) ? silCost * cw : 0;
+      if (!(f > 0)) return quietCost;
+      var off = Math.abs(1200 * Math.log2(f / midiToHz(lo + s)));
+      /* ناحیهٔ مرده: ویبرato و دتونیون تا deadzone رایگان است */
+      var over = off - deadzone;
+      if (over <= 0) return 0;
+      var e = (over / sigma) * (over / sigma);
+      return Math.min(e, capEmis) * cw;
+    }
+
+    var prevCost = new Float64Array(nStates);
+    var curCost = new Float64Array(nStates);
+    var back = new Int16Array(n * nStates);   /* وضعیت فریم قبلی */
+
+    /* فریم صفر */
+    for (var s = 0; s < nStates; s++) prevCost[s] = emission(s, 0);
+
+    for (i = 1; i < n; i++) {
+      var disc = (onsetSet && onsetSet[i]) ? onsetDiscount : 1;
+      for (s = 0; s < nStates; s++) {
+        var es = emission(s, i);
+        var bestCost = 1e18, bestFrom = s;
+        if (s === SIL) {
+          /* سکوت: ماندن در سکوت رایگان، ترک یک نت هزینهٔ قطع دارد */
+          if (prevCost[SIL] < bestCost) { bestCost = prevCost[SIL]; bestFrom = SIL; }
+          for (var p = 0; p < nS; p++) {
+            var offCost = silenceJump * disc + prevCost[p];
+            if (offCost < bestCost) { bestCost = offCost; bestFrom = p; }
+          }
+        } else {
+          var loS = Math.max(0, s - maxJump), hiS = Math.min(nS - 1, s + maxJump);
+          for (var q = loS; q <= hiS; q++) {
+            var jump = Math.abs(q - s);
+            var t2 = prevCost[q] + (jump === 0 ? 0 : switchBase * disc + switchPerSemi * jump);
+            if (t2 < bestCost) { bestCost = t2; bestFrom = q; }
+          }
+          var tSil2 = prevCost[SIL] + silenceJump * disc;
+          if (tSil2 < bestCost) { bestCost = tSil2; bestFrom = SIL; }
+        }
+        curCost[s] = bestCost + es;
+        back[i * nStates + s] = bestFrom;
+      }
+      var tmpC = prevCost; prevCost = curCost; curCost = tmpC;
+    }
+
+    /* بهترین وضعیت پایانی و بازگشت مسیر */
+    var endS = 0;
+    for (s = 1; s < nStates; s++) if (prevCost[s] < prevCost[endS]) endS = s;
+    var path = new Int16Array(n);
+    path[n - 1] = endS;
+    for (i = n - 1; i > 0; i--) path[i - 1] = back[i * nStates + path[i]];
+
+    /* ── حذف پرش‌های ±۱ نیم‌پرده‌ای ویبرato ──────────────────────────────
+       ویبراتو باعث می‌شود وضعیت بین دو نیم‌پردهٔ همسایه بپرد. هر «جزیره»
+       کوتاه که دو طرفش دقیقاً یک وضعیت یکسان دارند به همان وضعیت برگردانده
+       می‌شود؛ نت‌های واقعی کوتاه‌تر از ۱۲۰ میلی‌ثانیه نیستند. */
+    var absorbFrames = opts.absorb_frames != null ? opts.absorb_frames : 14;
+    for (var pass = 0; pass < 2; pass++) {
+      var runs = [];
+      var runStart = 0;
+      for (i = 1; i <= n; i++) {
+        if (i === n || path[i] !== path[runStart]) {
+          runs.push([runStart, i - 1, path[runStart]]);
+          runStart = i;
+        }
+      }
+      var changed = false;
+      for (var r = 1; r < runs.length - 1; r++) {
+        var cur = runs[r], before = runs[r - 1], after = runs[r + 1];
+        var lenR = cur[1] - cur[0] + 1;
+        if (lenR > absorbFrames) continue;
+        if (cur[2] === SIL) continue;
+        /* (الف) دو طرف یک وضعیت یکسان: جزیرهٔ ویبراتو */
+        if (before[2] === after[2] && before[2] !== SIL && Math.abs(cur[2] - before[2]) <= 1) {
+          for (var q3 = cur[0]; q3 <= cur[1]; q3++) path[q3] = before[2];
+          changed = true;
+          continue;
+        }
+        /* (ب) دمِ نت: فرارِ یک‌نیم‌پرده‌ای درست پیش از سکوت */
+        if (after[2] === SIL && before[2] !== SIL && Math.abs(cur[2] - before[2]) <= 1) {
+          for (var q4 = cur[0]; q4 <= cur[1]; q4++) path[q4] = before[2];
+          changed = true;
+          continue;
+        }
+        /* (ج) سرِ نت: همان حالت، بلافاصله پس از سکوت */
+        if (before[2] === SIL && after[2] !== SIL && Math.abs(cur[2] - after[2]) <= 1) {
+          for (var q5 = cur[0]; q5 <= cur[1]; q5++) path[q5] = after[2];
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+
+    if (opts.trace) { notes_trace = { path: path, lo: lo, nS: nS, SIL: SIL }; }
+    /* فریم‌های پیاپی با همان وضعیت = یک نت */
+    var notes = [];
+    var start = 0;
+    for (i = 1; i <= n; i++) {
+      if (i < n && path[i] === path[start]) continue;
+      var st = path[start];
+      var len = i - start;
+      var dur = (times[i - 1] - times[start]) + dt;
+      if (st !== SIL && len >= 3 && dur >= minDur) {
+        var vals = [], wsum = 0, fnum = 0, csum = 0, gf = [];
+        for (var q2 = start; q2 < i; q2++) {
+          var fq = freqs[q2];
+          if (!(fq > 0)) continue;
+          var wq = Math.max(0.05, conf ? conf[q2] : 1);
+          fnum += Math.log2(fq) * wq; wsum += wq;
+          csum += conf ? conf[q2] : 1;
+          gf.push(fq);
+        }
+        var f0 = wsum > 0 ? Math.pow(2, fnum / wsum) : midiToHz(lo + st);
+        var devs = gf.map(function (v) { return Math.abs(cents(v, f0)); });
+        notes.push({
+          start: Math.round(times[start] * 1000) / 1000,
+          end: Math.round(times[i - 1] * 1000) / 1000,
+          duration: Math.round(dur * 1000) / 1000,
+          f0_hz: Math.round(f0 * 100) / 100,
+          stability_cents: Math.round(percentile(devs, 75) * 10) / 10,
+          confidence: Math.round((csum / Math.max(1, gf.length)) * 100) / 100,
+          glide_cents: 0,
+          n_frames: gf.length
+        });
+      }
+      start = i;
+    }
+
+    /* ادغام نت‌های هم‌نوا که فقط با یک شکاف کوتاه جدا شده‌اند */
+    var merged = [];
+    for (i = 0; i < notes.length; i++) {
+      var nt = notes[i], pv = merged[merged.length - 1];
+      if (pv && (nt.start - pv.end) <= 0.06 && Math.abs(cents(nt.f0_hz, pv.f0_hz)) <= 60) {
+        var w1 = pv.n_frames, w2 = nt.n_frames;
+        pv.f0_hz = Math.round(((pv.f0_hz * w1 + nt.f0_hz * w2) / (w1 + w2)) * 100) / 100;
+        pv.end = nt.end;
+        pv.duration = Math.round((pv.end - pv.start) * 1000) / 1000;
+        pv.n_frames = w1 + w2;
+        pv.confidence = Math.round(((pv.confidence * w1 + nt.confidence * w2) / (w1 + w2)) * 100) / 100;
+        continue;
+      }
+      merged.push(nt);
+    }
+    if (notes_trace) { try { merged.trace = notes_trace; } catch (e) {} }
+    return merged;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
      چسباندن مرز نت‌ها به لبهٔ واقعی صدا (پوش RMS)
      ----------------------------------------------------------------------
      تفکیک نت با پنجرهٔ ۲۵–۵۰ms انجام می‌شود، پس شروع هر نت معمولاً ۲۰–۳۵ms
@@ -1408,7 +1704,23 @@
     freqs = smoothPitchContour(freqs, 3);
 
     ctx.onProgress('notes', 0.92);
-    var notes = segmentNotes(tr.times, freqs, fused.conf);
+    var engine = ctx.opts && ctx.opts.note_engine ? ctx.opts.note_engine : 'viterbi';
+    var notes = null;
+    if (engine !== 'segment') {
+      try {
+        var flux = spectralFlux(ctx.y, ctx.sr, {});
+        notes = viterbiNotes(tr.times, freqs, fused.conf, { onsets: flux.onsets });
+        diag.note_engine = 'viterbi';
+        diag.flux_onsets = flux.onsets ? flux.onsets.length : 0;
+      } catch (e) {
+        notes = null;
+        diag.note_engine_error = String(e && e.message || e);
+      }
+    }
+    if (!notes || !notes.length) {
+      notes = segmentNotes(tr.times, freqs, fused.conf);
+      diag.note_engine = 'segment';
+    }
     return { freqs: freqs, conf: fused.conf, notes: notes, fused: fused };
   }
 
@@ -1840,6 +2152,108 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════════
+     اصلاح دستی نت‌ها — یک لمس
+     ──────────────────────────────────────────────────────────────────────
+     هر ویرایش = { start: زمان شروع نت, action: 'delete' | 'octave',
+                   semitones: ±12 }.
+     ویرایش‌ها هم روی گزارش اعمال می‌شوند و هم داخل JSON به‌صورت
+     manual_edits ذخیره می‌شوند تا خروجی دوباره‌سازی‌شدنی باشد.
+     ══════════════════════════════════════════════════════════════════════ */
+  function applyNoteEdits(report, edits) {
+    if (!report || !report.notes) return report;
+    edits = edits || [];
+    var byKey = {};
+    for (var e = 0; e < edits.length; e++) {
+      var ed = edits[e] || {};
+      if (ed.start == null || !ed.action) continue;
+      if (ed.action !== 'delete' && ed.action !== 'octave') continue;
+      byKey[Math.round(ed.start * 100)] = ed;
+    }
+
+    var keeps = [], applied = [];
+    for (var i = 0; i < report.notes.length; i++) {
+      var n = report.notes[i];
+      var edit = byKey[Math.round(n.start * 100)];
+      if (!edit) { keeps.push(n); continue; }
+      if (edit.action === 'delete') {
+        applied.push({ start: n.start, action: 'delete' });
+        continue;
+      }
+      var semis = edit.semitones != null ? edit.semitones : 12;
+      var f0 = n.f0_hz * Math.pow(2, semis / 12.0);
+      if (!(f0 > 0) || f0 < 20 || f0 > 5000) { keeps.push(n); continue; }
+      var shifted = fmtNote({
+        f0_hz: f0, start: n.start, duration: n.duration,
+        stability_cents: n.stability_cents, confidence: n.confidence,
+        glide_cents: n.glide_cents
+      });
+      if (!shifted) { keeps.push(n); continue; }
+      shifted.edited = 'octave';
+      shifted.edit_semitones = semis;
+      keeps.push(shifted);
+      applied.push({ start: n.start, action: 'octave', semitones: semis });
+    }
+
+    report.notes = keeps;
+    report.manual_edits = applied;
+
+    /* ── بازمحاسبهٔ بخش‌های وابسته به نت‌ها ── */
+    var counts = {};
+    for (i = 0; i < keeps.length; i++) {
+      var nt = keeps[i], key = nt.midi;
+      if (!counts[key]) counts[key] = { note_name: nt.note_name, midi: key, sung_sec: 0, count: 0 };
+      counts[key].sung_sec += (nt.duration || 0);
+      counts[key].count += 1;
+    }
+    var rows = Object.keys(counts).map(function (k) { return counts[k]; })
+      .sort(function (a, b) { return b.sung_sec - a.sung_sec; });
+    var totalSec = rows.reduce(function (a, r) { return a + r.sung_sec; }, 0) || 1.0;
+    rows.forEach(function (row) {
+      row.sung_sec = Math.round(row.sung_sec * 100) / 100;
+      row.share_pct = Math.round(1000 * 100 * row.sung_sec / totalSec) / 1000;
+    });
+    report.note_counts = rows;
+
+    if (report.basic) {
+      report.basic.num_notes_detected = keeps.length;
+      report.basic.sung_sec = Math.round(totalSec * 100) / 100;
+    }
+
+    var sungAll = keeps.reduce(function (a, x) { return a + (x.duration || 0); }, 0);
+    var robust = robustExtremes(keeps, sungAll);
+    var rg = report.range || (report.range = {});
+    rg.highest = robust.hi ? fmtNoteAndKeepLocal(robust.hi) : null;
+    rg.lowest = robust.lo ? fmtNoteAndKeepLocal(robust.lo) : null;
+    var hiRaw = pick(keeps, true), loRaw = pick(keeps, false);
+    rg.raw_highest = hiRaw ? fmtNote(hiRaw) : null;
+    rg.raw_lowest = loRaw ? fmtNote(loRaw) : null;
+    rg.robust = robust.stats;
+
+    var loHz = rg.lowest ? rg.lowest.f0_hz : 0, hiHz = rg.highest ? rg.highest.f0_hz : 0;
+    var spanCents = (loHz && hiHz) ? cents(hiHz, loHz) : 0.0;
+    var spanSemis = spanCents / 100.0;
+    var fullOct = Math.floor(spanSemis / 12);
+    var restSemis = Math.round((spanSemis - fullOct * 12) * 100) / 100;
+    if (restSemis >= 11.995) { fullOct += 1; restSemis = 0; }
+    rg.span_cents = Math.round(spanCents * 10) / 10;
+    rg.span_semitones = Math.round(spanSemis * 100) / 100;
+    rg.span_octaves = Math.round(spanSemis / 12.0 * 100) / 100;
+    rg.full_octaves = fullOct;
+    rg.rest_semitones = restSemis;
+    rg.quarter_tones = Math.round(spanSemis * 2 * 10) / 10;
+    rg.of_octave_pct = Math.round(1000 * 100 * spanSemis / 12.0) / 1000;
+    return report;
+  }
+
+  function fmtNoteAndKeepLocal(n) {
+    var o = fmtNote(n);
+    if (!o) return null;
+    if (n.total_sung_sec != null) o.total_sung_sec = n.total_sung_sec;
+    if (n.count != null) o.count = n.count;
+    return o;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
      مرحلهٔ ۸ — اجرای زنده (هم‌ارز extract_pitch_chunk روی سرور)
      ══════════════════════════════════════════════════════════════════════ */
   /**
@@ -2073,6 +2487,8 @@
     yinParams: yinParams, yinTrackRange: yinTrackRange,
     refineNotesRange: refineNotesRange, applyRefinements: applyRefinements,
     snapNoteBoundaries: snapNoteBoundaries, rmsEnvelope: rmsEnvelope, envelopeEdges: envelopeEdges,
+    spectralFlux: spectralFlux, bandEnergies: bandEnergies, viterbiNotes: viterbiNotes,
+    applyNoteEdits: applyNoteEdits,
     spectralOctaveFix: spectralOctaveFix, frameScores: frameScores,
     harmonicSalience: harmonicSalience, octaveClassOf: octaveClassOf,
     refineNoteF0WithOctave: refineNoteF0WithOctave,

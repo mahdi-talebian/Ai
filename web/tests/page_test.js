@@ -249,6 +249,31 @@ function printResults() {
     (repJson.range ? repJson.range.highest.note_name + ' ↕ ' + repJson.range.lowest.note_name : 'نامعلوم'));
   check('گزارش می‌گوید آفلاین است', repJson.meta && repJson.meta.offline === true);
 
+  /* ── اصلاح دستی نت‌ها با یک لمس ── */
+  const rows = () => d.querySelectorAll('#editList .editRow');
+  check('کارت اصلاح دستی نمایش داده شد', d.getElementById('editCard').style.display === 'block',
+    rows().length + ' نت');
+  const n0 = rows().length;
+  const name0 = rows()[0].querySelector('.chip').textContent;
+  rows()[0].querySelector('button[data-edit="up"]').click();
+  await new Promise(r => setTimeout(r, 120));
+  const name1 = rows()[0].querySelector('.chip').textContent;
+  check('لمس «+۱۲»: نت یک اکتاو بالاتر رفت', name1 !== name0, name0 + ' → ' + name1);
+  check('ویرایش روی نمودار/گزارش اعمال شد',
+    !!(w.eval('STATE.report.manual_edits') || []).length, JSON.stringify(w.eval('STATE.report.manual_edits')));
+
+  rows()[1].querySelector('button[data-edit="del"]').click();
+  await new Promise(r => setTimeout(r, 120));
+  check('لمس «🗑»: نت حذف شد', rows().length === n0 - 1, (n0 - 1) + ' نت مانده');
+  check('گزارش JSON ویرایش‌شده لینک گرفت',
+    String(d.getElementById('dlReport').getAttribute('href')).indexOf('blob:') === 0);
+
+  d.getElementById('editReset').click();
+  await new Promise(r => setTimeout(r, 120));
+  check('بازگردانی: همهٔ نت‌ها برگشتند', rows().length === n0, rows().length + ' نت');
+  check('بازگردانی: فهرست ویرایش‌ها خالی شد',
+    ((w.eval('STATE.edits') || []).length) === 0);
+
   // ── اجرای زنده: همان پروتکل، ولی محلی ──
   const liveMsg = await new Promise((resolve) => {
     const ws = new w.WebSocket(w.eval("wsUrl('/ws/live-pitch')"));

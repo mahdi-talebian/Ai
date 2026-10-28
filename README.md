@@ -356,11 +356,11 @@ python3 trace_video.py recitation.mp3 --png trace.png
 
 ### 📱 APK آمادهٔ نصب (۱٫۲٫۳ — دقت استخراج نت + نوار متحرک ویدیو)
 
-**⬇ دانلود:** [radde-seda-1.2.3.apk](https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.2.3/release/radde-seda-1.2.3.apk)
-— صفحهٔ انتشار: [Releases · v1.2.3](https://github.com/mahdi-talebian/Ai/releases/tag/v1.2.3)
+**⬇ دانلود:** [radde-seda-1.2.4.apk](https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.2.4/release/radde-seda-1.2.4.apk)
+— صفحهٔ انتشار: [Releases · v1.2.4](https://github.com/mahdi-talebian/Ai/releases/tag/v1.2.4)
 
 ```
-release/radde-seda-1.2.3.apk    ← نسخهٔ جاری (دقت اکتاو/مرز نت‌ها + نوار متحرک ویدیو)
+release/radde-seda-1.2.4.apk    ← نسخهٔ جاری (Viterbi + شارش طیفی + اصلاح دستی نت)
 release/radde-seda-1.2.2.apk    ← نسخهٔ قبل
 release/radde-seda-1.1.0.apk    ← نسخهٔ قدیمی‌تر (آفلاین، بدون موازی‌سازی)
 ```
@@ -394,7 +394,7 @@ bash android/build_apk.sh                 # → release/radde-seda-<version>.apk
 #### اگر باز هم سرور می‌خواهید
 
 ```bash
-DEFAULT_API=https://your-server.example APP_VERSION=1.2.3 bash android/build_apk.sh
+DEFAULT_API=https://your-server.example APP_VERSION=1.2.4 bash android/build_apk.sh
 ```
 
 صفحه در اپ از مبدأ امن داخلی (`https://appassets.local`) سرو می‌شود تا
