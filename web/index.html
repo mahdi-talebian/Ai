@@ -1616,20 +1616,31 @@ function openTake(take) {
    پیام‌ها هر ~۱۲۰ms می‌رسند، ولی صفحه ۶۰ بار در ثانیه رسم می‌شود؛ 따라서
    نقطه روی خطوط نت «می‌لغزد» نه اینکه بپرد. متن‌ها فقط با تغییر واقعی نت
    عوض می‌شوند تا چیدمان صفحه هر ۱۲۰ms بازچینی نشود. */
+/* rAF در همهٔ WebViewهای قدیمی هم هست، ولی اگر نبود به تایمر برمی‌گردیم */
+const raf = (fn) => (typeof requestAnimationFrame === 'function')
+  ? requestAnimationFrame(fn) : setTimeout(() => fn(performance.now()), 33);
+const caf = (id) => {
+  try {
+    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id);
+    else clearTimeout(id);
+  } catch (e) {}
+};
+
 function startLiveLoop() {
   if (LIVE.raf) return;
   LIVE.lastTs = 0;
-  LIVE.raf = requestAnimationFrame(liveFrame);
+  LIVE.raf = raf(liveFrame);
 }
 
 function stopLiveLoop() {
-  if (LIVE.raf) { try { cancelAnimationFrame(LIVE.raf); } catch (e) {} LIVE.raf = null; }
+  if (LIVE.raf) caf(LIVE.raf);
+  LIVE.raf = null;
   LIVE.lastTs = 0;
 }
 
 function liveFrame(ts) {
   if (!LIVE.on) { LIVE.raf = null; return; }
-  LIVE.raf = requestAnimationFrame(liveFrame);
+  LIVE.raf = raf(liveFrame);
 
   const dt = LIVE.lastTs ? Math.min(0.06, (ts - LIVE.lastTs) / 1000) : 0.016;
   LIVE.lastTs = ts;

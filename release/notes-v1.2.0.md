@@ -106,7 +106,7 @@ NODE_PATH=… node web/tests/page_test.js   # کل صفحه، شامل سکوت 
 package   : ir.raddeseda.app
 version   : 1.2.0 (versionCode 3)
 minSdk    : 24   targetSdk: 34
-MD5       : d095bca3859c8bf72c518efb18672020
+MD5       : 8f3e18a725eaffba0b7cb63f33d21a18
 امضا      : v2 + v3
 ```
 

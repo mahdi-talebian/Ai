@@ -312,6 +312,31 @@ function printResults() {
   check('رکورد جلسه در سکوت خالی می‌ماند',
     silentRun.length > 0 && !silentRun[silentRun.length - 1].session.highest);
 
+  // ── نمایش نرم اجرای زنده: لغزش، نه پرش ──
+  const smooth = w.eval(`(function(){
+    const wasOn = LIVE.on, wasTarget = LIVE.target, wasShown = LIVE.shown, wasAlpha = LIVE.dotAlpha;
+    LIVE.on = true;
+    LIVE.shown = 55; LIVE.target = 57; LIVE.dotAlpha = 1; LIVE.lastTs = 0;
+    liveFrame(1000);
+    liveFrame(1030);
+    const midStep = LIVE.shown;
+    for (let i = 1; i <= 40; i++) liveFrame(1030 + i * 30);
+    const arrived = LIVE.shown;
+    LIVE.target = null;
+    for (let i = 1; i <= 20; i++) liveFrame(2200 + i * 30);
+    const gone = { shown: LIVE.shown, alpha: LIVE.dotAlpha };
+    LIVE.on = wasOn; LIVE.target = wasTarget; LIVE.shown = wasShown; LIVE.dotAlpha = wasAlpha;
+    return { midStep, arrived, gone };
+  })()`);
+  check('نقطهٔ زنده با میان‌یابی حرکت می‌کند (نه پرش)',
+    smooth.midStep > 55 && smooth.midStep < 57,
+    'میانه=' + Number(smooth.midStep).toFixed(2) + ' از ۵۵ تا ۵۷');
+  check('نقطه در نهایت به نت هدف می‌رسد', Math.abs(smooth.arrived - 57) < 0.01,
+    Number(smooth.arrived).toFixed(3));
+  check('با قطع صدا نقطه نرم محو می‌شود',
+    smooth.gone.alpha === 0 && smooth.gone.shown === null,
+    'alpha=' + smooth.gone.alpha + ' shown=' + smooth.gone.shown);
+
   // ── وضعیت موازی‌سازی در صفحه ──
   const par = w.eval('JSON.stringify(LocalOffline.parallel())');
   check('وضعیت موازی‌سازی در صفحه گزارش می‌شود', !!par && /available/.test(par), par);
