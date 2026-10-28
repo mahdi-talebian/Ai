@@ -4,10 +4,10 @@
 Gradle، بدون Android Studio و بدون Android SDK کامل**.
 
 ```
-release/radde-seda-1.1.0.apk      ← فایل آمادهٔ نصب (امضاشده، آفلاین کامل)
+release/radde-seda-1.2.0.apk      ← فایل آمادهٔ نصب (امضاشده، آفلاین + موازی)
 ```
 
-> **نسخهٔ ۱٫۱٫۰ دیگر به هیچ سروری وصل نمی‌شود.** موتور تحلیل
+> **از نسخهٔ ۱٫۱٫۰ به بعد اپ به هیچ سروری وصل نمی‌شود.** موتور تحلیل
 > (`web/engine.js`) و لایهٔ آفلاین (`web/offline.js`) داخل بستهٔ اپ هستند و
 > همهٔ کارها — رمزگشایی فایل، تحلیل، نمودار، ویدیو، گزارش و اجرای زنده — روی
 > همان گوشی انجام می‌شود. نه آدرس سروری لازم است، نه اینترنت، نه ffmpeg.
@@ -16,7 +16,7 @@ release/radde-seda-1.1.0.apk      ← فایل آمادهٔ نصب (امضاشد
 
 ## نصب روی گوشی
 
-1. فایل `release/radde-seda-1.1.0.apk` را روی گوشی کپی کنید (کابل، تلگرام
+1. فایل `release/radde-seda-1.2.0.apk` را روی گوشی کپی کنید (کابل، تلگرام
    «Saved Messages»، Google Drive… هر چیزی).
 2. روی فایل بزنید؛ اگر پیام «نصب از منابع نامشخص» آمد، برای همین برنامه
    اجازه بدهید.
@@ -36,6 +36,15 @@ release/radde-seda-1.1.0.apk      ← فایل آمادهٔ نصب (امضاشد
 
 برای اطمینان می‌توانید حالت هواپیما را روشن کنید و همهٔ مسیرها را امتحان کنید:
 انتخاب فایل → تحلیل → PNG → ویدیو → گزارش → پخش تعاملی → اجرای زنده.
+
+### سرعت: تحلیل موازی داخل اپ
+
+از ۱٫۲٫۰ موتور تحلیل بین چند Web Worker پخش می‌شود (تا ۴ کارگر، بر اساس
+`navigator.hardwareConcurrency`). در WebView هم کار می‌کند چون فایل‌ها از
+مبدأ داخلی `appassets.local` سرو می‌شوند و `worker.js` هم از همان‌جا
+بارگذاری می‌شود. اگر WebView قدیمی باشد و Worker را نپذیرد، موتور **بی‌صدا**
+همان مسیر تک‌رشته‌ای را اجرا می‌کند؛ نتیجه یکسان است و فقط سرعت فرق می‌کند.
+نشان «⚡ N هسته» کنار نوار پیشرفت نشان می‌دهد کدام مسیر فعال است.
 
 ### اگر عمداً نسخهٔ سروری می‌خواهید (اختیاری)
 
@@ -63,7 +72,7 @@ DEFAULT_API=https://your-server.example APP_VERSION=1.2.0 bash android/build_apk
 | ساخت ویدیوی ردِّ صدا | دکمهٔ 🎬 — canvas + MediaRecorder داخل اپ (بدون ffmpeg) |
 | ذخیرهٔ ویدیو در گالری | بلاب محلی → `Movies/` + ایندکس رسانه (در گالری دیده می‌شود) |
 | ذخیرهٔ ویدیو در پوشهٔ دانلودها | DownloadManager → `Downloads/` با اعلان پیشرفت |
-| اجرای زنده — لحظه‌ای / با ضبط | میکروفون WebView (`onPermissionRequest`) + تحلیل محلی (بدون WebSocket) |
+| اجرای زنده — لحظه‌ای / با ضبط | میکروفون WebView (`onPermissionRequest`) + تحلیل محلی (بدون WebSocket)؛ در سکوت هیچ نتی ساخته نمی‌شود |
 | ذخیرهٔ صدای ضبط‌شده (WAV) و گزارش هر ضبط | پل بومی، ارسال تکه‌تکهٔ base64 (پایدار برای فایل‌های چند مگابایتی) |
 | نمونهٔ آزمایشی | همان فایل `demo_bayati.wav` از assets |
 
@@ -90,7 +99,7 @@ bash android/build_apk.sh                 # خروجی: release/radde-seda-<vers
 متغیرهای اختیاری:
 
 ```bash
-VERSION_NAME=1.1.1 VERSION_CODE=3 APP_VERSION=1.1.1 bash android/build_apk.sh
+VERSION_NAME=1.2.1 VERSION_CODE=4 APP_VERSION=1.2.1 bash android/build_apk.sh
 ANDROID_TOOLS=/path/to/tools JAVA_HOME=/path/to/jdk bash android/build_apk.sh
 ```
 
@@ -106,7 +115,7 @@ ANDROID_TOOLS=/path/to/tools JAVA_HOME=/path/to/jdk bash android/build_apk.sh
 مراحل ساخت در `build_apk.sh`:
 
 ```
-web/  →  android/assets/web/          (کپی خودکار؛ شامل engine.js و offline.js)
+web/  →  android/assets/web/          (کپی خودکار؛ شامل engine.js · parallel.js · worker.js · offline.js)
 res/  →  aapt2 compile + link         (منابع + مانیفست + assets)
 java/ →  ecj (جایگزین javac) → d8     (classes.dex)
         → بستن در APK → zipalign.py → apksigner (v2+v3)
