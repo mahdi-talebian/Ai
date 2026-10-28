@@ -220,6 +220,13 @@
   .recDot{width:11px;height:11px;border-radius:50%;background:#ff5b5b;animation:pulseDot 1.1s infinite}
   @keyframes pulseDot{0%,100%{opacity:1}50%{opacity:.25}}
   .recTime{font-variant-numeric:tabular-nums;font-weight:800;color:#ffb3b3;direction:ltr}
+  .takeHead{display:flex;align-items:center;gap:10px;justify-content:space-between}
+  .takeHead h2{margin:0}
+  .danger{background:rgba(255,90,90,.12)!important;border:1px solid rgba(255,90,90,.42)!important;
+    color:#ffb3b3!important;border-radius:11px;font-family:inherit;cursor:pointer}
+  .danger:active{transform:scale(.96)}
+  .sm{padding:7px 11px;font-size:.78rem;min-height:34px}
+  .take button.del{color:#ffb3b3;border-color:rgba(255,90,90,.42);background:rgba(255,90,90,.10)}
   .takeList{display:flex;flex-direction:column;gap:8px;margin-top:10px}
   .take{
     display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:13px;
@@ -391,9 +398,10 @@
         </div>
         <div id="galleryBox" style="display:none;margin-top:10px">
           <button class="primary block" id="saveVideoBtn"><span class="em">📥</span> ذخیرهٔ ویدیو در گالری</button>
+          <button class="primary block" id="saveImageBtn" style="margin-top:8px"><span class="em">🖼</span> ذخیرهٔ تصویر تحلیل در گالری</button>
           <div class="hint" id="galleryHint" style="margin-top:6px;font-size:.73rem">
-            در اندروید پنجرهٔ اشتراک‌گذاری باز می‌شود؛ «ذخیره در گالری/Photos» را بزن.
-            در آیفون از همان پنجره «Save Video» را انتخاب کن تا در برنامهٔ Photos بیاید.
+            در اپ اندروید فایل مستقیم در گالری گوشی (پوشهٔ Movies برای ویدیو و Pictures برای عکس) ذخیره می‌شود.
+            در مرورگر، پنجرهٔ اشتراک‌گذاری باز می‌شود؛ «ذخیره در گالری/Photos» را بزن.
           </div>
         </div>
         <div class="hint" style="margin-top:8px;font-size:.73rem">
@@ -420,17 +428,12 @@
     </div>
   </section>
 
-  <!-- ═══════════════ تب ۲: اجرای زنده ═══════════════ -->
+  <!-- ═══════════════ تب ۲: اجرا با ضبط ═══════════════ -->
   <section id="panelLive" class="panel" role="tabpanel">
     <div class="card">
       <div class="warn" id="micWarn">
         ⚠️ این صفحه داخل iframe باز شده و مرورگرها در این حالت اجازهٔ میکروفون نمی‌دهند.
         <a id="openNewTab" href="#" target="_blank" rel="noopener">↗ باز کردن در تب جدید</a>
-      </div>
-
-      <div class="segmented" role="tablist" aria-label="حالت اجرا">
-        <button id="modeLive" class="active" role="tab">⚡ لحظه‌ای</button>
-        <button id="modeRec" role="tab">⏺ با ضبط</button>
       </div>
 
       <div class="hint" id="modeHint" style="margin-bottom:12px"></div>
@@ -465,24 +468,18 @@
       </div>
     </div>
 
-    <!-- فقط در حالت ضبط -->
-    <div class="card" id="takesCard" style="display:none">
-      <h2>⏺ ضبط‌های این جلسه</h2>
+    <!-- ضبط‌های این نشست -->
+    <div class="card" id="takesCard">
+      <div class="takeHead">
+        <h2>⏺ ضبط‌های این جلسه</h2>
+        <button class="danger sm" id="clearTakes" title="حذف همهٔ ضبط‌های این جلسه">🗑 حذف همه</button>
+      </div>
       <div class="hint" style="margin-bottom:4px">
         هر ضبط: تحلیل کامل (بالاترین/پایین‌ترین نت، گستره، تصویر) + فایل صوتی برای ذخیره.
+        با 🗑 هر جلسه را پاک کن.
       </div>
       <div class="takeList" id="takeList">
-        <div class="empty">هنوز ضبطی نداری — «⏺ با ضبط» را انتخاب کن و شروع کن.</div>
-      </div>
-    </div>
-
-    <!-- فقط در حالت لحظه‌ای -->
-    <div class="card" id="privacyCard">
-      <h2>⚡ حالت لحظه‌ای</h2>
-      <div class="hint">
-        در این حالت هیچ صدایی ذخیره نمی‌شود: صدا فقط همان لحظه تحلیل و دور ریخته می‌شود.
-        با بستن میکروفون، همه‌چیز پاک می‌شود و چیزی روی دستگاه ذخیره نمی‌ماند.
-        اگر می‌خواهی خوانده‌هایت بماند، «⏺ با ضبط» را انتخاب کن.
+        <div class="empty">هنوز ضبطی نداری — دکمهٔ ⏺ را بزن و شروع کن.</div>
       </div>
     </div>
   </section>
@@ -656,6 +653,7 @@ $('analyzeBtn').onclick = async () => {
 };
 
 if ($('saveVideoBtn')) $('saveVideoBtn').onclick = saveVideoToGallery;
+if ($('saveImageBtn')) $('saveImageBtn').onclick = saveImageToGallery;
 
 function waitJob(jobId, prefix) {
   return new Promise((resolve, reject) => {
@@ -748,10 +746,19 @@ function renderReport(r) {
     $('dlOriginal').href = apiPath(dls.original);
     $('dlOriginal').setAttribute('download', (r.meta && r.meta.original_name) || 'original');
   }
-  if (dls.image) $('dlImage').href = apiPath(dls.image);
+  if (dls.image) {
+    $('dlImage').href = apiPath(dls.image);
+    $('dlImage').setAttribute('download', ((r.meta && r.meta.original_name)
+      ? String(r.meta.original_name).replace(/\.[^.]+$/, '') : 'radde-seda') + '-analysis.png');
+    $('dlImage').dataset.gallery = 'image';
+  }
   if (dls.report) $('dlReport').href = apiPath(dls.report);
   $('dlVideo').style.display = 'none';
-  $('galleryBox').style.display = 'none';
+  /* در اپ: ذخیرهٔ تصویر در گالری از همین‌جا در دسترس است؛ دکمهٔ ویدیو تا آماده‌شدن پنهان می‌ماند */
+  const inApp = !!(window.NativeBridge && window.NativeBridge.available);
+  $('galleryBox').style.display = inApp ? 'block' : 'none';
+  if ($('saveVideoBtn')) $('saveVideoBtn').style.display = inApp ? 'none' : 'inline-flex';
+  if ($('saveImageBtn')) $('saveImageBtn').style.display = inApp ? 'inline-flex' : 'none';
 
   const audio = $('audioPlayer');
   audio.src = apiPath(r.meta.audio_url);
@@ -880,33 +887,79 @@ function triggerDownload(url, name) {
   a.remove();
 }
 
+/* نوع فایل از روی mime واقعی بلاب — نه از روی نام (منبع اصلی خطای «ناموفق بود») */
+function extFromMime(mime) {
+  const m = String(mime || '').toLowerCase();
+  if (m.indexOf('video/mp4') === 0) return '.mp4';
+  if (m.indexOf('video/webm') === 0) return '.webm';
+  if (m.indexOf('video/3gpp') === 0) return '.3gp';
+  if (m.indexOf('image/png') === 0) return '.png';
+  if (m.indexOf('image/jpeg') === 0) return '.jpg';
+  if (m.indexOf('image/webp') === 0) return '.webp';
+  if (m.indexOf('audio/wav') === 0 || m.indexOf('audio/wave') === 0) return '.wav';
+  if (m.indexOf('audio/mpeg') === 0) return '.mp3';
+  return '';
+}
+
+/* نام نهایی: پسوند باید با نوع واقعی فایل بخواند، وگرنه گالری آن را نشان نمی‌دهد */
+function nameForBlob(blob, base, fallbackExt) {
+  const b = String(base || 'radde-seda').replace(/\.[a-z0-9]+$/i, '');
+  const ext = extFromMime(blob && blob.type) || fallbackExt || '';
+  return b + '-radde-seda' + ext;
+}
+
+function gallerySaveViaApp(blob, name) {
+  /* مسیر مطمئن در اپ: بلاب خوانده می‌شود و بومی در گالری نوشته می‌شود */
+  return new Promise((resolve) => {
+    const NB = window.NativeBridge;
+    if (!NB || !NB.available) { resolve({ ok: false, offline: true }); return; }
+    if (typeof NB.saveBlobToGallery !== 'function') { resolve({ ok: false, msg: 'نسخهٔ اپ قدیمی است' }); return; }
+    NB.saveBlobToGallery(blob, name, (ok, msg) => resolve({ ok: !!ok, msg: msg || '' }));
+  });
+}
+
+async function fetchBlob(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('دریافت فایل ناموفق بود (HTTP ' + res.status + ')');
+  const blob = await res.blob();
+  if (!blob || !blob.size) throw new Error('فایل خالی است — دوباره بسازش');
+  return blob;
+}
+
 async function saveVideoToGallery() {
   if (!STATE.jobId) return;
   const btn = $('saveVideoBtn');
   const label = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '⏳ در حال آماده‌سازی ویدیو…'; }
-  galleryMessage('');
+  galleryMessage('⏳ در حال خواندن فایل ویدیو…');
   const url = `${API}/api/download/${STATE.jobId}/video`;
   const base = (STATE.file && STATE.file.name) ? String(STATE.file.name).replace(/\.[^.]+$/, '')
              : ((STATE.report && STATE.report.meta && STATE.report.meta.original_name)
                 ? String(STATE.report.meta.original_name).replace(/\.[^.]+$/, '') : '');
-  const vname = STATE.videoName || 'radde-seda.mp4';
-  const ext = (vname.match(/\.[a-z0-9]+$/i) || ['.mp4'])[0];
-  const name = (base || 'radde-seda') + '-radde-seda' + ext;
 
   try {
-    /* در اپ اندروید: ویدیو مستقیم در گالری (پوشهٔ Movies) ذخیره می‌شود */
+    /* در اپ اندروید: بلاب را می‌خوانیم، پسوند را از نوع واقعی می‌گیریم و بومی ذخیره می‌کنیم */
     if (window.NativeBridge && window.NativeBridge.available) {
-      window.NativeBridge.saveToGallery(url, name);
-      galleryMessage('ویدیو در حال ذخیره در گالری است… اگر پیام «ذخیره شد» نیامد، از دکمهٔ «🎬 فایل ویدیو» استفاده کن.');
+      let blob;
+      try {
+        blob = await fetchBlob(url);
+      } catch (e) {
+        galleryMessage('⚠️ ' + e.message + ' — اول دکمهٔ «ساخت ویدیو» را بزن.', true);
+        return;
+      }
+      const name = nameForBlob(blob, base || 'radde-seda', '.mp4');
+      galleryMessage('⏳ در حال ذخیره در گالری…');
+      const r = await gallerySaveViaApp(blob, name);
+      if (r.ok) galleryMessage('✅ ' + (r.msg || ('در گالری ذخیره شد: ' + name)));
+      else galleryMessage('❌ ' + (r.msg || 'ذخیره در گالری ناموفق بود') , true);
       return;
     }
+
     let file = null;
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('دانلود ویدیو ناموفق بود');
-      const blob = await res.blob();
-      file = new File([blob], name, { type: 'video/mp4' });
+      const blob = await fetchBlob(url);
+      const name = nameForBlob(blob, base || 'radde-seda', '.mp4');
+      file = new File([blob], name, { type: blob.type || 'video/mp4' });
     } catch (e) {
       file = null;
     }
@@ -917,22 +970,61 @@ async function saveVideoToGallery() {
       galleryMessage('اگر ذخیره نشد، در همان پنجره «Save Video / ذخیره در گالری» را انتخاب کن.');
     } else if (file) {
       const objUrl = URL.createObjectURL(file);
-      triggerDownload(objUrl, name);
+      triggerDownload(objUrl, file.name);
       setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
       galleryMessage('فایل ویدیو ذخیره شد. اگر در گالری دیده نشد، از پوشهٔ «دانلودها» به گالری منتقلش کن.');
     } else {
-      // آخرین راه: لینک مستقیم فایل (در حالت آفلاین همان blob محلی است)
-      triggerDownload(url, name);
+      triggerDownload(url, base ? base + '-radde-seda.mp4' : 'radde-seda.mp4');
       galleryMessage('در حال دانلود فایل ویدیو…');
     }
   } catch (e) {
     if (e && e.name === 'AbortError') galleryMessage('ذخیره لغو شد.');
     else {
-      triggerDownload(url, name);
-      galleryMessage('اشتراک‌گذاری در این مرورگر ممکن نشد؛ فایل ویدیو دانلود شد.', true);
+      triggerDownload(url, base ? base + '-radde-seda.mp4' : 'radde-seda.mp4');
+      galleryMessage('ذخیره در گالری ممکن نشد؛ فایل ویدیو دانلود شد. ' + (e && e.message ? e.message : ''), true);
     }
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = label || '📥 ذخیرهٔ ویدیو در گالری'; }
+  }
+}
+
+/* ── ذخیرهٔ تصویر تحلیل در گالری (Pictures) ── */
+async function saveImageToGallery() {
+  const r = STATE.report;
+  const dls = (r && r.meta && r.meta.downloads) || {};
+  const btn = $('saveImageBtn');
+  const label = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ در حال ذخیره…'; }
+  galleryMessage('⏳ در حال ذخیرهٔ تصویر در گالری…');
+  const url = dls.image ? apiPath(dls.image) : '';
+  if (!url) { galleryMessage('تصویری برای این تحلیل نیست.', true); if (btn) { btn.disabled = false; btn.innerHTML = label; } return; }
+  try {
+    const blob = await fetchBlob(url);
+    const base = (STATE.file && STATE.file.name) ? String(STATE.file.name).replace(/\.[^.]+$/, '')
+               : ((r.meta && r.meta.original_name) ? String(r.meta.original_name).replace(/\.[^.]+$/, '')
+               : 'radde-seda');
+    const name = (base || 'radde-seda') + '-analysis' + (extFromMime(blob.type) || '.png');
+
+    if (window.NativeBridge && window.NativeBridge.available) {
+      const res = await gallerySaveViaApp(blob, name);
+      if (res.ok) galleryMessage('✅ ' + (res.msg || ('تصویر در گالری ذخیره شد: ' + name)));
+      else galleryMessage('❌ ' + (res.msg || 'ذخیرهٔ تصویر ناموفق بود'), true);
+      return;
+    }
+    const file = new File([blob], name, { type: blob.type || 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'ردِّ صدا' });
+      galleryMessage('در همان پنجره «Save Image» را بزن.');
+    } else {
+      const objUrl = URL.createObjectURL(file);
+      triggerDownload(objUrl, name);
+      setTimeout(() => URL.revokeObjectURL(objUrl), 30000);
+      galleryMessage('تصویر ذخیره شد.');
+    }
+  } catch (e) {
+    galleryMessage('❌ ' + (e && e.message ? e.message : 'ذخیرهٔ تصویر ناموفق بود'), true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = label || '🖼 ذخیرهٔ تصویر تحلیل در گالری'; }
   }
 }
 
@@ -962,6 +1054,7 @@ $('videoBtn').onclick = async () => {
     STATE.videoName = res.video_name || 'radde-seda.mp4';
     dl.style.display = 'inline-flex';
     $('galleryBox').style.display = 'block';
+    if ($('saveVideoBtn')) $('saveVideoBtn').style.display = 'inline-flex';
 
     $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.';
     $('videoStatus').className = 'status ok';
@@ -1291,12 +1384,10 @@ function seekFromEvent(ev) {
 $('traceCanvas').addEventListener('click', seekFromEvent);
 
 /* ═══════════════════════════════════════════════════════════════════
-   🎙 اجرای زنده — دو حالت:
-     • لحظه‌ای (live): هیچ چیز ذخیره نمی‌شود؛ فقط نمایش همان لحظه
-     • با ضبط (rec):  صدا در حافظه ضبط می‌شود، در پایان تحلیل و قابل ذخیره است
+   🎙 اجرا با ضبط — تنها حالت اپ:
+     صدا در حافظه ضبط می‌شود، در پایان تحلیل می‌شود و قابل ذخیره است.
    ═══════════════════════════════════════════════════════════════════ */
 const LIVE = {
-  mode: 'live',               // live | rec
   ws: null, ctx: null, stream: null, node: null, recNode: null, on: false,
   midi: null, hi: null, lo: null, points: [], startAt: 0,
   chunks: [], recStart: 0, recTimer: null, takes: [],
@@ -1305,26 +1396,16 @@ const LIVE = {
   raf: null, lastTs: 0, lastDraw: 0, lastLabel: ''
 };
 
-const MODE_HINT = {
-  live: '⚡ <b>لحظه‌ای:</b> نت جاری و بالاترین/پایین‌ترین همین لحظه نمایش داده می‌شود؛ هیچ صدایی ذخیره نمی‌شود و با توقف همه‌چیز پاک می‌شود.',
-  rec: '⏺ <b>با ضبط:</b> هر چه می‌خوانی در حافظه ضبط می‌شود؛ در پایان، تحلیل کامل (بالاترین/پایین‌ترین نت، گستره، تصویر و فایل صوتی) را می‌گیری و می‌توانی ذخیره کنی.'
-};
+const REC_HINT = '⏺ <b>با ضبط:</b> هر چه می‌خوانی در حافظه ضبط می‌شود؛ در پایان، تحلیل کامل (بالاترین/پایین‌ترین نت، گستره، تصویر و فایل صوتی) را می‌گیری و می‌توانی ذخیره کنی.';
 
-function setMode(mode) {
-  if (LIVE.on) stopLive();          // تعویض حالت وسط اجرا → توقف امن
-  LIVE.mode = mode;
-  $('modeLive').classList.toggle('active', mode === 'live');
-  $('modeRec').classList.toggle('active', mode === 'rec');
-  $('modeHint').innerHTML = MODE_HINT[mode];
-  $('takesCard').style.display = mode === 'rec' ? 'block' : 'none';
-  $('privacyCard').style.display = mode === 'live' ? 'block' : 'none';
-  $('micBtn').classList.toggle('rec', mode === 'rec');
-  $('micBtn').textContent = mode === 'rec' ? '⏺' : '🎤';
-  $('recBar').style.display = (mode === 'rec' && LIVE.on) ? 'flex' : 'none';
+function initRecMode() {
+  $('modeHint').innerHTML = REC_HINT;
+  const tk = $('takesCard'); if (tk) tk.style.display = 'block';
+  $('micBtn').classList.add('rec');
+  $('micBtn').textContent = '⏺';
+  $('recBar').style.display = LIVE.on ? 'flex' : 'none';
   resetSession();
 }
-$('modeLive').onclick = () => setMode('live');
-$('modeRec').onclick = () => setMode('rec');
 
 /* هشدار iframe (میکروفون در iframe بسته است) */
 function checkIframe() {
@@ -1374,22 +1455,20 @@ $('micBtn').onclick = async () => {
 
   const src = LIVE.ctx.createMediaStreamSource(LIVE.stream);
 
-  /* تحلیل زنده (در هر دو حالت) */
+  /* تحلیل لحظه‌ای روی همان صدا (برای نمایش زنده روی نمودار) */
   LIVE.node = LIVE.ctx.createScriptProcessor(2048, 1, 1);
   let acc = [];
 
-  /* ضبط (فقط حالت «با ضبط») — ScriptProcessor برای سازگاری با اندروید/وب‌ویو */
-  if (LIVE.mode === 'rec') {
-    LIVE.chunks = [];
-    LIVE.recNode = LIVE.ctx.createScriptProcessor(4096, 1, 1);
-    LIVE.recNode.onaudioprocess = ev => {
-      if (!LIVE.on) return;
-      LIVE.chunks.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
-    };
-    src.connect(LIVE.recNode);
-    const mute = LIVE.ctx.createGain(); mute.gain.value = 0;
-    LIVE.recNode.connect(mute); mute.connect(LIVE.ctx.destination);
-  }
+  /* ضبط — ScriptProcessor برای سازگاری با اندروید/وب‌ویو */
+  LIVE.chunks = [];
+  LIVE.recNode = LIVE.ctx.createScriptProcessor(4096, 1, 1);
+  LIVE.recNode.onaudioprocess = ev => {
+    if (!LIVE.on) return;
+    LIVE.chunks.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+  };
+  src.connect(LIVE.recNode);
+  const mute = LIVE.ctx.createGain(); mute.gain.value = 0;
+  LIVE.recNode.connect(mute); mute.connect(LIVE.ctx.destination);
 
   LIVE.ws.onopen = () => {
     LIVE.ws.send(JSON.stringify({ sample_rate: LIVE.ctx.sampleRate, reset: true }));
@@ -1399,13 +1478,11 @@ $('micBtn').onclick = async () => {
     LIVE.startAt = performance.now() / 1000;
     LIVE.recStart = Date.now();
     $('micBtn').classList.add('on');
-    $('liveSub').textContent = LIVE.mode === 'rec' ? 'در حال ضبط…' : 'در حال شنیدن…';
-    $('recBar').style.display = LIVE.mode === 'rec' ? 'flex' : 'none';
-    if (LIVE.mode === 'rec') {
-      LIVE.recTimer = setInterval(() => {
-        $('recTime').textContent = fmtClock((Date.now() - LIVE.recStart) / 1000);
-      }, 250);
-    }
+    $('liveSub').textContent = 'در حال ضبط…';
+    $('recBar').style.display = 'flex';
+    LIVE.recTimer = setInterval(() => {
+      $('recTime').textContent = fmtClock((Date.now() - LIVE.recStart) / 1000);
+    }, 250);
   };
 
   LIVE.ws.onmessage = ev => {
@@ -1464,7 +1541,7 @@ $('micBtn').onclick = async () => {
 function stopLive() {
   stopLiveLoop();
   LIVE.target = null; LIVE.shown = null; LIVE.dotAlpha = 0;
-  const wasRec = LIVE.mode === 'rec' && LIVE.chunks.length > 0;
+  const wasRec = LIVE.chunks.length > 0;
   const sampleRate = LIVE.ctx ? LIVE.ctx.sampleRate : 0;
   const chunks = LIVE.chunks.slice();
 
@@ -1481,17 +1558,11 @@ function stopLive() {
   LIVE.ctx = LIVE.node = LIVE.recNode = LIVE.stream = LIVE.ws = null;
   LIVE.chunks = [];
 
-  if (LIVE.mode === 'live') {
-    /* حالت لحظه‌ای: هیچ چیزی در حافظه نمی‌ماند */
-    resetSession();
-    $('liveSub').textContent = 'متوقف شد — چیزی ذخیره نشد';
-  } else {
-    $('liveSub').textContent = 'ضبط تمام شد';
-    if (wasRec && chunks.length && sampleRate) {
-      const take = makeTake(chunks, sampleRate);
-      addTake(take);
-      analyzeTake(take);
-    }
+  $('liveSub').textContent = wasRec ? 'ضبط تمام شد' : 'ضبط متوقف شد';
+  if (wasRec && chunks.length && sampleRate) {
+    const take = makeTake(chunks, sampleRate);
+    addTake(take);
+    analyzeTake(take);
   }
 }
 
@@ -1535,10 +1606,32 @@ function makeTake(chunks, sampleRate) {
 
 function addTake(take) { LIVE.takes.unshift(take); renderTakes(); }
 
+/* حذف همه: تأیید دو مرحله‌ای */
+(function () {
+  const btn = $('clearTakes');
+  if (!btn) return;
+  let armed = false, timer = null;
+  btn.onclick = () => {
+    if (!LIVE.takes.length) { $('liveSub').textContent = 'جلسه‌ای برای حذف نیست'; return; }
+    if (!armed) {
+      armed = true;
+      btn.textContent = '✔ مطمئنی؟ بزن';
+      btn.style.borderColor = 'rgba(255,90,90,.9)';
+      timer = setTimeout(() => {
+        armed = false; btn.textContent = '🗑 حذف همه'; btn.style.borderColor = '';
+      }, 4000);
+      return;
+    }
+    clearTimeout(timer);
+    armed = false; btn.textContent = '🗑 حذف همه'; btn.style.borderColor = '';
+    deleteAllTakes();
+  };
+})();
+
 function renderTakes() {
   const box = $('takeList');
   if (!LIVE.takes.length) {
-    box.innerHTML = '<div class="empty">هنوز ضبطی نداری — «⏺ با ضبط» را انتخاب کن و شروع کن.</div>';
+    box.innerHTML = '<div class="empty">هنوز ضبطی نداری — دکمهٔ ⏺ را بزن و شروع کن.</div>';
     return;
   }
   box.innerHTML = LIVE.takes.map(t => {
@@ -1555,9 +1648,10 @@ function renderTakes() {
         </div>
         <button data-act="play" data-id="${t.id}" title="پخش">▶</button>
         <a href="${t.url}" download="${t.name}" title="ذخیرهٔ صدا">⬇</a>
-        ${dls.image ? `<a href="${apiPath(dls.image)}" title="ذخیرهٔ تصویر">🖼</a>` : ''}
-        ${dls.report ? `<a href="${apiPath(dls.report)}" title="ذخیرهٔ گزارش">📄</a>` : ''}
+        ${dls.image ? `<a href="${apiPath(dls.image)}" download="${t.name.replace(/\.[^.]+$/, '')}-analysis.png" data-gallery="image" title="ذخیرهٔ تصویر در گالری">🖼</a>` : ''}
+        ${dls.report ? `<a href="${apiPath(dls.report)}" download="${t.name.replace(/\.[^.]+$/, '')}-report.json" title="ذخیرهٔ گزارش">📄</a>` : ''}
         ${t.report ? `<button data-act="open" data-id="${t.id}" title="نمایش تحلیل">🎚</button>` : ''}
+        <button class="del" data-act="del" data-id="${t.id}" title="حذف این جلسه">🗑</button>
       </div>`;
   }).join('');
 
@@ -1573,6 +1667,49 @@ function renderTakes() {
       if (t && t.report) openTake(t);
     };
   });
+  box.querySelectorAll('button[data-act="del"]').forEach(btn => {
+    btn.onclick = () => {
+      /* تأیید دو مرحله‌ای داخل خود صفحه (پنجرهٔ confirm در وب‌ویو ممکن است نباشد) */
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = '✔ حذف؟';
+        btn.title = 'برای حذف قطعی دوباره بزن';
+        setTimeout(() => {
+          if (document.body.contains(btn)) {
+            btn.dataset.armed = ''; btn.textContent = '🗑'; btn.title = 'حذف این جلسه';
+          }
+        }, 4000);
+        return;
+      }
+      deleteTake(btn.dataset.id);
+    };
+  });
+}
+
+/* ── حذف یک جلسه (ضبط) از فهرست ── */
+function deleteTake(id) {
+  const i = LIVE.takes.findIndex(x => x.id === id);
+  if (i < 0) return;
+  const t = LIVE.takes[i];
+  try { if (t.url) URL.revokeObjectURL(t.url); } catch (e) {}
+  LIVE.takes.splice(i, 1);
+  /* اگر تحلیلِ همین ضبط روی صفحه باز است، پاکش کن تا داده‌ای جا نماند */
+  if (t.jobId && STATE.jobId === t.jobId) {
+    STATE.jobId = null; STATE.report = null; STATE.videoName = null;
+    const vb = $('videoBox'); if (vb) vb.style.display = 'none';
+    const vp = $('videoPlayer'); if (vp) { try { vp.pause(); } catch (e) {} vp.removeAttribute('src'); }
+    const gb = $('galleryBox'); if (gb) gb.style.display = 'none';
+  }
+  renderTakes();
+  $('liveSub').textContent = '🗑 جلسه حذف شد';
+}
+
+/* ── حذف همهٔ جلسه‌ها ── */
+function deleteAllTakes() {
+  LIVE.takes.forEach(t => { try { if (t.url) URL.revokeObjectURL(t.url); } catch (e) {} });
+  LIVE.takes = [];
+  renderTakes();
+  $('liveSub').textContent = '🗑 همهٔ جلسه‌ها حذف شد';
 }
 
 async function analyzeTake(take) {
@@ -1752,7 +1889,7 @@ function drawLive() {
 }
 
 /* ═══════════ راه‌اندازی ═══════════ */
-setMode('live');
+initRecMode();
 drawLive();
 
 /* چرخش/تغییر اندازه: نمودارها را دوباره بساز */
@@ -1767,7 +1904,7 @@ window.addEventListener('resize', () => {
 
 /* جلوگیری از بسته‌شدن ناخواسته در حال ضبط */
 window.addEventListener('beforeunload', e => {
-  if (LIVE.on && LIVE.mode === 'rec') {
+  if (LIVE.on) {
     e.preventDefault();
     e.returnValue = '';
   }

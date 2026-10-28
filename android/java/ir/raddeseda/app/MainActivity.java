@@ -400,7 +400,7 @@ public class MainActivity extends Activity {
             File tmp = new File(getCacheDir(), "asset_" + System.currentTimeMillis());
             copyStream(in, new FileOutputStream(tmp));
             in.close();
-            finishSave(tmp, name, mimeFor(rel));
+            finishSave(tmp, name, mimeFor(rel), false);
             tmp.delete();
         } catch (Exception e) {
             toast("ذخیرهٔ نمونه ناموفق بود: " + e.getMessage());
@@ -425,7 +425,7 @@ public class MainActivity extends Activity {
             FileOutputStream fos = new FileOutputStream(tmp);
             fos.write(bytes);
             fos.close();
-            finishSave(tmp, name, mime);
+            finishSave(tmp, name, mime, false);
             tmp.delete();
         } catch (Exception e) {
             toast("ذخیره ناموفق بود: " + e.getMessage());
@@ -463,11 +463,11 @@ public class MainActivity extends Activity {
                     tmp = File.createTempFile("gallery_", ".mp4", getCacheDir());
                     downloadToFile(url, tmp);
                     String mime = guessMimeFromName(name);
-                    if (!mime.startsWith("video/")) mime = "video/mp4";
-                    finishSave(tmp, name, mime);
-                    toastUi("✅ ویدیو در گالری ذخیره شد");
+                    if ("application/octet-stream".equals(mime)) mime = "video/mp4";
+                    String where = finishSave(tmp, name, mime, true);
+                    toastUi("✅ ذخیره شد: " + where);
                 } catch (Exception e) {
-                    toastUi("ذخیره در گالری ناموفق بود: " + e.getMessage() + " — از دکمهٔ «🎬 فایل ویدیو» استفاده کن");
+                    toastUi("ذخیره در گالری ناموفق بود: " + e.getMessage());
                 } finally {
                     if (tmp != null) tmp.delete();
                 }
@@ -499,47 +499,92 @@ public class MainActivity extends Activity {
      * نوشتن فایل موقت در پوشهٔ عمومی درست + ایندکس رسانه (تا در گالری دیده شود).
      * کدِ مخصوص اندروید ۱۰+ در کلاس جداگانه است تا روی اندروید ۹ و پایین‌تر
      * هیچ کلاسی از MediaStore تازه بارگذاری نشود.
+     *
+     * @return مسیر/جای readable برای نمایش به کاربر
      */
-    private void finishSave(File src, String name, String mime) throws IOException {
-        String safe = sanitize(name);
+    private String finishSave(File src, String name, String mime, boolean gallery) throws IOException {
+        if (src == null || !src.exists()) throw new IOException("فایل موقت ساخته نشد");
+        if (src.length() <= 0) throw new IOException("فایل خالی است");
+
+        String m = (mime == null || mime.trim().isEmpty()) ? guessMimeFromName(name) : mime.trim();
+        String safe = sanitize(fitName(name, m));
+        boolean video = m.startsWith("video/");
+        boolean image = m.startsWith("image/");
+        String sub = video ? Environment.DIRECTORY_MOVIES
+                : image ? Environment.DIRECTORY_PICTURES
+                : Environment.DIRECTORY_DOWNLOADS;
+
+        /* مسیر اصلی: MediaStore (اندروید ۱۰+) — هم فایل را می‌نویسد هم در گالری ایندکس می‌کند */
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            QStorage.save(this, src, safe, mime);
-            boolean video = mime.startsWith("video/");
-            boolean image = mime.startsWith("image/");
-            toastUi("✅ ذخیره شد: " + (video ? "Movies/" : image ? "Pictures/" : "Downloads/") + safe);
-            return;
+            Exception first = null;
+            try {
+                return QStorage.save(this, src, safe, m);
+            } catch (Exception e) {
+                first = e;
+            }
+            /* پشتیبان ۱: نوشتن مستقیم در پوشهٔ عمومی (اگر دستگاه scoped storage را نیمه‌فعال دارد) */
+            try {
+                File dir = new File(Environment.getExternalStoragePublicDirectory(sub), "");
+                if (dir.exists() || dir.mkdirs()) {
+                    File out = uniqueFile(dir, safe);
+                    copyStream(new FileInputStream(src), new FileOutputStream(out));
+                    MediaScannerConnection.scanFile(this, new String[]{out.getAbsolutePath()},
+                            new String[]{m}, null);
+                    return out.getAbsolutePath();
+                }
+            } catch (Exception ignored) {
+            }
+            /* پشتیبان ۲: پوشهٔ اختصاصی اپ (همیشه کار می‌کند) + اسکن رسانه */
+            File priv = getExternalFilesDir(sub);
+            if (priv == null) priv = getFilesDir();
+            if (priv == null) throw new IOException("پوشهٔ مقصد در دسترس نیست");
+            if (!priv.exists() && !priv.mkdirs()) throw new IOException("پوشه ساخته نشد");
+            File out = uniqueFile(priv, safe);
+            copyStream(new FileInputStream(src), new FileOutputStream(out));
+            try {
+                MediaScannerConnection.scanFile(this, new String[]{out.getAbsolutePath()},
+                        new String[]{m}, null);
+            } catch (Exception ignored) {
+            }
+            String why = (first != null && first.getMessage() != null) ? first.getMessage() : "";
+            return out.getAbsolutePath() + (why.isEmpty() ? "" : "  (" + why + ")");
         }
+
+        /* اندروید ۹ و پایین‌تر */
         File dir;
         if (hasWritePermission()) {
-            dir = Environment.getExternalStoragePublicDirectory(
-                    mime.startsWith("video/") ? Environment.DIRECTORY_MOVIES
-                            : mime.startsWith("image/") ? Environment.DIRECTORY_PICTURES
-                            : Environment.DIRECTORY_DOWNLOADS);
+            dir = Environment.getExternalStoragePublicDirectory(sub);
         } else {
-            dir = getExternalFilesDir(null);
+            dir = getExternalFilesDir(sub);
             if (dir == null) dir = getFilesDir();
         }
+        if (dir == null) throw new IOException("پوشهٔ مقصد در دسترس نیست");
         if (!dir.exists() && !dir.mkdirs()) throw new IOException("پوشه ساخته نشد");
         File out = uniqueFile(dir, safe);
-        FileOutputStream fos = new FileOutputStream(out);
-        InputStream in = new FileInputStream(src);
-        copyStream(in, fos);
+        copyStream(new FileInputStream(src), new FileOutputStream(out));
         try {
-            MediaScannerConnection.scanFile(MainActivity.this,
-                    new String[]{out.getAbsolutePath()}, new String[]{mime}, null);
+            MediaScannerConnection.scanFile(this, new String[]{out.getAbsolutePath()},
+                    new String[]{m}, null);
         } catch (Exception ignored) {
         }
-        toastUi("✅ ذخیره شد: " + out.getAbsolutePath());
+        if (!hasWritePermission()) {
+            throw new IOException("دسترسی به حافظه داده نشد؛ فایل در حافظهٔ داخلی اپ ذخیره شد: "
+                    + out.getAbsolutePath());
+        }
+        return out.getAbsolutePath();
     }
 
     /** ذخیره با MediaStore — فقط روی اندروید ۱۰ (API 29) و بالاتر اجرا می‌شود. */
     private static class QStorage {
-        static void save(Context ctx, File src, String name, String mime) throws IOException {
+        static String save(Context ctx, File src, String name, String mime) throws IOException {
             boolean video = mime.startsWith("video/");
             boolean image = mime.startsWith("image/");
-            String rel = video ? Environment.DIRECTORY_MOVIES
+            String dirName = video ? Environment.DIRECTORY_MOVIES
                     : image ? Environment.DIRECTORY_PICTURES
                     : Environment.DIRECTORY_DOWNLOADS;
+            /* RELATIVE_PATH باید اسلش پایانی داشته باشد، وگرنه بعضی دستگاه‌ها
+               فایل را در ریشه می‌سازند یا insert را برمی‌گردانند (منبع خطای «ناموفق بود») */
+            String rel = dirName + "/";
             Uri collection = video ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
                     : image ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI
                     : MediaStore.Downloads.EXTERNAL_CONTENT_URI;
@@ -548,18 +593,111 @@ public class MainActivity extends Activity {
             v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
             v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
             v.put(MediaStore.MediaColumns.RELATIVE_PATH, rel);
-            v.put(MediaStore.MediaColumns.IS_PENDING, 1);
 
-            Uri item = ctx.getContentResolver().insert(collection, v);
-            if (item == null) throw new IOException("MediaStore insert failed");
-            OutputStream os = ctx.getContentResolver().openOutputStream(item);
-            if (os == null) throw new IOException("MediaStore open failed");
-            copyStream(new FileInputStream(src), os);
+            Uri item = null;
+            Exception lastErr = null;
 
-            ContentValues done = new ContentValues();
-            done.put(MediaStore.MediaColumns.IS_PENDING, 0);
-            ctx.getContentResolver().update(item, done, null, null);
+            /* تلاش ۱: مسیر استاندارد با IS_PENDING (دسترسی انحصاری تا پایان نوشتن) */
+            try {
+                ContentValues pending = new ContentValues(v);
+                pending.put(MediaStore.MediaColumns.IS_PENDING, 1);
+                item = ctx.getContentResolver().insert(collection, pending);
+            } catch (Exception e) {
+                lastErr = e;
+            }
+            /* تلاش ۲: بدون IS_PENDING (بعضی فروشنده‌ها آن را قبول نمی‌کنند) */
+            if (item == null) {
+                try {
+                    item = ctx.getContentResolver().insert(collection, v);
+                } catch (Exception e) {
+                    lastErr = e;
+                }
+            }
+            if (item == null) {
+                throw new IOException("MediaStore insert failed"
+                        + (lastErr != null && lastErr.getMessage() != null ? ": " + lastErr.getMessage() : ""));
+            }
+
+            try {
+                OutputStream os = ctx.getContentResolver().openOutputStream(item, "w");
+                if (os == null) os = ctx.getContentResolver().openOutputStream(item);
+                if (os == null) throw new IOException("MediaStore open failed");
+                boolean ok = false;
+                try {
+                    copyStream(new FileInputStream(src), os);
+                    ok = true;
+                } finally {
+                    if (!ok) try { os.close(); } catch (Exception ignored) {}
+                }
+            } catch (Exception e) {
+                try { ctx.getContentResolver().delete(item, null, null); } catch (Exception ignored) {}
+                throw new IOException("نوشتن در گالری ناموفق بود"
+                        + (e.getMessage() != null ? ": " + e.getMessage() : ""));
+            }
+
+            /* پایان کار: IS_PENDING=0 تا فایل در گالری دیده شود */
+            try {
+                ContentValues done = new ContentValues();
+                done.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                ctx.getContentResolver().update(item, done, null, null);
+            } catch (Exception ignored) {
+            }
+            return rel + name;
         }
+    }
+
+    /** پسوند فایل را با نوع واقعی آن هم‌خوان می‌کند (وگرنه گالری فایل را نشان نمی‌دهد) */
+    private static String fitName(String name, String mime) {
+        String n = sanitize(name);
+        String m = (mime == null) ? "" : mime.toLowerCase(Locale.US);
+        String ext = "";
+        if (m.startsWith("video/mp4")) ext = ".mp4";
+        else if (m.startsWith("video/webm")) ext = ".webm";
+        else if (m.startsWith("video/3gpp")) ext = ".3gp";
+        else if (m.startsWith("image/png")) ext = ".png";
+        else if (m.startsWith("image/jpeg")) ext = ".jpg";
+        else if (m.startsWith("image/webp")) ext = ".webp";
+        else if (m.startsWith("audio/wav") || m.startsWith("audio/wave")) ext = ".wav";
+        else if (m.startsWith("audio/mpeg")) ext = ".mp3";
+        if (ext.isEmpty()) return n;
+        String lower = n.toLowerCase(Locale.US);
+        if (lower.endsWith(ext)) return n;
+        return n.replaceAll("\\.[a-z0-9]{1,5}$", "") + ext;
+    }
+
+    /** نتیجهٔ ذخیره را به صفحه برمی‌گرداند تا پیام دقیق نشان داده شود */
+    private void notifySave(final String token, final boolean ok, final String msg) {
+        if (web == null) return;
+        final String js = "window.__nativeSaveDone&&window.__nativeSaveDone("
+                + jsStr(token) + "," + ok + "," + jsStr(msg) + ")";
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    web.evaluateJavascript(js, null);
+                } catch (Exception ignored) {
+                }
+            }
+        });
+    }
+
+    private static String jsStr(String s) {
+        if (s == null) return "null";
+        StringBuilder b = new StringBuilder("\"");
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"': b.append("\\\""); break;
+                case '\\': b.append("\\\\"); break;
+                case '\n': b.append("\\n"); break;
+                case '\r': b.append("\\r"); break;
+                case '\t': b.append("\\t"); break;
+                default:
+                    if (c < 0x20) b.append(String.format("\\u%04x", (int) c));
+                    else b.append(c);
+            }
+        }
+        return b.append('"').toString();
     }
 
     private boolean hasWritePermission() {
@@ -678,25 +816,22 @@ public class MainActivity extends Activity {
         /** ذخیرهٔ ویدیو در گالری (پوشهٔ Movies) */
         @JavascriptInterface
         public void saveToGallery(String url, String name) {
-            String n = name == null || name.trim().isEmpty() ? "radde-seda.mp4" : sanitize(name);
-            downloadToGallery(url, n);
+            String n = (name == null || name.trim().isEmpty()) ? "radde-seda.mp4" : sanitize(name);
+            String mime = "application/octet-stream".equals(guessMimeFromName(n))
+                    ? "video/mp4" : guessMimeFromName(n);
+            downloadToGallery(url, fitName(n, mime));
         }
 
-        /** شروع ذخیرهٔ تکه‌تکه (برای blobهای صفحه) */
+        /** شروع ذخیرهٔ تکه‌تکه (برای blobهای صفحه) — مقصد: پوشهٔ دانلودها */
         @JavascriptInterface
         public String beginSave(String name, String mime) {
-            try {
-                File f = File.createTempFile("save_", ".part", getCacheDir());
-                String token = UUID.randomUUID().toString();
-                pendingSaves.put(token, f);
-                pendingMeta.put(token, new String[]{
-                        sanitize(name),
-                        (mime == null || mime.trim().isEmpty()) ? guessMimeFromName(name) : mime});
-                return token;
-            } catch (Exception e) {
-                toastUi("شروع ذخیره ناموفق بود: " + e.getMessage());
-                return null;
-            }
+            return beginSaveInternal(name, mime, "downloads");
+        }
+
+        /** شروع ذخیرهٔ تکه‌تکه با مقصد مشخص: "gallery" یا "downloads" */
+        @JavascriptInterface
+        public String beginSaveTo(String name, String mime, String target) {
+            return beginSaveInternal(name, mime, target);
         }
 
         @JavascriptInterface
@@ -722,16 +857,26 @@ public class MainActivity extends Activity {
         public void endSave(String token) {
             final File f = pendingSaves.remove(token);
             String[] meta = pendingMeta.remove(token);
-            if (f == null) return;
+            if (f == null) {
+                notifySave(token, false, "ذخیره ناموفق بود");
+                return;
+            }
             final String name = (meta != null && meta[0] != null) ? meta[0] : "output";
             final String mime = (meta != null && meta[1] != null) ? meta[1] : guessMimeFromName(name);
+            final boolean gallery = meta != null && meta.length > 2 && "gallery".equals(meta[2]);
             new Thread(new Runnable() {
                 @Override
                 public void run() {
+                    String msg;
                     try {
-                        finishSave(f, name, mime);
+                        String where = finishSave(f, name, mime, gallery);
+                        msg = "✅ ذخیره شد: " + where;
+                        toastUi(msg);
+                        notifySave(token, true, msg);
                     } catch (Exception e) {
-                        toastUi("ذخیره ناموفق بود: " + e.getMessage());
+                        msg = "❌ ذخیره ناموفق بود: " + (e.getMessage() == null ? e.toString() : e.getMessage());
+                        toastUi(msg);
+                        notifySave(token, false, msg);
                     } finally {
                         f.delete();
                     }
@@ -744,6 +889,23 @@ public class MainActivity extends Activity {
             File f = pendingSaves.remove(token);
             pendingMeta.remove(token);
             if (f != null) f.delete();
+        }
+
+        private String beginSaveInternal(String name, String mime, String target) {
+            try {
+                File f = File.createTempFile("save_", ".part", getCacheDir());
+                String token = UUID.randomUUID().toString();
+                String m = (mime == null || mime.trim().isEmpty()) ? guessMimeFromName(name) : mime.trim();
+                pendingSaves.put(token, f);
+                pendingMeta.put(token, new String[]{
+                        sanitize(fitName(name, m)),
+                        m,
+                        "gallery".equals(target) ? "gallery" : "downloads"});
+                return token;
+            } catch (Exception e) {
+                toastUi("شروع ذخیره ناموفق بود: " + e.getMessage());
+                return null;
+            }
         }
     }
 

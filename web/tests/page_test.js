@@ -337,6 +337,61 @@ function printResults() {
     smooth.gone.alpha === 0 && smooth.gone.shown === null,
     'alpha=' + smooth.gone.alpha + ' shown=' + smooth.gone.shown);
 
+  // ── حالت «لحظه‌ای» کامل حذف شده باشد ──
+  const ui = w.eval(`(function(){
+    return {
+      hasLiveTab: !!document.getElementById('modeLive'),
+      hasRecTab: !!document.getElementById('modeRec'),
+      hasPrivacy: !!document.getElementById('privacyCard'),
+      takesShown: (function(){ const c = document.getElementById('takesCard');
+        return !!c && c.style.display !== 'none'; })(),
+      hint: (document.getElementById('modeHint') || {}).textContent || '',
+      hasClear: !!document.getElementById('clearTakes'),
+      hasImgBtn: !!document.getElementById('saveImageBtn'),
+      micText: (document.getElementById('micBtn') || {}).textContent || ''
+    };
+  })()`);
+  check('تب «⚡ لحظه‌ای» از صفحه حذف شده است',
+    !ui.hasLiveTab && !ui.hasRecTab, 'modeLive=' + ui.hasLiveTab + ' modeRec=' + ui.hasRecTab);
+  check('کارت مخصوص حالت لحظه‌ای حذف شده است', !ui.hasPrivacy);
+  check('راهنما فقط حالت «با ضبط» را توضیح می‌دهد',
+    ui.hint.indexOf('با ضبط') >= 0 && ui.hint.indexOf('لحظه‌ای') < 0, ui.hint.slice(0, 40));
+  check('دکمهٔ میکروفون مستقیم در حالت ضبط است', ui.micText.trim() === '⏺', ui.micText);
+  check('کارت ضبط‌ها همیشه دیده می‌شود', ui.takesShown);
+  check('دکمهٔ ذخیرهٔ تصویر در گالری موجود است', ui.hasImgBtn);
+
+  // ── حذف یک جلسه و حذف همه ──
+  const del = w.eval(`(function(){
+    LIVE.takes = [
+      { id:'t1', name:'take-01.wav', url:'', seconds:3, createdAt:'x',
+        jobId:null, report:null, imageUrl:null, downloads:null, busy:false, error:null },
+      { id:'t2', name:'take-02.wav', url:'', seconds:4, createdAt:'x',
+        jobId:null, report:null, imageUrl:null, downloads:null, busy:false, error:null }
+    ];
+    renderTakes();
+    const before = document.querySelectorAll('#takeList .take').length;
+    const btn = document.querySelector('#takeList button[data-act="del"]');
+    btn.click();
+    const armed = btn.textContent;
+    btn.click();
+    const after = document.querySelectorAll('#takeList .take').length;
+    const sub = document.getElementById('liveSub').textContent;
+
+    const clr = document.getElementById('clearTakes');
+    clr.click();
+    const armedAll = clr.textContent;
+    clr.click();
+    const empty = !!document.querySelector('#takeList .empty');
+    return { before, armed, after, sub, armedAll, empty, left: LIVE.takes.length };
+  })()`);
+  check('فهرست ضبط‌ها دو جلسه را نشان می‌دهد', del.before === 2, 'تعداد=' + del.before);
+  check('حذف جلسه تأیید دو مرحله‌ای دارد', /حذف/.test(del.armed || ''), del.armed);
+  check('یک جلسه با 🗑 حذف می‌شود', del.after === 1, 'باقی‌مانده=' + del.after);
+  check('پیام حذف جلسه نشان داده می‌شود', (del.sub || '').indexOf('حذف') >= 0, del.sub);
+  check('«حذف همه» هم تأیید می‌خواهد', /مطمئن/.test(del.armedAll || ''), del.armedAll);
+  check('«حذف همه» همهٔ جلسه‌ها را پاک می‌کند',
+    del.empty && del.left === 0, 'باقی‌مانده=' + del.left);
+
   // ── وضعیت موازی‌سازی در صفحه ──
   const par = w.eval('JSON.stringify(LocalOffline.parallel())');
   check('وضعیت موازی‌سازی در صفحه گزارش می‌شود', !!par && /available/.test(par), par);
