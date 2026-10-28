@@ -15,7 +15,10 @@
 
 ### ⬇ دانلود
 
-* **دانلود مستقیم (شاخهٔ توسعه):**
+* **دانلود مستقیم (تگ v1.1.0):**
+  https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.1.0/release/radde-seda-1.1.0.apk
+
+* **دانلود مستقیم (شاخهٔ توسعه، همیشه به‌روز):**
   https://github.com/mahdi-talebian/Ai/raw/refs/heads/arena/0d697dab-ai/release/radde-seda-1.1.0.apk
 
 * صفحهٔ فایل در مخزن (دکمهٔ «Download raw file»):

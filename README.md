@@ -289,8 +289,8 @@ python3 trace_video.py recitation.mp3 --png trace.png
 
 ### 📱 APK آمادهٔ نصب (۱٫۱٫۰ — آفلاین کامل)
 
-**⬇ دانلود:** [radde-seda-1.1.0.apk](https://github.com/mahdi-talebian/Ai/raw/refs/heads/arena/0d697dab-ai/release/radde-seda-1.1.0.apk)
-— صفحهٔ انتشار: [Releases](https://github.com/mahdi-talebian/Ai/releases)
+**⬇ دانلود:** [radde-seda-1.1.0.apk](https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.1.0/release/radde-seda-1.1.0.apk)
+— صفحهٔ انتشار: [Releases · v1.1.0](https://github.com/mahdi-talebian/Ai/releases/tag/v1.1.0)
 
 ```
 release/radde-seda-1.1.0.apk    ← نسخهٔ جاری (آفلاین، امضاشده v2+v3، ۱٫۷ مگابایت)
