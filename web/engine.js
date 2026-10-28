@@ -1255,10 +1255,19 @@
     diag.engine_sec = Math.round((nowMs() - ctx.t0) / 100) / 10;
     diag.parallel = !!ctx.parallel;
 
+    /* ردِّ نمایشی: فقط نمونه‌های داخل نت‌های واقعی (بدون میله‌های الکی) */
+    var traceStats = {};
+    var traceFreqs = strictTraceFreqs(tr.times, freqs, notes, { stats: traceStats });
+    diag.trace_kept_pct = traceStats.total
+      ? Math.round(1000 * traceStats.kept / traceStats.total) / 10 : 0;
+    diag.trace_notes_used = traceStats.notes_used || 0;
+    diag.strict_trace = true;
+
     ctx.onProgress('done', 1.0);
     return {
       times: tr.times,
       freqs: freqs,
+      trace_freqs: traceFreqs,
       conf: mid.conf,
       notes: notes,
       sr: ctx.sr,
@@ -1411,6 +1420,111 @@
     };
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     ردِّ سخت‌گیرانه: فقط نمونه‌های فرکانسی که واقعاً بخشی از یک «نتِ خوانده‌شده»
+     هستند نگه داشته می‌شوند. هر چیزی که بیرون از بازهٔ نت‌ها باشد (سکوت، نویز،
+     پرش‌های بی‌دوام، جهش‌های اکتاوی) صفر می‌شود تا در تصویر و ویدیو خط/میلهٔ
+     الکی کشیده نشود.
+     ══════════════════════════════════════════════════════════════════════ */
+  var TRACE_MIN_NOTE_SEC = 0.10;      // نتِ کوتاه‌تر از این «اجرا» حساب نمی‌شود
+  var TRACE_MIN_NOTE_FRAMES = 3;      // دست‌کم چند فریم پیوسته
+  var TRACE_MIN_CONF = 0.35;          // اتکاپذیری حداقلی
+  var TRACE_EDGE_PAD_SEC = 0.02;      // لبه‌های نت (گذار بین دو نت) کنار گذاشته می‌شوند
+  var TRACE_CENTS_BASE = 90;          // فاصلهٔ مجاز از f0 نت (سنت) — سخت‌گیرانه
+  var TRACE_CENTS_MAX = 220;          // سقف انحراف مجاز (بیش از دو نیم‌پرده = الکی)
+  var TRACE_OUTLIER_CENTS = 170;      // انحراف از میانهٔ محلی ⇒ پرش/میلهٔ الکی
+  var TRACE_OUTLIER_WIN = 9;          // پنجرهٔ میانهٔ محلی (فریم) ≈ ۹۰ms
+
+  /** آیا این نت به‌قدر کافی «اجرا شده» که در نمودار دیده شود؟ */
+  function isSungNote(n) {
+    if (!n || !(n.f0_hz > 0)) return false;
+    if ((n.duration || 0) < TRACE_MIN_NOTE_SEC) return false;
+    if (n.n_frames != null && n.n_frames < TRACE_MIN_NOTE_FRAMES) return false;
+    if (n.confidence != null && n.confidence < TRACE_MIN_CONF) return false;
+    return true;
+  }
+
+  /**
+   * حذف پرش‌های لحظه‌ای: هر نمونه‌ای که از «میانهٔ محلی» خودش بیش از
+   * TRACE_OUTLIER_CENTS سنت فاصله داشته باشد صفر می‌شود. میله‌های بلندِ
+   * بی‌نت (جهش اکتاوی، نویز، لرزش لحظه‌ای) همین‌جا از بین می‌روند، ولی
+   * مسیر واقعی صدا (ویبراتو، لغزش، گذر بین دو نت) دست‌نخورده می‌ماند.
+   */
+  function dropTraceOutliers(freqs, win) {
+    var n = freqs.length;
+    var out = new Float32Array(n);
+    win = Math.max(3, win || TRACE_OUTLIER_WIN);
+    var half = win >> 1;
+    var buf = new Float64Array(win);
+    var dropped = 0;
+    for (var i = 0; i < n; i++) {
+      if (!(freqs[i] > 0)) continue;
+      /* میانهٔ محلی روی نمونه‌های معتبرِ همسایه (به سنت نسبت به نمونهٔ مرکزی) */
+      var c = 0;
+      for (var q = i - half; q <= i + half; q++) {
+        if (q < 0 || q >= n) continue;
+        if (!(freqs[q] > 0)) continue;
+        buf[c++] = 1200 * Math.log2(freqs[q] / freqs[i]);
+      }
+      if (c < 3) { out[i] = freqs[i]; continue; }
+      var arr = Array.prototype.slice.call(buf.subarray(0, c)).sort(function (a, b) { return a - b; });
+      var med = arr[arr.length >> 1];
+      if (Math.abs(med) <= TRACE_OUTLIER_CENTS) out[i] = freqs[i];
+      else dropped++;
+    }
+    out._dropped = dropped;
+    return out;
+  }
+
+  /**
+   * فرکانس‌ها را به بازهٔ نت‌های معتبر محدود می‌کند.
+   * خروجی هم‌طول ورودی است؛ جاهایی که نت نیست (یا مقدار از نت خیلی دور است) صفر.
+   * سه دروازه: ۱) پرش لحظه‌ای ۲) بیرونِ بازهٔ نت ۳) دور از f0 نت
+   */
+  function strictTraceFreqs(times, freqs, notes, opts) {
+    opts = opts || {};
+    var out = new Float32Array(freqs.length);
+    var list = (notes || []).filter(isSungNote);
+    if (!list.length || !times.length) return out;
+
+    var cleaned = dropTraceOutliers(freqs);
+    var dropped = cleaned._dropped || 0;
+
+    var spans = list.map(function (n) {
+      var pad = Math.min(TRACE_EDGE_PAD_SEC, 0.25 * (n.duration || 0));
+      var tol = Math.max(TRACE_CENTS_BASE, 2.0 * (n.stability_cents || 0) + 60);
+      return {
+        t0: (n.start || 0) + pad,
+        t1: (n.start || 0) + (n.duration || 0) - pad,
+        f0: n.f0_hz,
+        tol: Math.min(tol, TRACE_CENTS_MAX)
+      };
+    }).sort(function (a, b) { return a.t0 - b.t0; });
+
+    var kept = 0, k = 0;
+    for (var i = 0; i < times.length; i++) {
+      var t = times[i], f = cleaned[i];
+      if (!(f > 0)) continue;
+      /* بازه‌ها ممکن است هم‌پوشانی داشته باشند؛ اولین بازهٔ شامل را می‌گیریم */
+      while (k < spans.length && spans[k].t1 < t) k++;
+      var hit = null;
+      for (var q = k; q < spans.length && spans[q].t0 <= t; q++) {
+        if (t >= spans[q].t0 && t <= spans[q].t1) { hit = spans[q]; break; }
+      }
+      if (!hit) continue;
+      if (Math.abs(cents(f, hit.f0)) > hit.tol) continue;
+      out[i] = f;
+      kept++;
+    }
+    if (opts.stats) {
+      opts.stats.kept = kept;
+      opts.stats.total = times.length;
+      opts.stats.notes_used = spans.length;
+      opts.stats.outliers = dropped;
+    }
+    return out;
+  }
+
   function downsampleContour(times, freqs, maxPoints) {
     maxPoints = maxPoints || 1800;
     if (!times.length) return { t: [], midi: [] };
@@ -1544,7 +1658,7 @@
       notes: notes,
       note_counts: noteCounts,
       pauses: pauses.slice(0, 50),
-      contour: downsampleContour(times, freqs)
+      contour: downsampleContour(times, res.trace_freqs || freqs)
     };
   }
 
@@ -1785,6 +1899,8 @@
     yinTrack: yinTrack, fuseWithSecond: fuseWithSecond,
     smoothPitchContour: smoothPitchContour, removeOctaveSpecks: removeOctaveSpecks,
     segmentNotes: segmentNotes, refineNotes: refineNotes, refineNoteF0: refineNoteF0,
+    strictTraceFreqs: strictTraceFreqs, isSungNote: isSungNote,
+    dropTraceOutliers: dropTraceOutliers,
     analyzeChannels: analyzeChannels, analyzeChannelsAsync: analyzeChannelsAsync,
     buildReport: buildReport,
     extractPitchChunk: extractPitchChunk,

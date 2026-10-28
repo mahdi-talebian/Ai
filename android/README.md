@@ -4,7 +4,7 @@
 Gradle، بدون Android Studio و بدون Android SDK کامل**.
 
 ```
-release/radde-seda-1.2.1.apk      ← فایل آمادهٔ نصب (امضاشده، آفلاین + موازی)
+release/radde-seda-1.2.2.apk      ← فایل آمادهٔ نصب (امضاشده، آفلاین + موازی)
 ```
 
 > **از نسخهٔ ۱٫۱٫۰ به بعد اپ به هیچ سروری وصل نمی‌شود.** موتور تحلیل
@@ -16,7 +16,7 @@ release/radde-seda-1.2.1.apk      ← فایل آمادهٔ نصب (امضاشد
 
 ## نصب روی گوشی
 
-1. فایل `release/radde-seda-1.2.1.apk` را روی گوشی کپی کنید (کابل، تلگرام
+1. فایل `release/radde-seda-1.2.2.apk` را روی گوشی کپی کنید (کابل، تلگرام
    «Saved Messages»، Google Drive… هر چیزی).
 2. روی فایل بزنید؛ اگر پیام «نصب از منابع نامشخص» آمد، برای همین برنامه
    اجازه بدهید.
@@ -49,7 +49,7 @@ release/radde-seda-1.2.1.apk      ← فایل آمادهٔ نصب (امضاشد
 ### اگر عمداً نسخهٔ سروری می‌خواهید (اختیاری)
 
 ```bash
-DEFAULT_API=https://your-server.example APP_VERSION=1.2.1 bash android/build_apk.sh
+DEFAULT_API=https://your-server.example APP_VERSION=1.2.2 bash android/build_apk.sh
 ```
 
 این مقدار داخل `BuildConfig.DEFAULT_API` جای می‌گیرد. در نسخهٔ وب معادلش این است:
@@ -69,7 +69,8 @@ DEFAULT_API=https://your-server.example APP_VERSION=1.2.1 bash android/build_apk
 | انتخاب فایل صوتی/ویدیو از گوشی | `onShowFileChooser` → انتخاب‌گر فایل اندروید |
 | آپلود + تحلیل + نتایج | موتور محلی داخل اپ (`web/engine.js`) — بدون شبکه |
 | ذخیرهٔ فایل اصلی / تصویر / گزارش JSON | MediaStore → `Downloads/` و `Pictures/` |
-| ساخت ویدیوی ردِّ صدا | دکمهٔ 🎬 — canvas + MediaRecorder داخل اپ (بدون ffmpeg) |
+| ساخت ویدیوی ردِّ صدا | دکمهٔ 🎬 — canvas + MediaRecorder داخل اپ (بدون ffmpeg)؛ نوار لغزان ۱۵ ثانیه‌ای با نقطهٔ وسط |
+| فیلتر نت‌ها در تصویر/ویدیو | فقط نت‌های واقعی؛ پرش‌های اکتاوی و نویزِ بی‌نت رسم نمی‌شوند |
 | ذخیرهٔ ویدیو در گالری | بلاب محلی → MediaStore `Movies/` (RELATIVE_PATH با اسلش پایانی، پسوند هم‌خوان با نوع فایل، نتیجه به صفحه برمی‌گردد) |
 | ذخیرهٔ تصویر تحلیل در گالری | بلاب PNG → MediaStore `Pictures/` |
 | ذخیرهٔ ویدیو در پوشهٔ دانلودها | DownloadManager → `Downloads/` با اعلان پیشرفت |
@@ -101,7 +102,7 @@ bash android/build_apk.sh                 # خروجی: release/radde-seda-<vers
 متغیرهای اختیاری:
 
 ```bash
-VERSION_NAME=1.2.1 VERSION_CODE=4 APP_VERSION=1.2.1 bash android/build_apk.sh
+VERSION_NAME=1.2.2 VERSION_CODE=5 APP_VERSION=1.2.2 bash android/build_apk.sh
 ANDROID_TOOLS=/path/to/tools JAVA_HOME=/path/to/jdk bash android/build_apk.sh
 ```
 

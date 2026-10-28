@@ -396,14 +396,19 @@
      ۲) رندرر «ردِّ صدا» روی canvas (پورت trace_video.py)
      ══════════════════════════════════════════════════════════════════════ */
   var LAYOUT = { W: 1280, H: 720, ML: 74, MR: 46, MT: 78, MB: 64 };
+  /* عرض پنجرهٔ نوار لغزان در ویدیو (ثانیه) */
+  var VIDEO_WINDOW_SEC = 15;
   var GAP_BRIDGE_SEC = 0.75;
 
-  function TraceRenderer(canvas, times, freqs, notes) {
+  function TraceRenderer(canvas, times, freqs, notes, opts) {
+    opts = opts || {};
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.W = canvas.width;
     this.H = canvas.height;
     this.notes = notes || [];
+    /* پنجرهٔ لغزان (ویدیو): ۰ = نمای کلی کامل (تصویر تحلیل) */
+    this.windowSec = opts.windowSec > 0 ? opts.windowSec : 0;
 
     var t = Array.from(times), f = Array.from(freqs);
     var order = t.map(function (_, i) { return i; }).sort(function (a, b) { return t[a] - t[b]; });
@@ -442,6 +447,23 @@
   TraceRenderer.prototype.xOfTime = function (t) {
     var usable = this.W - LAYOUT.ML - LAYOUT.MR;
     return LAYOUT.ML + (t / this.duration) * usable;
+  };
+
+  /* بازهٔ زمانی دیده‌شده در لحظهٔ t (برای ویدیوی نوار متحرک) */
+  TraceRenderer.prototype.viewAt = function (t) {
+    if (!this.windowSec) return { t0: 0, t1: this.duration, half: 0 };
+    var half = this.windowSec / 2;
+    /* تا نیمهٔ پنجره اول/آخر، نوار از لبهٔ فایل بیرون نمی‌زند */
+    var t0 = Math.max(0, Math.min(t - half, this.duration - this.windowSec));
+    if (this.duration < this.windowSec) t0 = 0;
+    return { t0: t0, t1: t0 + this.windowSec, half: half };
+  };
+
+  /* نگاشت زمان → x داخل بازهٔ دید */
+  TraceRenderer.prototype.xOfTimeIn = function (t, view) {
+    var usable = this.W - LAYOUT.ML - LAYOUT.MR;
+    var span = Math.max(1e-6, view.t1 - view.t0);
+    return LAYOUT.ML + ((t - view.t0) / span) * usable;
   };
   TraceRenderer.prototype.yOfMidi = function (m) {
     var usable = this.H - LAYOUT.MT - LAYOUT.MB;
@@ -516,7 +538,8 @@
   };
 
   /* پس‌زمینه: گرادیان + هاله + قاب + خطوط نت (یک‌بار ساخته و کش می‌شود) */
-  TraceRenderer.prototype.buildBackground = function () {
+  TraceRenderer.prototype.buildBackground = function (withTrace) {
+    if (withTrace === undefined) withTrace = !this.windowSec;
     var W = this.W, H = this.H;
     var c = document.createElement('canvas');
     c.width = W; c.height = H;
@@ -554,6 +577,8 @@
       g.lineTo(W - 22, y);
       g.stroke();
     }
+
+    if (!withTrace) return c;
 
     // لایهٔ «آینده»: منحنی محو + نقطه‌های محو نت‌ها
     g.strokeStyle = 'rgba(86,120,160,0.41)';
@@ -614,52 +639,102 @@
       }
       return m0;
     }
-    for (var i = idx; i >= 0; i--) if (isFinite(mids[i])) return mids[i];
+    /* در ویدیو: اگر همین حالا نتی خوانده نمی‌شود، نقطه پنهان می‌شود
+       (نه اینکه روی آخرین نت بچسبد) */
+    var maxGap = this.windowSec ? 0.12 : Infinity;
+    for (var i = idx; i >= 0; i--) {
+      if (isFinite(mids[i])) {
+        return (times[idx] - times[i] <= maxGap) ? mids[i] : null;
+      }
+    }
     return null;
+  };
+
+  /* منحنی: limitT = تا چه زمانی (null = همهٔ بازهٔ دید)، faded = لایهٔ محو آینده */
+  TraceRenderer.prototype.drawCurve = function (g, view, X, limitT, faded) {
+    var styles = faded
+      ? [[4, 'rgba(86,120,160,0.41)']]
+      : [[12, 'rgba(255,214,126,0.13)'],
+         [7, 'rgba(255,214,126,0.31)'],
+         [4, 'rgba(247,209,113,1)']];
+    g.lineJoin = 'round';
+    g.lineCap = 'round';
+    for (var s = 0; s < this.segs.length; s++) {
+      var seg = this.segs[s];
+      var n = seg.length;
+      /* پرش سریع به لبهٔ چپ پنجره (نقاط قبل از پنجره لازم نیستند) */
+      var i = 0;
+      while (i < n && seg[i].t < view.t0) i++;
+      var pts = [];
+      if (i > 0) pts.push(seg[i - 1]);          // یک نقطه بیرون لبه → برش تمیز
+      for (; i < n; i++) {
+        var p = seg[i];
+        if (p.t > view.t1) { pts.push(p); break; }   // یک نقطه بیرون لبهٔ راست
+        if (limitT != null && p.t > limitT) break;
+        pts.push(p);
+      }
+      if (pts.length < 2) continue;
+      for (var k = 0; k < styles.length; k++) {
+        g.strokeStyle = styles[k][1];
+        g.lineWidth = styles[k][0];
+        g.beginPath();
+        g.moveTo(X(pts[0].t), pts[0].y);
+        for (var j = 1; j < pts.length; j++) g.lineTo(X(pts[j].t), pts[j].y);
+        g.stroke();
+      }
+    }
   };
 
   TraceRenderer.prototype.draw = function (time) {
     var t = Math.max(0, Math.min(time, this.duration));
     var g = this.ctx, W = this.W, H = this.H;
+    var view = this.viewAt(t);
+    var self = this;
+    var X = function (tt) {
+      return self.windowSec ? self.xOfTimeIn(tt, view) : self.xOfTime(tt);
+    };
+
     if (!this._bg) this._bg = this.buildBackground();
     g.clearRect(0, 0, W, H);
     g.drawImage(this._bg, 0, 0);
 
-    // منحنی طلایی تا لحظهٔ t (سه لایه = درخشش)
-    g.lineJoin = 'round';
-    g.lineCap = 'round';
-    for (var s = 0; s < this.segs.length; s++) {
-      var seg = this.segs[s];
-      var pts = [];
-      for (var i = 0; i < seg.length && seg[i].t <= t; i++) pts.push(seg[i]);
-      if (pts.length < 2) continue;
-      if (pts.length < seg.length) {
-        var a = pts[pts.length - 1], b = seg[pts.length];
-        pts = pts.concat([{ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }]);
-      }
-      var styles = [
-        [12, 'rgba(255,214,126,0.13)'],
-        [7, 'rgba(255,214,126,0.31)'],
-        [4, 'rgba(247,209,113,1)']
-      ];
-      for (var k = 0; k < 3; k++) {
-        g.strokeStyle = styles[k][1];
-        g.lineWidth = styles[k][0];
-        g.beginPath();
-        g.moveTo(pts[0].x, pts[0].y);
-        for (var j = 1; j < pts.length; j++) g.lineTo(pts[j].x, pts[j].y);
-        g.stroke();
-      }
+    /* در حالت نوار لغزان، هر چیزی که به x وابسته است همین‌جا رسم می‌شود */
+    g.save();
+    if (this.windowSec) {
+      g.beginPath();
+      g.rect(LAYOUT.ML - 4, LAYOUT.MT - 26, W - LAYOUT.ML - LAYOUT.MR + 8,
+        H - LAYOUT.MT - LAYOUT.MB + 40);
+      g.clip();
     }
 
+    if (this.windowSec) {
+      /* لایهٔ محو آینده (مثل نمای کلی، ولی فقط داخل پنجره) */
+      this.drawCurve(g, view, X, null, true);
+      (this.notes || []).forEach(function (n) {
+        var f0 = n.f0_hz;
+        if (!f0 || f0 <= 0) return;
+        if (n.start < view.t0 || n.start > view.t1) return;
+        var x = X(n.start || 0), y = self.yOfMidi(CORE.hzToMidi(f0));
+        var rg = g.createRadialGradient(x, y, 0, x, y, 8.5);
+        rg.addColorStop(0, 'rgba(104,138,176,0.72)');
+        rg.addColorStop(1, 'rgba(104,138,176,0)');
+        g.fillStyle = rg;
+        g.beginPath(); g.arc(x, y, 8.5, 0, Math.PI * 2); g.fill();
+      });
+    }
+
+    // منحنی طلایی تا لحظهٔ t (سه لایه = درخشش)
+    var endT = this.windowSec ? Math.min(t, view.t1) : t;
+    this.drawCurve(g, view, X, endT, false);
+
     // نقطه‌های طلایی روی نت‌های خوانده‌شده
-    var self = this;
     (this.notes || []).forEach(function (n) {
       var start = n.start || 0;
       if (start > t) return;
+      if (self.windowSec && (start < view.t0 || start > view.t1)) return;
       var f0 = n.f0_hz;
       if (!f0 || f0 <= 0) return;
-      var x = self.xOfTime(start + (n.duration || 0) / 2);
+      var x = X(start + (n.duration || 0) / 2);
       var y = self.yOfMidi(CORE.hzToMidi(f0));
       var r = (n.duration || 0) < 0.35 ? 4.6 : 6.0;
       g.fillStyle = 'rgb(255,228,155)';
@@ -669,7 +744,7 @@
     });
 
     // خط پخش
-    var xn = this.xOfTime(t);
+    var xn = X(t);
     g.strokeStyle = 'rgba(255,255,255,0.16)';
     g.lineWidth = 6;
     g.beginPath(); g.moveTo(xn, 18); g.lineTo(xn, H - 18); g.stroke();
@@ -698,13 +773,14 @@
 
     // راهنمای بالاترین/پایین‌ترین نت
     g.font = '15px system-ui, sans-serif';
+    g.textAlign = 'left';
     var guides = [[this.highest, 'rgba(255,226,160,', 'HIGH', LAYOUT.ML],
       [this.lowest, 'rgba(176,206,235,', 'LOW', W - 320]];
     guides.forEach(function (gd) {
       var note = gd[0];
       if (!note || !note.f0_hz) return;
       var y = self.yOfMidi(CORE.hzToMidi(note.f0_hz));
-      var x0 = self.xOfTime(note.start || 0);
+      var x0 = Math.max(LAYOUT.ML, Math.min(X(note.start || 0), W - 40));
       g.strokeStyle = gd[1] + '0.22)';
       g.lineWidth = 1;
       g.setLineDash([7, 7]);
@@ -713,6 +789,7 @@
       g.fillStyle = gd[1] + '0.5)';
       g.fillText(gd[2] + ' ' + CORE.midiToName(CORE.hzToMidi(note.f0_hz)), gd[3], y - 8);
     });
+    g.restore();
 
     // برچسب‌ها
     var cur = (mNow == null) ? '—'
@@ -769,7 +846,16 @@
     var canvas = document.createElement('canvas');
     canvas.width = LAYOUT.W;
     canvas.height = LAYOUT.H;
-    var renderer = new TraceRenderer(canvas, pitch.times, pitch.freqs, notes);
+    /* فقط نمونه‌های داخل نت‌های واقعی — میلهٔ الکی در ویدیو کشیده نمی‌شود */
+    var trace = pitch.trace_freqs || (CORE.strictTraceFreqs
+      ? CORE.strictTraceFreqs(pitch.times, pitch.freqs, notes) : pitch.freqs);
+    /* نوار لغزان: پنجرهٔ ۱۵ ثانیه‌ای با نقطهٔ میخ‌شده در وسط.
+       فایل کوتاه‌تر از پنجره ⇒ همان نمای کامل (بدون فضای خالیِ دو طرف). */
+    var full = new TraceRenderer(canvas, pitch.times, trace, notes);
+    var win = full.duration > VIDEO_WINDOW_SEC + 2 ? VIDEO_WINDOW_SEC : 0;
+    var renderer = win
+      ? new TraceRenderer(canvas, pitch.times, trace, notes, { windowSec: win })
+      : full;
 
     var fps = 20;
     var duration = Math.max(renderer.duration, 0.2);
@@ -878,7 +964,8 @@
       // تصویر PNG
       var canvas = document.createElement('canvas');
       canvas.width = LAYOUT.W; canvas.height = LAYOUT.H;
-      var renderer = new TraceRenderer(canvas, res.times, res.freqs, res.notes);
+      var renderer = new TraceRenderer(canvas, res.times,
+        res.trace_freqs || res.freqs, res.notes);
       var png = await renderer.toBlob(null);
       job.imageBlob = png;
       job.imageUrl = URL.createObjectURL(png);

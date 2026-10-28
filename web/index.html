@@ -1089,6 +1089,7 @@ function buildTraceData(r) {
   const c = r.contour || { t: [], midi: [] };
   const times = c.t, mids = c.midi;
   const notes = (r.notes || []).filter(n => n.f0_hz > 0);
+  /* سخت‌گیری: فقط نمونه‌هایی که داخل نت‌های واقعی‌اند (contour از موتور فیلتر می‌شود) */
 
   const cv = $('traceCanvas');
   const phone = isPhone();

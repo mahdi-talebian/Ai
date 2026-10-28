@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>پیش‌نمایش: نوار متحرک + فیلتر سخت‌گیرانهٔ نت‌ها</title>
+<style>
+  :root{--bg:#080f1f;--card:#111b31;--gold:#f0d68a;--txt:#e8eefc;--mut:#a9b6cf;--line:rgba(255,255,255,.12)}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:radial-gradient(1200px 600px at 50% -10%,#182a4d,#080f1f 60%);
+       color:var(--txt);font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;padding:18px}
+  .wrap{max-width:1060px;margin:0 auto}
+  h1{font-size:1.15rem;color:var(--gold);margin:0 0 4px}
+  p.sub{margin:0 0 16px;color:var(--mut);font-size:.85rem;line-height:1.9}
+  .card{background:var(--card);border:1px solid rgba(212,175,55,.24);border-radius:18px;padding:14px;margin-bottom:14px;
+        box-shadow:0 18px 50px rgba(0,0,0,.45)}
+  .card h2{font-size:.95rem;margin:0 0 8px;color:#dfe8fb}
+  .card h2 small{font-weight:400;color:var(--mut);font-size:.78rem}
+  canvas{width:100%;height:auto;display:block;border-radius:14px;background:#0b1224}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  button{font:inherit;cursor:pointer;border-radius:12px;border:1px solid var(--line);
+         background:rgba(255,255,255,.06);color:var(--txt);padding:10px 14px;min-height:44px}
+  button.primary{background:linear-gradient(135deg,#d4af37,#f0d68a);color:#1a1206;font-weight:800;border:0}
+  button.on{background:rgba(255,216,122,.18);border-color:rgba(240,214,138,.5);color:#ffe9b0}
+  .seg{display:flex;gap:6px;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:14px;padding:4px}
+  .seg button{border:0;background:transparent;min-height:38px;padding:8px 12px;font-size:.85rem}
+  input[type=range]{flex:1;min-width:200px;accent-color:#d4af37}
+  .stats{display:flex;gap:14px;flex-wrap:wrap;font-size:.8rem;color:var(--mut);margin-top:8px;direction:ltr;text-align:left}
+  .stats b{color:#ffe9b0;font-weight:700}
+  .note{font-size:.78rem;color:#8fa0bd;line-height:1.9;margin-top:10px}
+  .loading{color:var(--gold);font-size:.85rem}
+  a{color:#9ecbff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ردِّ صدا — پیش‌نمایش تغییرات</h1>
+  <p class="sub">
+    همان رندرری که ویدیو و تصویر تحلیل را می‌سازد، این‌جا زنده اجرا می‌شود. صدا از فایل نمونهٔ خودِ اپ خوانده می‌شود و
+    تحلیل کاملاً روی همین دستگاه انجام می‌شود (بدون سرور).
+  </p>
+
+  <div class="card">
+    <h2>۱) ویدیو: نوار در حال حرکت <small>— پنجرهٔ ۱۵ ثانیه، نقطه ثابت در وسط</small></h2>
+    <canvas id="cv" width="1280" height="720"></canvas>
+    <div class="row">
+      <button class="primary" id="play">▶ پخش</button>
+      <input type="range" id="seek" min="0" max="1000" value="0" />
+      <span id="clock" style="font-size:.8rem;color:var(--mut);direction:ltr;min-width:96px;text-align:left">0.0 / 0.0s</span>
+    </div>
+    <div class="note">خط طلایی = گذشته، خط آبی محو = آینده؛ هر دو زیر نوار می‌لغزند و نقطه دقیقاً وسط می‌ماند.</div>
+  </div>
+
+  <div class="card">
+    <h2>۲) فیلتر سخت‌گیرانهٔ نت‌ها <small>— تصویر تحلیل، نمای کلی (دست‌نخورده)</small></h2>
+    <div class="row" style="margin-top:0;margin-bottom:10px">
+      <div class="seg" id="modeSeg">
+        <button data-mode="strict" class="on">دادهٔ فیلترشده (جدید)</button>
+        <button data-mode="raw">دادهٔ خام (قبلی)</button>
+      </div>
+    </div>
+    <canvas id="cvs" width="1280" height="720"></canvas>
+    <div class="stats">
+      <span>samples drawn: <b id="sKept">–</b></span>
+      <span>spikes &gt; 4 semitones: <b id="sSpike">–</b></span>
+      <span>notes: <b id="sNotes">–</b></span>
+    </div>
+    <div class="note">
+      میله‌های بلندی که هیچ نتی در آن‌ها اجرا نشده (پرش‌های اکتاوی/نویز) در حالت «فیلترشده» کشیده نمی‌شوند.
+      خودِ عکس تحلیل همیشه نمای کلی است — همان چیزی که در اپ ذخیره می‌شود.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>۳) دانلود</h2>
+    <div class="row" style="margin-top:0">
+      <a class="btn" href="/"><button class="primary">📱 صفحهٔ APK اندروید</button></a>
+      <a href="/app/"><button>🌐 خودِ اپ (نسخهٔ وب آفلاین)</button></a>
+    </div>
+    <div class="note">در APK، همین رندر با <code>canvas.captureStream + MediaRecorder</code> به فایل ویدیو تبدیل و در گالری ذخیره می‌شود.</div>
+  </div>
+
+  <div class="loading" id="loading">⏳ در حال خواندن نمونهٔ صوتی و تحلیل…</div>
+</div>
+
+<script src="/app/engine.js"></script>
+<script src="/app/parallel.js"></script>
+<script src="/app/offline.js"></script>
+<script>
+(async function () {
+  const $ = id => document.getElementById(id);
+  const CORE = window.LocalEngineCore;
+  const W = 1280, H = 720;
+  const MIN_SEMIS = 4;
+
+  /* ── ۱) خواندن نمونهٔ صوتی و تحلیل (همان مسیر اپ) ── */
+  const res = await fetch('/app/demo_bayati.wav').then(r => r.arrayBuffer());
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (e) {} }
+  const audio = await ctx.decodeAudioData(res);
+  const mono = new Float32Array(audio.length);
+  for (let c = 0; c < audio.numberOfChannels; c++) {
+    const d = audio.getChannelData(c);
+    for (let i = 0; i < d.length; i++) mono[i] += d[i] / audio.numberOfChannels;
+  }
+  const out = await CORE.analyzeChannelsAsync([mono], audio.sampleRate, {});
+  $('loading').style.display = 'none';
+
+  const trace = out.trace_freqs || out.freqs;
+
+  /* ── ۲) شمارش برای نمایش ── */
+  function midi(f) { return f > 0 ? CORE.hzToMidi(f) : null; }
+  function countSpikes(freqs) {
+    let n = 0;
+    for (let i = 1; i < freqs.length; i++) {
+      const a = midi(freqs[i - 1]), b = midi(freqs[i]);
+      if (a == null || b == null) continue;
+      if (Math.abs(b - a) > MIN_SEMIS) n++;
+    }
+    return n;
+  }
+  function kept(freqs) { let n = 0; for (const f of freqs) if (f > 0) n++; return n; }
+
+  $('sKept').textContent = kept(trace) + ' / ' + kept(out.freqs);
+  $('sSpike').textContent = countSpikes(trace) + ' / ' + countSpikes(out.freqs);
+  $('sNotes').textContent = out.notes.length;
+
+  /* ── ۳) بوم تصویر تحلیل ── */
+  const cvS = $('cvs');
+  let rendererS = null;
+  function drawStill(mode) {
+    const freqs = mode === 'raw' ? out.freqs : trace;
+    rendererS = new LocalOffline.TraceRenderer(cvS, out.times, freqs, out.notes);
+    rendererS.draw(rendererS.duration);
+  }
+  drawStill('strict');
+  document.querySelectorAll('#modeSeg button').forEach(b => {
+    b.onclick = () => {
+      document.querySelectorAll('#modeSeg button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      drawStill(b.dataset.mode);
+    };
+  });
+
+  /* ── ۴) بوم ویدیو: نوار لغزان ۱۵ ثانیه‌ای ── */
+  const cvV = $('cv');
+  const WIN = 15;
+  const rendererV = new LocalOffline.TraceRenderer(cvV, out.times, trace, out.notes, { windowSec: WIN });
+  const dur = rendererV.duration;
+  $('seek').max = '1000';
+
+  let t = 0, playing = false, lastTs = 0, raf = null;
+  /* صدای نمونه هم پخش می‌شود تا حس واقعی ویدیو را بدهی */
+  const actx2 = ctx;
+  let srcNode = null;
+
+  function startAudio() {
+    stopAudio();
+    srcNode = actx2.createBufferSource();
+    srcNode.buffer = audio;
+    srcNode.connect(actx2.destination);
+    srcNode.start(0, Math.min(t, dur - 0.01));
+  }
+  function stopAudio() { if (srcNode) { try { srcNode.stop(); } catch (e) {} srcNode = null; } }
+
+  function frame(ts) {
+    if (!playing) return;
+    if (!lastTs) lastTs = ts;
+    const dt = Math.min(0.1, (ts - lastTs) / 1000);
+    lastTs = ts;
+    t += dt;
+    if (t >= dur) { t = dur; playing = false; $('play').textContent = '▶ پخش'; stopAudio(); }
+    rendererV.draw(t);
+    $('seek').value = String(Math.round(1000 * t / dur));
+    $('clock').textContent = t.toFixed(1) + ' / ' + dur.toFixed(1) + 's';
+    if (playing) raf = requestAnimationFrame(frame);
+  }
+
+  $('play').onclick = () => {
+    playing = !playing;
+    if (playing) {
+      if (t >= dur - 0.02) t = 0;
+      lastTs = 0;
+      startAudio();
+      $('play').textContent = '⏸ توقف';
+      raf = requestAnimationFrame(frame);
+    } else {
+      cancelAnimationFrame(raf);
+      $('play').textContent = '▶ پخش';
+      stopAudio();
+    }
+  };
+  $('seek').oninput = () => {
+    t = dur * (+$('seek').value / 1000);
+    rendererV.draw(t);
+    $('clock').textContent = t.toFixed(1) + ' / ' + dur.toFixed(1) + 's';
+    if (playing) startAudio();
+  };
+
+  rendererV.draw(0);
+  $('clock').textContent = '0.0 / ' + dur.toFixed(1) + 's';
+})().catch(e => {
+  const l = document.getElementById('loading');
+  if (l) { l.textContent = '⚠️ ' + (e && e.message || e); l.style.color = '#ffb3b3'; }
+});
+</script>
+</body>
+</html>
