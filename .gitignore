@@ -21,3 +21,10 @@ server/cache/
 # آیکون‌های اپ (PWA/اندروید) و فونت‌های محلی
 !web/icons/*.png
 !web/fonts/*.woff2
+
+# بیلد اندروید (APK آرتیفکت است؛ منابع res استثنا شده‌اند)
+android/build/
+android/dist/
+android/*.keystore
+android/*.jks
+!android/res/mipmap-*/ic_launcher.png

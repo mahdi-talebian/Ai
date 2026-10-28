@@ -237,6 +237,11 @@ python3 trace_video.py recitation.mp3 --png trace.png
 2. **Capacitor** — `web/` را داخل WebView می‌گذارد و با پلاگین‌هایی مثل
    `@capacitor/filesystem` می‌توان ذخیرهٔ فایل‌ها را بومی کرد.
 
+> **نسخهٔ اجراشده:** پوشهٔ `android/` همین مسیر دوم را بدون Gradle/SDK عملی
+> کرده است — WebView + انتخاب فایل + دانلود بومی، که با `smali` + `aapt2` +
+> `apksigner` بسته‌بندی می‌شود. اجرا: `cd android && ./build.sh` ← خروجی
+> `android/dist/raddeseda.apk` (راهنما: `android/README.md`).
+
 نکتهٔ مهم: در APK، صفحه از `https://localhost` سرو می‌شود و باید آدرس سرور
 تحلیل را بدهید. این کار از قبل پیش‌بینی شده است:
 
