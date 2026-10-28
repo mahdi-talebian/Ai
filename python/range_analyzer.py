@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+🎚 تحلیل دامنهٔ صدا — بالاترین و پایین‌ترین نتِ خوانده‌شده
+========================================================
+این ماژول جای تحلیل مقام/سولفژ را گرفته است: فقط و فقط یک سؤال دارد —
+
+    «بالاترین نتی که خوانده شده چیست؟ پایین‌ترین نت کدام است؟ و صدا در
+     این دو حد، چه گستره‌ای (چند نیم‌پرده / چند اکتاو) را پوشش می‌دهد؟»
+
+مسیر کار:
+  ۱) استخراج F0 با موتور Praat (همان هستهٔ دقیق پروژه، پردازش پنجره‌ای
+     برای فایل‌های طولانی تا حافظه سرریز نکند)
+  ۲) پاک‌سازی جهش‌های اکتاوی + هموارسازی میانه
+  ۳) تفکیک نت‌ها با کمینهٔ کشش (نت‌های گذرا و نویز حذف می‌شوند)
+  ۴) بالاترین/پایین‌ترین نتِ «پایدار» + گسترهٔ صدا + توزیع نت‌ها
+  ۵) یک تصویر PNG با سبک «ردِّ صدا» (trace) — همان سبک ویدیو
+
+خروجی یک دیکشنری JSON-سازگار است (به‌جز کلیدهای خصوصیِ `_times`،
+`_freqs`، `_wav` که برای رندر ویدیو نگه داشته می‌شوند و باید پیش از
+ارسال به مرورگر حذف شوند).
+
+استفاده:
+    python3 range_analyzer.py recitation.mp3
+    python3 range_analyzer.py recitation.wav --denoise --output report.json
+"""
+
+import argparse
+import json
+import os
+from datetime import datetime
+
+import numpy as np
+
+from pitch_engine import (
+    clean_pitch_contour,
+    extract_pitch_contour_max_accuracy,
+    freq_to_note_info,
+    segment_notes,
+    smooth_pitch_contour,
+)
+
+# نت‌هایی که کمتر از این کشش دارند «گذرا» هستند و در تعیین بالاترین/پایین‌ترین
+# نتِ خوانده‌شدهٔ کاربر حساب نمی‌شوند (جلوگیری از اثر نویز و لرزش‌های لحظه‌ای).
+MIN_NOTE_SEC = 0.10
+MAX_STABILITY_CENTS = 70.0      # نت‌های بسیار ناپایدار (لرزش شدید) کنار گذاشته می‌شوند
+PAUSE_MIN_SEC = 0.30            # فاصلهٔ سکوت برای شمردن «نفس/مکث»
+
+
+# ============================================================================
+# آماده‌سازی صدا
+# ============================================================================
+
+def _prepare_wav(path, denoise=False, work_dir=None):
+    """
+    ورودی را به یک WAV مونو تبدیل می‌کند (در صورت نیاز denoise).
+    خروجی: (wav_path, temp_path_or_None)
+    """
+    if path.lower().endswith(".wav") and not denoise:
+        return path, None
+
+    import librosa
+    import soundfile as sf
+
+    y, sr = librosa.load(path, sr=None, mono=True)
+    if denoise:
+        try:
+            import noisereduce as nr
+            y = nr.reduce_noise(y=y, sr=sr, stationary=False)
+        except ImportError:
+            print("هشدار: noisereduce نصب نیست — کاهش نویز انجام نشد.")
+
+    base = work_dir or os.path.dirname(os.path.abspath(path))
+    tmp = os.path.join(base, f"_work_{os.getpid()}_{abs(hash(path)) % 10**8}.wav")
+    sf.write(tmp, y, sr)
+    return tmp, tmp
+
+
+# ============================================================================
+# تحلیل
+# ============================================================================
+
+def _fmt_note(note):
+    """اطلاعات نمایشی یک نت برای خروجی JSON."""
+    f0 = float(note.get("f0_hz") or 0.0)
+    if f0 <= 0:
+        return None
+    info = freq_to_note_info(f0)
+    if info is None:
+        return None
+    return {
+        "note_name": info["note_name"],
+        "midi": info["midi"],
+        "midi_exact": round(69.0 + 12.0 * np.log2(f0 / 440.0), 3),
+        "f0_hz": round(f0, 2),
+        "cents_offset": info["cents_offset"],
+        "octave": info["octave"],
+        "start": round(float(note.get("start") or 0.0), 2),
+        "duration": round(float(note.get("duration") or 0.0), 2),
+        "stability_cents": round(float(note.get("stability_cents") or 0.0), 1),
+    }
+
+
+def _pick(notes, choose_max):
+    """بالاترین/پایین‌ترین نت پایدار."""
+    usable = [n for n in notes
+              if (n.get("duration") or 0) >= MIN_NOTE_SEC
+              and (n.get("stability_cents") is None
+                   or n.get("stability_cents") <= MAX_STABILITY_CENTS)
+              and (n.get("f0_hz") or 0) > 0]
+    if not usable:
+        usable = [n for n in notes if (n.get("f0_hz") or 0) > 0]
+    if not usable:
+        return None
+    return (max if choose_max else min)(usable, key=lambda n: n["f0_hz"])
+
+
+def _downsample_contour(times, freqs, max_points=1800):
+    """منحنی را برای رسم سریع در مرورگر نازک می‌کند (فرکانس صفر = بی‌صدا)."""
+    if len(times) == 0:
+        return {"t": [], "midi": []}
+    step = max(1, int(np.ceil(len(times) / max_points)))
+    t = times[::step]
+    f = freqs[::step]
+    midi = []
+    for v in f:
+        if v and v > 0:
+            midi.append(round(69.0 + 12.0 * np.log2(v / 440.0), 2))
+        else:
+            midi.append(None)
+    return {"t": [round(float(x), 2) for x in t], "midi": midi}
+
+
+def analyze_range(path, denoise=False, make_plot=True, plot_dir=None,
+                  progress_callback=None, work_dir=None, keep_contour=True):
+    """
+    تحلیل کامل دامنهٔ صدا.
+
+    progress_callback(stage: str, frac: float) برای نوار پیشرفت.
+    خروجی: dict — شامل کلیدهای خصوصی `_times`، `_freqs`، `_wav` برای رندر ویدیو.
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"فایل پیدا نشد: {path}")
+
+    def _cb(stage, frac):
+        if progress_callback:
+            progress_callback(stage, frac)
+
+    _cb("loading", 0.02)
+    wav_path, tmp_path = _prepare_wav(path, denoise=denoise, work_dir=work_dir)
+
+    try:
+        _cb("pitch", 0.05)
+
+        def _pitch_progress(done, total):
+            _cb("pitch", 0.05 + 0.70 * (done / max(total, 1e-9)))
+
+        times, freqs, sr, duration = extract_pitch_contour_max_accuracy(
+            wav_path, progress_callback=_pitch_progress,
+        )
+        times = np.asarray(times, dtype=float)
+        freqs = np.asarray(freqs, dtype=float)
+
+        _cb("clean", 0.78)
+        freqs = clean_pitch_contour(freqs)
+        freqs = smooth_pitch_contour(freqs, median_window=5)
+
+        _cb("notes", 0.85)
+        notes_raw = segment_notes(times, freqs, min_duration=0.06,
+                                  stability_cents=60)
+        notes = [n for n in (_fmt_note(n) for n in notes_raw) if n]
+        notes.sort(key=lambda n: n["start"])
+
+        # ---- بالاترین / پایین‌ترین نت ----
+        high_raw = _pick(notes_raw, True)
+        low_raw = _pick(notes_raw, False)
+
+        voiced = freqs[freqs > 0]
+        voiced_ratio = 100.0 * len(voiced) / max(1, len(freqs))
+
+        if high_raw and low_raw:
+            hi_note, lo_note = _fmt_note(high_raw), _fmt_note(low_raw)
+            hi_hz, lo_hz = hi_note["f0_hz"], lo_note["f0_hz"]
+        elif len(voiced):
+            # پشتیبان: صدک‌های مقاوم روی منحنی
+            lo_hz = float(np.percentile(voiced, 2))
+            hi_hz = float(np.percentile(voiced, 98))
+            hi_note = _fmt_note({"f0_hz": hi_hz})
+            lo_note = _fmt_note({"f0_hz": lo_hz})
+        else:
+            hi_note = lo_note = None
+            hi_hz = lo_hz = 0.0
+
+        span_cents = 1200.0 * np.log2(hi_hz / lo_hz) if lo_hz and hi_hz else 0.0
+        center_hz = float(np.median(voiced)) if len(voiced) else 0.0
+        center_note = _fmt_note({"f0_hz": center_hz}) if center_hz > 0 else None
+
+        # ---- سکوت‌ها / نفس‌ها ----
+        pauses = []
+        if len(times) > 1:
+            voiced_mask = freqs > 0
+            i = 0
+            n = len(voiced_mask)
+            while i < n:
+                if voiced_mask[i]:
+                    i += 1
+                    continue
+                j = i
+                while j < n and not voiced_mask[j]:
+                    j += 1
+                if i > 0 and j < n:
+                    gap = times[min(j, n - 1)] - times[i]
+                    if gap >= PAUSE_MIN_SEC:
+                        pauses.append({"start": round(float(times[i]), 2),
+                                       "duration": round(float(gap), 2)})
+                i = j
+
+        # ---- توزیع نت‌ها (کدام نت چقدر خوانده شده) ----
+        agg = {}
+        for note in notes:
+            key = note["midi"]
+            row = agg.setdefault(key, {
+                "note_name": note["note_name"], "midi": key,
+                "sung_sec": 0.0, "count": 0,
+            })
+            row["sung_sec"] += note["duration"]
+            row["count"] += 1
+        sung_total = sum(r["sung_sec"] for r in agg.values()) or 1.0
+        note_counts = sorted(agg.values(), key=lambda r: -r["sung_sec"])
+        for row in note_counts:
+            row["sung_sec"] = round(row["sung_sec"], 2)
+            row["share_pct"] = round(100.0 * row["sung_sec"] / sung_total, 1)
+
+        _cb("plot", 0.9)
+
+        meta = {
+            "file": os.path.basename(path),
+            "analyzed_at": datetime.now().isoformat(timespec="seconds"),
+            "engine": "Praat pitch-ac (very_accurate, two-pass, windowed)",
+            "sample_rate": int(sr),
+            "denoise": bool(denoise),
+        }
+
+        report = {
+            "meta": meta,
+            "basic": {
+                "duration_sec": round(float(duration), 2),
+                "voiced_ratio_pct": round(voiced_ratio, 1),
+                "num_notes_detected": len(notes),
+                "num_pauses_detected": len(pauses),
+                "sung_sec": round(sung_total, 2),
+                "longest_pause_sec": round(max((p["duration"] for p in pauses), default=0.0), 2),
+            },
+            "range": {
+                "highest": hi_note,
+                "lowest": lo_note,
+                "span_semitones": round(span_cents / 100.0, 2),
+                "span_octaves": round(span_cents / 1200.0, 2),
+                "span_cents": round(span_cents, 1),
+                "center": center_note,
+            },
+            "notes": notes,
+            "note_counts": note_counts,
+            "pauses": pauses[:50],
+            "contour": _downsample_contour(times, freqs),
+        }
+
+        # ---- تصویر PNG به سبک ردِّ صدا ----
+        if make_plot:
+            out_dir = plot_dir or (work_dir or os.path.dirname(os.path.abspath(path)))
+            os.makedirs(out_dir, exist_ok=True)
+            png_path = os.path.join(out_dir, "range_trace.png")
+            try:
+                from trace_video import render_static_png
+                render_static_png(times, freqs, notes, png_path)
+                report["meta"]["visualization_file"] = png_path
+            except Exception as e:      # تصویر نباید تحلیل را از کار بیندازد
+                print(f"هشدار: ساخت تصویر ناموفق بود: {e}")
+
+        if keep_contour:
+            report["_times"] = times
+            report["_freqs"] = freqs
+            report["_wav"] = wav_path
+
+        _cb("done", 1.0)
+        return report
+
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+
+def public_report(report):
+    """نسخهٔ JSON-سازگار گزارش (حذف کلیدهای خصوصی)."""
+    return {k: v for k, v in report.items() if not k.startswith("_")}
+
+
+# ============================================================================
+# CLI
+# ============================================================================
+
+def main():
+    ap = argparse.ArgumentParser(description="بالاترین/پایین‌ترین نت و گسترهٔ صدا")
+    ap.add_argument("file")
+    ap.add_argument("--denoise", action="store_true", help="کاهش نویز پس‌زمینه")
+    ap.add_argument("--output", "-o", default=None, help="مسیر گزارش JSON")
+    ap.add_argument("--no-plot", action="store_true")
+    args = ap.parse_args()
+
+    rep = analyze_range(args.file, denoise=args.denoise, make_plot=not args.no_plot)
+    pub = public_report(rep)
+
+    r = pub["range"]
+    hi, lo = r["highest"], r["lowest"]
+    print("─" * 52)
+    if hi:
+        print(f"بالاترین نت : {hi['note_name']}  ({hi['f0_hz']} Hz)")
+    if lo:
+        print(f"پایین‌ترین نت: {lo['note_name']}  ({lo['f0_hz']} Hz)")
+    print(f"گسترهٔ صدا  : {r['span_semitones']} نیم‌پرده "
+          f"({r['span_octaves']} اکتاو)")
+    print(f"مدت        : {pub['basic']['duration_sec']} ثانیه "
+          f"| نت‌های تشخیص‌داده‌شده: {pub['basic']['num_notes_detected']}")
+    print("─" * 52)
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(pub, f, ensure_ascii=False, indent=2)
+        print("گزارش JSON ذخیره شد:", args.output)
+
+
+if __name__ == "__main__":
+    main()

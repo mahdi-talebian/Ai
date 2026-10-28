@@ -11,3 +11,6 @@ __pycache__/
 server/jobs/
 *.mp4
 .env
+
+# نمونهٔ آزمایشی رابط وب (برای دکمهٔ «نمونهٔ آزمایشی» لازم است)
+!web/demo_bayati.wav

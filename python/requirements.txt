@@ -1,17 +1,15 @@
 # هستهٔ تحلیل — نسخه‌ها پین‌شده (تست‌شده روی این ترکیب)
 numpy==2.4.6
 scipy==1.17.1
-matplotlib==3.11.1
 soundfile==0.14.0
 librosa==0.11.0
 praat-parselmouth==0.4.7
 
-# نمایش صحیح متن فارسی/عربی در نمودارها
-arabic-reshaper==3.0.1
-python-bidi==0.6.11
+# رندر تصویر/ویدیوی «ردِّ صدا»
+pillow==11.3.0
 
-# کاهش نویز (اختیاری — --denoise)
+# بک‌اند جایگزین ffmpeg در صورت نبود نصب سیستمی
+imageio-ffmpeg==0.6.0
+
+# کاهش نویز (اختیاری — denoise)
 noisereduce==3.0.3
-
-# پیانوی زندهٔ دسکتاپ (piano_visualizer.py)
-sounddevice==0.5.6

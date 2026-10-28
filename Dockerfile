@@ -1,35 +1,21 @@
 ########################################################################
-# Dockerfile — تحلیلگر تلاوت قرآن (FastAPI + Praat/parselmouth + ffmpeg)
+# Dockerfile — ردِّ صدا (FastAPI + Praat/parselmouth + ffmpeg)
 #
 # این ایمیج شامل همهٔ وابستگی‌های سیستمی و پایتونی لازم برای اجرای
-# کامل پروژه است (تحلیل صدا، رسم ملوگراف فارسی، خروجی ویدیو، مقایسه).
+# پروژه است (تحلیل دامنهٔ صدا، تصویر PNG، خروجی ویدیو).
 ########################################################################
 
 FROM python:3.11-slim
 
 # --- وابستگی‌های سیستمی ---
-# ffmpeg          : برش/ترکیب صدا-تصویر (compare trim، خروجی ویدیوی پیانو)
-# libportaudio2   : برای import سالم piano_visualizer (حتی اگر میکروفون
-#                   واقعی روی سرور استفاده نشود، ماژول در ایمپورت به آن نیاز دارد)
+# ffmpeg          : رندر ویدیوی «ردِّ صدا» (ورودی rawvideo + mux صدا)
 # libsndfile1     : بک‌اند soundfile برای خواندن/نوشتن wav/flac/...
-# fonts-*         : فونت پایه برای matplotlib (پشتیبان، در کنار Vazirmatn)
-# wget, ca-certificates : برای دانلود فونت Vazirmatn حین build
+# fonts-dejavu-core : فونت برچسب‌های نمودار (نام نت‌ها + زمان)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
-        libportaudio2 \
         libsndfile1 \
         fonts-dejavu-core \
-        wget \
-        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
-# --- فونت Vazirmatn (برای نمایش صحیح متن فارسی/عربی در ملوگراف) ---
-RUN mkdir -p /root/.fonts && \
-    wget -q https://github.com/rastikerdar/vazirmatn/raw/master/fonts/ttf/Vazirmatn-Regular.ttf \
-        -O /root/.fonts/Vazirmatn-Regular.ttf && \
-    wget -q https://github.com/rastikerdar/vazirmatn/raw/master/fonts/ttf/Vazirmatn-Bold.ttf \
-        -O /root/.fonts/Vazirmatn-Bold.ttf && \
-    fc-cache -f /root/.fonts || true
 
 WORKDIR /app
 
