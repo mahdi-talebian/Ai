@@ -2,9 +2,20 @@
 
 فایل قابل نصب: **`radde-seda.apk`** (~۱٫۶ مگابایت، امضاشده با v2+v3، اندروید ۷ / API 24 و بالاتر)
 
+### ⬇ دانلود
+
+* **دانلود مستقیم (تگ v1.0.0):**
+  https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.0.0/release/radde-seda.apk
+
+* صفحهٔ فایل در مخزن (دکمهٔ «Download raw file»):
+  https://github.com/mahdi-talebian/Ai/blob/v1.0.0/release/radde-seda.apk
+
+* نسخهٔ همیشه‌به‌روزِ شاخهٔ توسعه:
+  https://github.com/mahdi-talebian/Ai/raw/arena/0d697dab-ai/release/radde-seda.apk
+
 ### نصب
 
-1. `radde-seda.apk` را از بخش Assets پایین دانلود کن.
+1. `radde-seda.apk` را از لینک‌های بالا دانلود کن.
 2. روی فایل بزن؛ اگر «نصب از منابع نامشخص» پرسید، برای همین فایل اجازه بده.
 
 ### اولین اجرا — آدرس سرور
