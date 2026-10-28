@@ -23,7 +23,7 @@ function makeCtx(canvas) {
   return new Proxy(base, {
     get(t, p) {
       if (p in t) return t[p];
-      if (p === 'drawImage') return () => drawnFrames.push('frame');
+      if (p === 'drawImage' || p === 'fillRect') return () => drawnFrames.push('frame');
       if (typeof p === 'symbol') return undefined;
       return function () { };
     },

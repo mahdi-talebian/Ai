@@ -242,6 +242,33 @@ function printResults() {
   check('گزارش JSON لینک دارد',
     String(d.getElementById('dlReport').getAttribute('href')).indexOf('blob:') === 0);
 
+  /* ── زوم ردِّ صدا (زمان + ارتفاع) ── */
+  const dur0 = w.eval('TRACE.dur');
+  const tight0 = w.eval('TRACE_VIEW.tight');
+  d.getElementById('zoomPitchIn').click();
+  await new Promise(r => setTimeout(r, 60));
+  check('زوم ارتفاع بعد از یک کلیک بیشتر شد',
+    w.eval('TRACE_VIEW.tight') > tight0,
+    '×' + tight0 + ' → ×' + w.eval('TRACE_VIEW.tight'));
+  d.getElementById('zoomTimeIn').click();
+  d.getElementById('zoomTimeIn').click();
+  await new Promise(r => setTimeout(r, 60));
+  const wsec = w.eval('TRACE_VIEW.timeSec');
+  check('زوم زمانی پنجرهٔ دید را باریک کرد',
+    wsec > 0 && wsec < dur0, wsec + 's از ' + dur0.toFixed(1) + 's');
+  check('برچسب زوم وضعیت را نشان می‌دهد',
+    /قاب/.test(d.getElementById('zoomLabel').textContent || ''),
+    d.getElementById('zoomLabel').textContent);
+  check('پنجرهٔ زوم در رسم اعمال شد',
+    (() => { const v = w.eval('TRACE.view'); return v && (v.t1 - v.t0) <= wsec + 1e-6; })(),
+    JSON.stringify(w.eval('TRACE.view')));
+  d.getElementById('zoomResetBtn').click();
+  await new Promise(r => setTimeout(r, 60));
+  check('بازنشانی زوم: نمای کامل برگشت',
+    w.eval('TRACE_VIEW.timeSec') === 0 && w.eval('TRACE_VIEW.tight') === 1);
+  check('در نمای کامل، پنجره کل اجرا است',
+    Math.abs(w.eval('TRACE.view.t1') - dur0) < 1e-6);
+
   // دانلود گزارش از مسیر محلی
   const repRes = await w.fetch('/api/download/' + w.eval('STATE.jobId') + '/report');
   const repJson = await repRes.json();

@@ -1502,19 +1502,40 @@
     }).sort(function (a, b) { return a.t0 - b.t0; });
 
     var kept = 0, k = 0;
-    for (var i = 0; i < times.length; i++) {
-      var t = times[i], f = cleaned[i];
-      if (!(f > 0)) continue;
-      /* بازه‌ها ممکن است هم‌پوشانی داشته باشند؛ اولین بازهٔ شامل را می‌گیریم */
-      while (k < spans.length && spans[k].t1 < t) k++;
-      var hit = null;
-      for (var q = k; q < spans.length && spans[q].t0 <= t; q++) {
-        if (t >= spans[q].t0 && t <= spans[q].t1) { hit = spans[q]; break; }
+    var voiced = 0;
+    for (var v = 0; v < cleaned.length; v++) if (cleaned[v] > 0) voiced++;
+
+    function pass(tolScale) {
+      var outBuf = new Float32Array(freqs.length);
+      var keptN = 0, kk = 0;
+      for (var i = 0; i < times.length; i++) {
+        var t = times[i], f = cleaned[i];
+        if (!(f > 0)) continue;
+        /* بازه‌ها ممکن است هم‌پوشانی داشته باشند؛ اولین بازهٔ شامل را می‌گیریم */
+        while (kk < spans.length && spans[kk].t1 < t) kk++;
+        var hit = null;
+        for (var q = kk; q < spans.length && spans[q].t0 <= t; q++) {
+          if (t >= spans[q].t0 && t <= spans[q].t1) { hit = spans[q]; break; }
+        }
+        if (!hit) continue;
+        if (Math.abs(cents(f, hit.f0)) > hit.tol * tolScale) continue;
+        outBuf[i] = f;
+        keptN++;
       }
-      if (!hit) continue;
-      if (Math.abs(cents(f, hit.f0)) > hit.tol) continue;
-      out[i] = f;
-      kept++;
+      return { buf: outBuf, kept: keptN };
+    }
+
+    var first = pass(1);
+    out = first.buf;
+    kept = first.kept;
+
+    /* ── شبکهٔ ایمنی: هرگز نمودار خالی ────────────────────────────────────
+       اگر فیلتر سخت‌گیرانه تقریباً همه‌چیز را انداخت (ولی صدا خوانده شده)،
+       همان فیلتر با تحمل بازتر تکرار می‌شود — همچنان «فقط داخل نت‌ها»، پس
+       میلهٔ نویز/سکوت برنمی‌گردد، ولی صفحهٔ خالی هم نمی‌مانیم. */
+    if (voiced > 20 && kept < Math.max(8, voiced * 0.02)) {
+      var second = pass(2.6);
+      if (second.kept > kept) { out = second.buf; kept = second.kept; }
     }
     if (opts.stats) {
       opts.stats.kept = kept;

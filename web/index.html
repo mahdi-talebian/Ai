@@ -281,6 +281,14 @@
   @media (display-mode:standalone){
     .wrap{padding-top:calc(var(--safe-t) + 10px)}
   }
+.zoomBar{display:flex;align-items:center;gap:6px;margin:8px 0 2px;flex-wrap:wrap}
+.zoomBtn{border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e9e6d8;
+  font:inherit;font-size:.78rem;font-variant-numeric:tabular-nums;padding:5px 10px;border-radius:10px;
+  cursor:pointer;line-height:1.3;min-width:44px;text-align:center}
+.zoomBtn:hover{background:rgba(255,255,255,.10)}
+.zoomBtn:active{transform:scale(.96)}
+.zoomBtn[disabled]{opacity:.4;cursor:default}
+.zoomLabel{font-size:.72rem;color:var(--dim);margin-inline-start:auto;direction:rtl}
 </style>
 </head>
 <body>
@@ -375,6 +383,16 @@
           <canvas class="trace" id="traceCanvas" width="1280" height="720"></canvas>
           <div class="badge" id="liveBadge">● در حال پخش</div>
         </div>
+
+        <div class="zoomBar" role="group" aria-label="زوم نمودار">
+          <button class="zoomBtn" id="zoomTimeOut" title="پنجرهٔ زمانی پهن‌تر">⏱ −</button>
+          <button class="zoomBtn" id="zoomTimeIn" title="پنجرهٔ زمانی تنگ‌تر (جزئیات بیشتر)">⏱ +</button>
+          <button class="zoomBtn" id="zoomPitchOut" title="بازتر کردن محور نت">↕ −</button>
+          <button class="zoomBtn" id="zoomPitchIn" title="نزدیک‌تر کردن محور نت">↕ +</button>
+          <button class="zoomBtn" id="zoomResetBtn" title="بازنشانی زوم">↺</button>
+          <span class="zoomLabel" id="zoomLabel">کل اجرا · زوم ارتفاع ×۱</span>
+        </div>
+
         <audio id="audioPlayer" controls preload="metadata" playsinline></audio>
 
         <div class="stack">
@@ -488,6 +506,8 @@
 <!-- موتور آفلاین: همهٔ تحلیل روی همین دستگاه، بدون هیچ سروری -->
 <script src="engine.js"></script>
 <script src="parallel.js"></script>
+<script src="trace_style.js"></script>
+<script src="vendor/mp4-muxer.js"></script>
 <script src="offline.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════
@@ -1040,7 +1060,9 @@ $('videoBtn').onclick = async () => {
   setProgress('vProg', 'video', 0.02);
   try {
     const fd = new FormData();
-    fd.append('fps', '0');        // ۰ = انتخاب خودکار بر اساس طول فایل
+    fd.append('fps', '60');                     // ۷۲۰p · ۶۰fps (هم‌اندازهٔ بوم)
+    fd.append('window_sec', String(TRACE_VIEW.timeSec || 0));   // همان زومِ نمودار
+    fd.append('tightness', String(TRACE_VIEW.tight || 1));
     const r = await apiRequest(`${API}/api/video/${STATE.jobId}`, { method: 'POST', body: fd });
     const res = await waitJob(r.job_id, 'vProg');
     hideProgress('vProg');
@@ -1056,7 +1078,11 @@ $('videoBtn').onclick = async () => {
     $('galleryBox').style.display = 'block';
     if ($('saveVideoBtn')) $('saveVideoBtn').style.display = 'inline-flex';
 
-    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.';
+    const audioSec = (STATE.report && STATE.report.basic && STATE.report.basic.duration_sec) || 0;
+    const speed = (res && res.fast && res.render_sec != null)
+      ? ` ⚡ رندر سریع: ${faN(res.render_sec)}s برای ${faN(audioSec)}s صدا`
+      : '';
+    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' + speed;
     $('videoStatus').className = 'status ok';
   } catch (e) {
     hideProgress('vProg');
@@ -1085,143 +1111,111 @@ function canvasSetup(cv, aspect) {
   return { W: cssW, H: cssH, dpr };
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   🔍 زوم: زمان (پنجره) + ارتفاع (نت) — همان تنظیمی که ویدیو هم می‌گیرد
+   ═══════════════════════════════════════════════════════════════════ */
+const TRACE_VIEW = { timeSec: 0, tight: 1 };      /* timeSec=0 ⇒ نمای کامل */
+const TIME_STEPS = [0, 24, 12, 6, 3];
+const TIGHT_STEPS = [1, 1.6, 2.4, 3.5];
+
+/* پله‌های زوم زمانی: ثانیه‌های ثابت + کسرهایی از طول خودِ فایل
+   (برای فایل‌های کوتاه، «نصف اجرا» و «یک‌سوم اجرا» هم پله می‌شوند) */
+function timeStepList() {
+  const dur = TRACE.dur || 1;
+  const out = [0];
+  TIME_STEPS.forEach(v => { if (v > 0.5 && v < dur * 0.92) out.push(v); });
+  [dur / 2, dur / 3].forEach(v => {
+    const r = Math.round(v * 10) / 10;
+    if (r > 0.5 && r < dur * 0.92) out.push(r);
+  });
+  /* ترتیب = «بازتر به تنگ‌تر»: ۰ (کل اجرا) → پنجره‌های بزرگ → کوچک */
+  const nonZero = out.filter(v => v > 0).sort((a, b) => b - a);
+  return [0].concat(nonZero.filter((v, i, arr) => Math.abs(v - (arr[i - 1] || -1)) > 0.01));
+}
+
+function stepValue(list, cur, dir) {
+  let i = 0, bestD = Infinity;
+  list.forEach((v, k) => { const d = Math.abs(v - cur); if (d < bestD) { bestD = d; i = k; } });
+  return list[Math.max(0, Math.min(list.length - 1, i + dir))];
+}
+
+function zoomTime(dir) {
+  const list = timeStepList();
+  TRACE_VIEW.timeSec = stepValue(list, TRACE_VIEW.timeSec, dir);
+  updateZoomButtons();
+  drawTrace();
+}
+
+function zoomPitch(dir) {
+  TRACE_VIEW.tight = stepValue(TIGHT_STEPS, TRACE_VIEW.tight, dir);
+  updateZoomButtons();
+  drawTrace();
+}
+
+function zoomReset() {
+  TRACE_VIEW.timeSec = 0;
+  TRACE_VIEW.tight = 1;
+  updateZoomButtons();
+  drawTrace();
+}
+
+function updateZoomButtons() {
+  const lbl = $('zoomLabel');
+  if (!lbl) return;
+  const t = TRACE_VIEW.timeSec;
+  const timeTxt = t > 0 ? `قاب ${faN(t)}s` : 'کل اجرا';
+  const tightTxt = TRACE_VIEW.tight > 1 ? `×${TRACE_VIEW.tight.toFixed(1)}` : '×۱';
+  lbl.textContent = `${timeTxt} · زوم ارتفاع ${tightTxt}`;
+  const d = $('zoomTimeIn'); if (d) d.disabled = t === TIME_STEPS[0] ? false : false;
+}
+
+/* بازهٔ زمانی دیده‌شده؛ با زوم زمانی، خط پخش وسط می‌ماند (مثل ویدیو) */
+function traceViewAt(t) {
+  const dur = TRACE.dur || 1;
+  const w = TRACE_VIEW.timeSec;
+  if (!(w > 0) || w >= dur) return { t0: 0, t1: dur };
+  const half = w / 2;
+  let t0 = Math.max(0, Math.min(t - half, dur - w));
+  return { t0: t0, t1: t0 + w };
+}
+
+function traceSpec(t) {
+  return {
+    W: TRACE.W, H: TRACE.H, dpr: TRACE.dpr,
+    times: TRACE.times, mids: TRACE.mids, notes: TRACE.notes,
+    range: TRACE.range || {}, duration: TRACE.dur, t: t,
+    view: traceViewAt(t), tightness: TRACE_VIEW.tight
+  };
+}
+
 function buildTraceData(r) {
   const c = r.contour || { t: [], midi: [] };
-  const times = c.t, mids = c.midi;
-  const notes = (r.notes || []).filter(n => n.f0_hz > 0);
-  /* سخت‌گیری: فقط نمونه‌هایی که داخل نت‌های واقعی‌اند (contour از موتور فیلتر می‌شود) */
+  TRACE.times = (c.t || []).slice();
+  TRACE.mids = (c.midi || []).map(v => (v == null || !isFinite(v)) ? null : v);
+  TRACE.notes = (r.notes || []).filter(n => n.f0_hz > 0);
+  TRACE.range = r.range || {};
+  TRACE.dur = TRACE.times.length ? TRACE.times[TRACE.times.length - 1] : 1;
 
   const cv = $('traceCanvas');
-  const phone = isPhone();
-  const geo = canvasSetup(cv, phone ? 0.70 : 0.5625);
-  const { W, H, dpr } = geo;
-
-  const valid = mids.filter(m => m != null);
-  let lo = valid.length ? Math.min(...valid) : 48;
-  let hi = valid.length ? Math.max(...valid) : 60;
-  const span = Math.max(hi - lo, 11.9);
-  const center = (lo + hi) / 2;
-  const pad = Math.max(1.6, span * 0.10);
-  const loLim = Math.floor(center - span / 2 - pad);
-  const hiLim = Math.ceil(center + span / 2 + pad);
-
-  const ML = phone ? 44 : 62, MR = phone ? 22 : 34;
-  const MT = phone ? 44 : 56, MB = phone ? 34 : 38;
-  const dur = times.length ? times[times.length - 1] : 1;
-  const xOf = t => ML + (t / Math.max(dur, 0.001)) * (W - ML - MR);
-  const yOf = m => MT + (1 - (m - loLim) / Math.max(hiLim - loLim, 1e-6)) * (H - MT - MB);
-
-  Object.assign(TRACE, {
-    ready: true, W, H, dpr, phone, ML, MR, MT, MB, dur, loLim, hiLim, xOf, yOf,
-    times, mids, notes,
-    px: times.map(t => xOf(t)),
-    py: mids.map(m => m == null ? NaN : yOf(m)),
-    hi, lo, range: r.range
-  });
-  TRACE.segs = buildSegments();
-  TRACE.base = buildBase();
+  const geo = canvasSetup(cv, isPhone() ? 0.70 : 0.5625);
+  TRACE.W = geo.W; TRACE.H = geo.H; TRACE.dpr = geo.dpr;
+  TRACE.ready = true;
+  updateZoomButtons();
+  drawTrace();
 }
 
-function buildSegments() {
-  const { times, px, py } = TRACE;
-  const GAP = 0.75;
-  const runs = []; let cur = []; let lastT = null;
-  for (let i = 0; i < px.length; i++) {
-    if (isNaN(py[i])) {
-      if (cur.length > 1) runs.push(cur);
-      cur = []; lastT = null; continue;
-    }
-    if (lastT != null && times[i] - lastT > GAP) {
-      if (cur.length > 1) runs.push(cur);
-      cur = [];
-    }
-    cur.push({ x: px[i], y: py[i], t: times[i] });
-    lastT = times[i];
-  }
-  if (cur.length > 1) runs.push(cur);
-
-  const segs = [];
-  runs.forEach(run => {
-    if (!segs.length) { segs.push(run.slice()); return; }
-    const prev = segs[segs.length - 1];
-    const gap = run[0].t - prev[prev.length - 1].t;
-    if (gap <= GAP) {
-      const a = prev[prev.length - 1], b = run[0];
-      const n = Math.max(2, Math.min(24, Math.round(gap * 40) + 2));
-      for (let j = 1; j < n; j++) {
-        const f = j / n;
-        prev.push({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, t: a.t + (b.t - a.t) * f });
-      }
-      prev.push(...run);
-    } else {
-      segs.push(run.slice());
-    }
-  });
-  return segs.filter(s => s.length > 1);
-}
-
-function buildBase() {
-  const { W, H, dpr, loLim, hiLim, yOf, phone } = TRACE;
-  const cv = document.createElement('canvas');
-  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+/* رسم با سبک مشترک: همان کدی که ویدیو و تصویر PNG استفاده می‌کنند */
+function drawTrace() {
+  if (!TRACE.ready) return;
+  const cv = $('traceCanvas');
   const g = cv.getContext('2d');
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-  const bg = g.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#0d172b'); bg.addColorStop(1, '#172440');
-  g.fillStyle = bg; g.fillRect(0, 0, W, H);
-
-  const halo = g.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.62);
-  halo.addColorStop(0, 'rgba(70,110,180,.20)');
-  halo.addColorStop(1, 'rgba(70,110,180,0)');
-  g.fillStyle = halo; g.fillRect(0, 0, W, H);
-
-  // خطوط نت (هر نیم‌پرده یک خط، C پررنگ‌تر + نام نت)
-  const labelSize = phone ? 9 : 10;
-  for (let m = loLim; m <= hiLim; m++) {
-    const y = yOf(m);
-    const isC = ((m % 12) + 12) % 12 === 0;
-    g.strokeStyle = isC ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.07)';
-    g.lineWidth = isC ? 1.4 : 1;
-    g.beginPath(); g.moveTo(6, y); g.lineTo(W - 6, y); g.stroke();
-    if (isC && m !== loLim && m !== hiLim) {
-      g.fillStyle = 'rgba(180,200,235,.45)';
-      g.font = `600 ${labelSize}px Estedad, Tahoma, sans-serif`;
-      g.fillText(midiName(m), 8, y - 4);
-    }
-  }
-
-  // منحنی محو (آینده)
-  g.lineWidth = 2;
-  g.strokeStyle = 'rgba(96,132,175,.55)';
-  g.shadowColor = 'rgba(96,132,175,.35)'; g.shadowBlur = 4;
-  TRACE.segs.forEach(seg => {
-    g.beginPath();
-    seg.forEach((p, i) => i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y));
-    g.stroke();
-  });
-  g.shadowBlur = 0;
-
-  TRACE.notes.forEach(n => {
-    const x = TRACE.xOf(n.start + (n.duration || 0) / 2);
-    const y = yOf(69 + 12 * Math.log2(n.f0_hz / 440));
-    g.fillStyle = 'rgba(120,155,195,.38)';
-    g.beginPath(); g.ellipse(x, y, 3.4, 2, 0, 0, Math.PI * 2); g.fill();
-  });
-
-  g.strokeStyle = 'rgba(120,152,205,.28)'; g.lineWidth = 1.4;
-  roundRect(g, 3, 3, W - 6, H - 6, 14); g.stroke();
-  return cv;
-}
-
-function roundRect(g, x, y, w, h, r) {
-  g.beginPath();
-  g.moveTo(x + r, y);
-  g.arcTo(x + w, y, x + w, y + h, r);
-  g.arcTo(x + w, y + h, x, y + h, r);
-  g.arcTo(x, y + h, x, y, r);
-  g.arcTo(x, y, x + w, y, r);
-  g.closePath();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.setTransform(TRACE.dpr, 0, 0, TRACE.dpr, 0, 0);
+  const t = traceTime();
+  const spec = traceSpec(t);
+  LocalTraceStyle.draw(g, spec);
+  TRACE.view = spec.view;
 }
 
 function traceTime() {
@@ -1229,137 +1223,21 @@ function traceTime() {
   return (a && a.currentTime) ? a.currentTime : TRACE.dur;
 }
 
-function drawTrace() {
-  if (!TRACE.ready) return;
-  const cv = $('traceCanvas');
-  const g = cv.getContext('2d');
-  const { W, H, dpr, xOf, yOf, phone } = TRACE;
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.clearRect(0, 0, cv.width, cv.height);
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.drawImage(TRACE.base, 0, 0, W, H);
-
-  const t = traceTime();
-  const xNow = xOf(t);
-
-  // منحنی طلایی تا لحظهٔ t (سه لایه = درخشش)
-  g.lineCap = 'round'; g.lineJoin = 'round';
-  const layers = [[6, 'rgba(255,212,120,.16)'], [3.4, 'rgba(255,212,120,.35)'], [2, '#f7d171']];
-  TRACE.segs.forEach(seg => {
-    const pts = [];
-    for (const p of seg) { if (p.t <= t) pts.push(p); else break; }
-    if (!pts.length) return;
-    let tail = pts;
-    const nxt = seg.find(p => p.t > t);
-    if (nxt) {
-      const a = pts[pts.length - 1];
-      tail = pts.concat([{ x: (a.x + nxt.x) / 2, y: (a.y + nxt.y) / 2 }]);
-    }
-    if (tail.length < 2) return;
-    layers.forEach(([w, color]) => {
-      g.strokeStyle = color; g.lineWidth = w;
-      g.beginPath();
-      tail.forEach((p, i) => i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y));
-      g.stroke();
-    });
-  });
-
-  // نقطه‌های طلایی نت‌های خوانده‌شده
-  TRACE.notes.forEach(n => {
-    if (n.start > t) return;
-    const x = xOf(n.start + (n.duration || 0) / 2);
-    const y = yOf(69 + 12 * Math.log2(n.f0_hz / 440));
-    g.fillStyle = '#ffe6a6';
-    const r = (n.duration || 0) < 0.35 ? 2.2 : 3;
-    g.beginPath(); g.ellipse(x, y, r * 1.5, r, 0, 0, Math.PI * 2); g.fill();
-  });
-
-  // راهنمای بالاترین/پایین‌ترین نت
-  drawRangeGuide(g, TRACE.range && TRACE.range.highest, 'HIGH', 'rgba(255,226,160,');
-  drawRangeGuide(g, TRACE.range && TRACE.range.lowest, 'LOW', 'rgba(169,214,255,');
-
-  // خط پخش
-  g.strokeStyle = 'rgba(255,255,255,.18)'; g.lineWidth = 3.5;
-  g.beginPath(); g.moveTo(xNow, 4); g.lineTo(xNow, H - 4); g.stroke();
-  g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 1.3;
-  g.beginPath(); g.moveTo(xNow, 4); g.lineTo(xNow, H - 4); g.stroke();
-
-  // نقطهٔ درخشان روی نت جاری
-  const mNow = currentMidi(t);
-  if (mNow != null) {
-    const yNow = yOf(mNow);
-    const R = phone ? 26 : 22;
-    const glow = g.createRadialGradient(xNow, yNow, 0, xNow, yNow, R);
-    glow.addColorStop(0, 'rgba(255,244,214,.95)');
-    glow.addColorStop(.35, 'rgba(255,222,140,.55)');
-    glow.addColorStop(1, 'rgba(255,222,140,0)');
-    g.fillStyle = glow;
-    g.beginPath(); g.arc(xNow, yNow, R, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#fffaf0';
-    g.beginPath(); g.arc(xNow, yNow, phone ? 5.5 : 4.6, 0, Math.PI * 2); g.fill();
-  }
-
-  // برچسب‌ها (اندازه بر حسب CSS پیکسل → روی موبایل خوانا)
-  g.textAlign = 'left';
-  g.fillStyle = '#f3eeda';
-  g.font = `800 ${phone ? 16 : 17}px Estedad, Tahoma, sans-serif`;
-  const label = mNow == null ? '—' : `${midiName(mNow)}   ${midiHz(mNow).toFixed(1)} Hz`;
-  g.fillText(label, 10, phone ? 22 : 24);
-
-  g.font = `500 ${phone ? 10 : 11}px Estedad, Tahoma, sans-serif`;
-  g.fillStyle = 'rgba(160,178,210,.85)';
-  g.textAlign = 'right';
-  g.fillText(`${t.toFixed(1)} / ${TRACE.dur.toFixed(1)}s`, W - 10, phone ? 22 : 24);
-
-  const rg = TRACE.range || {};
-  if (rg.highest && rg.lowest) {
-    const txt = `${rg.highest.note_name} ↕ ${rg.lowest.note_name}  ·  ${rg.span_semitones} st`;
-    g.fillStyle = 'rgba(196,210,235,.85)';
-    g.fillText(txt, W - 10, H - 9);
-  }
-  g.textAlign = 'left';
+/* تبدیل نقطهٔ لمس/کلیک → زمان، با احترام به پنجرهٔ زوم */
+function traceTimeAtX(xCss) {
+  const L = LocalTraceStyle.layout(TRACE.W, TRACE.H);
+  const view = TRACE.view || { t0: 0, t1: TRACE.dur };
+  const usable = TRACE.W - L.ML - L.MR;
+  const frac = clamp((xCss - L.ML) / Math.max(usable, 1), 0, 1);
+  return view.t0 + frac * (view.t1 - view.t0);
 }
 
-function drawRangeGuide(g, note, tag, colorPrefix) {
-  if (!note || !note.f0_hz) return;
-  const { W, xOf, yOf, phone } = TRACE;
-  const midi = 69 + 12 * Math.log2(note.f0_hz / 440);
-  const y = yOf(midi);
-  const x0 = xOf(note.start || 0);
-  g.save();
-  g.setLineDash([5, 5]);
-  g.strokeStyle = colorPrefix + '.40)';
-  g.lineWidth = 1;
-  g.beginPath(); g.moveTo(x0, y); g.lineTo(W - 8, y); g.stroke();
-  g.restore();
-  g.fillStyle = colorPrefix + '.92)';
-  g.font = `700 ${phone ? 9 : 9.5}px Estedad, Tahoma, sans-serif`;
-  const lx = tag === 'HIGH' ? TRACE.ML : W - (phone ? 150 : 130);
-  g.fillText(`${tag} ${note.note_name}`, lx, y - 4);
-}
-
-function currentMidi(t) {
-  const { times, mids } = TRACE;
-  if (!times.length) return null;
-  let idx = -1, lo = 0, hi = times.length - 1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (times[mid] <= t) { idx = mid; lo = mid + 1; } else hi = mid - 1;
-  }
-  if (idx < 0) idx = 0;
-  const m0 = mids[idx];
-  if (idx >= times.length - 1) return m0;
-  const m1 = mids[idx + 1];
-  if (m0 == null && m1 == null) {
-    for (let k = idx; k >= 0; k--) if (mids[k] != null) return mids[k];
-    return null;
-  }
-  if (m0 == null) return m1;
-  if (m1 == null) return m0;
-  const t0 = times[idx], t1 = times[idx + 1];
-  const f = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
-  return m0 + (m1 - m0) * clamp(f, 0, 1);
-}
+/* دکمه‌های زوم */
+if ($('zoomTimeIn')) $('zoomTimeIn').addEventListener('click', () => zoomTime(+1));
+if ($('zoomTimeOut')) $('zoomTimeOut').addEventListener('click', () => zoomTime(-1));
+if ($('zoomPitchIn')) $('zoomPitchIn').addEventListener('click', () => zoomPitch(+1));
+if ($('zoomPitchOut')) $('zoomPitchOut').addEventListener('click', () => zoomPitch(-1));
+if ($('zoomResetBtn')) $('zoomResetBtn').addEventListener('click', zoomReset);
 
 let traceRAF = null;
 function loopTrace() {
@@ -1377,8 +1255,7 @@ function seekFromEvent(ev) {
   const rect = cv.getBoundingClientRect();
   const cx = (ev.touches ? ev.touches[0].clientX : ev.clientX);
   const x = (cx - rect.left) * (TRACE.W / rect.width);
-  const frac = (x - TRACE.ML) / (TRACE.W - TRACE.ML - TRACE.MR);
-  const t = clamp(frac, 0, 1) * TRACE.dur;
+  const t = clamp(traceTimeAtX(x), 0, TRACE.dur);
   const a = $('audioPlayer');
   if (a && isFinite(a.duration)) { a.currentTime = t; drawTrace(); }
 }
@@ -1800,6 +1677,17 @@ function liveFrame(ts) {
 
   /* حداکثر ~۳۰ رسم در ثانیه: نرم برای چشم، سبک برای باتری */
   if (ts - LIVE.lastDraw >= 32) { LIVE.lastDraw = ts; drawLive(); }
+}
+
+/* کادر گرد (در سبک مشترک هم هست؛ این برای بوم زنده) */
+function roundRect(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
 }
 
 /* ═══════════ بوم زنده (مختصات CSS + DPR) ═══════════ */

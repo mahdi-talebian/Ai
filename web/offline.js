@@ -19,6 +19,15 @@
   var CORE = global.LocalEngineCore;
   if (!CORE) { console.error('LocalEngineCore بارگذاری نشده — engine.js را قبل از offline.js بگذارید'); return; }
 
+  /* سبک مشترک رسم (trace_style.js) — در نود برای تست‌ها هم بارگذاری می‌شود */
+  if (!global.LocalTraceStyle && typeof require === 'function') {
+    try { require('./trace_style.js'); } catch (e) { /* مرورگر: باید با <script> آمده باشد */ }
+  }
+  if (!global.LocalTraceStyle) {
+    console.error('trace_style.js بارگذاری نشده — آن را قبل از offline.js بگذارید');
+    return;
+  }
+
   var params = new URLSearchParams(global.location ? location.search : '');
   var FORCE_SERVER = params.get('engine') === 'server';
   if (FORCE_SERVER) {
@@ -398,422 +407,99 @@
   var LAYOUT = { W: 1280, H: 720, ML: 74, MR: 46, MT: 78, MB: 64 };
   /* عرض پنجرهٔ نوار لغزان در ویدیو (ثانیه) */
   var VIDEO_WINDOW_SEC = 15;
-  var GAP_BRIDGE_SEC = 0.75;
 
+  /* ══════════════════════════════════════════════════════════════════════
+     TraceRenderer — پوستهٔ نازک روی سبک مشترک (trace_style.js)
+     ----------------------------------------------------------------------
+     رسم واقعی در LocalTraceStyle است؛ پس تصویر PNG، ویدیو و نمودار داخل اپ
+     عیناً یک چیز را نشان می‌دهند (همان نقطهٔ نورانی، همان رنگ‌ها، همان برچسب‌ها).
+     ══════════════════════════════════════════════════════════════════════ */
   function TraceRenderer(canvas, times, freqs, notes, opts) {
     opts = opts || {};
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.W = canvas.width;
     this.H = canvas.height;
-    this.notes = notes || [];
-    /* پنجرهٔ لغزان (ویدیو): ۰ = نمای کلی کامل (تصویر تحلیل) */
+    this.notes = (notes || []).filter(function (n) { return n && n.f0_hz > 0; });
+    /* پنجرهٔ لغزان (ویدیو): ۰ = نمای کامل (تصویر تحلیل) */
     this.windowSec = opts.windowSec > 0 ? opts.windowSec : 0;
+    this.tightness = opts.tightness > 0 ? opts.tightness : 1;
 
     var t = Array.from(times), f = Array.from(freqs);
     var order = t.map(function (_, i) { return i; }).sort(function (a, b) { return t[a] - t[b]; });
     this.times = order.map(function (i) { return t[i]; });
-    this.midi = order.map(function (i) { return f[i] > 0 ? CORE.hzToMidi(f[i]) : NaN; });
+    this.midi = order.map(function (i) { return f[i] > 0 ? CORE.hzToMidi(f[i]) : null; });
     this.duration = this.times.length ? this.times[this.times.length - 1] : 1;
     if (!(this.duration > 0)) this.duration = 1;
 
-    var valid = this.midi.filter(function (m) { return isFinite(m); });
-    var lo = valid.length ? Math.min.apply(null, valid) : 48;
-    var hi = valid.length ? Math.max.apply(null, valid) : 60;
-    var span = Math.max(hi - lo, 11.9);
-    var center = (lo + hi) / 2;
-    var pad = Math.max(1.6, span * 0.10);
-    this.loMidi = Math.floor(center - span / 2 - pad);
-    this.hiMidi = Math.ceil(center + span / 2 + pad);
-
-    if (this.notes.length) {
-      this.highest = this.notes.reduce(function (a, n) {
-        return (!a || (n.f0_hz || 0) > (a.f0_hz || 0)) ? n : a;
-      }, null);
-      this.lowest = this.notes.reduce(function (a, n) {
-        return (!a || (n.f0_hz || 1e9) < (a.f0_hz || 1e9)) ? n : a;
-      }, null);
-    } else { this.highest = this.lowest = null; }
-
-    this.px = this.times.map(this.xOfTime.bind(this));
-    var py = this.midi.map(function (m) { return isFinite(m) ? null : NaN; });
-    var self = this;
-    this.py = this.midi.map(function (m) { return isFinite(m) ? self.yOfMidi(m) : NaN; });
-    this.py = this.smoothPy(this.py, 5);
-    this.segs = this.buildSegments();
-    this._cache = null;
+    /* بالاترین/پایین‌ترین نت برای راهنماها (از روی همان نت‌های سخت‌گیرانه) */
+    var best = null, worst = null;
+    this.notes.forEach(function (n) {
+      if (!best || n.f0_hz > best.f0_hz) best = n;
+      if (!worst || n.f0_hz < worst.f0_hz) worst = n;
+    });
+    this.highest = best;
+    this.lowest = worst;
+    this.range = null;
   }
 
-  TraceRenderer.prototype.xOfTime = function (t) {
-    var usable = this.W - LAYOUT.ML - LAYOUT.MR;
-    return LAYOUT.ML + (t / this.duration) * usable;
-  };
-
-  /* بازهٔ زمانی دیده‌شده در لحظهٔ t (برای ویدیوی نوار متحرک) */
   TraceRenderer.prototype.viewAt = function (t) {
     if (!this.windowSec) return { t0: 0, t1: this.duration, half: 0 };
     var half = this.windowSec / 2;
-    /* تا نیمهٔ پنجره اول/آخر، نوار از لبهٔ فایل بیرون نمی‌زند */
     var t0 = Math.max(0, Math.min(t - half, this.duration - this.windowSec));
     if (this.duration < this.windowSec) t0 = 0;
     return { t0: t0, t1: t0 + this.windowSec, half: half };
   };
 
-  /* نگاشت زمان → x داخل بازهٔ دید */
   TraceRenderer.prototype.xOfTimeIn = function (t, view) {
     var usable = this.W - LAYOUT.ML - LAYOUT.MR;
     var span = Math.max(1e-6, view.t1 - view.t0);
     return LAYOUT.ML + ((t - view.t0) / span) * usable;
   };
-  TraceRenderer.prototype.yOfMidi = function (m) {
-    var usable = this.H - LAYOUT.MT - LAYOUT.MB;
-    var frac = (m - this.loMidi) / Math.max(1e-6, this.hiMidi - this.loMidi);
-    return LAYOUT.MT + (1 - frac) * usable;
-  };
 
-  TraceRenderer.prototype.smoothPy = function (py, win) {
-    var out = Float64Array.from(py);
-    var n = py.length, half = win >> 1, i = 0;
-    while (i < n) {
-      if (!isFinite(out[i])) { i++; continue; }
-      var j = i;
-      while (j < n && isFinite(out[j])) j++;
-      var seg = out.subarray(i, j);
-      if (seg.length >= 3) {
-        var copy = Float64Array.from(seg);
-        var k = Math.min(win, seg.length), pad = k >> 1;
-        for (var s = 0; s < seg.length; s++) {
-          var acc = 0, cnt = 0;
-          for (var q = s - pad; q <= s + pad; q++) {
-            var idx = Math.max(0, Math.min(seg.length - 1, q));
-            acc += copy[idx]; cnt++;
-          }
-          seg[s] = acc / cnt;
-        }
-      }
-      i = j;
-    }
-    return out;
-  };
-
-  TraceRenderer.prototype.buildSegments = function () {
-    var runs = [], cur = [], lastT = null;
-    for (var i = 0; i < this.px.length; i++) {
-      if (!isFinite(this.py[i])) {
-        if (cur.length > 1) runs.push(cur);
-        cur = []; lastT = null; continue;
-      }
-      var t = this.times[i];
-      if (lastT != null && (t - lastT) > GAP_BRIDGE_SEC) {
-        if (cur.length > 1) runs.push(cur);
-        cur = [];
-      }
-      cur.push({ x: this.px[i], y: this.py[i], t: t });
-      lastT = t;
-    }
-    if (cur.length > 1) runs.push(cur);
-    if (!runs.length) return [];
-
-    var segs = [runs[0].slice()];
-    for (var r = 1; r < runs.length; r++) {
-      var run = runs[r], prev = segs[segs.length - 1];
-      var gap = run[0].t - prev[prev.length - 1].t;
-      if (gap <= GAP_BRIDGE_SEC) {
-        var a = prev[prev.length - 1], b = run[0];
-        var n = Math.max(2, Math.min(24, Math.round(gap * 40) + 2));
-        for (var j = 1; j < n; j++) {
-          var fr = j / n;
-          prev.push({
-            x: a.x + (b.x - a.x) * fr,
-            y: a.y + (b.y - a.y) * fr,
-            t: a.t + (b.t - a.t) * fr
-          });
-        }
-        prev.push.apply(prev, run);
-      } else {
-        segs.push(run.slice());
-      }
-    }
-    return segs.filter(function (s) { return s.length > 1; });
-  };
-
-  /* پس‌زمینه: گرادیان + هاله + قاب + خطوط نت (یک‌بار ساخته و کش می‌شود) */
-  TraceRenderer.prototype.buildBackground = function (withTrace) {
-    if (withTrace === undefined) withTrace = !this.windowSec;
-    var W = this.W, H = this.H;
-    var c = document.createElement('canvas');
-    c.width = W; c.height = H;
-    var g = c.getContext('2d');
-
-    var grad = g.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, 'rgb(13,23,48)');
-    grad.addColorStop(1, 'rgb(23,36,66)');
-    g.fillStyle = grad;
-    g.fillRect(0, 0, W, H);
-
-    var halo = g.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, 0.62 * Math.max(W, H));
-    halo.addColorStop(0, 'rgba(26,40,68,1)');
-    halo.addColorStop(0.5, 'rgba(13,20,34,0.55)');
-    halo.addColorStop(1, 'rgba(0,0,0,0)');
-    g.globalCompositeOperation = 'lighter';
-    g.fillStyle = halo;
-    g.fillRect(0, 0, W, H);
-    g.globalCompositeOperation = 'source-over';
-
-    // قاب گرد
-    g.strokeStyle = 'rgba(120,152,205,0.18)';
-    g.lineWidth = 2;
-    this.roundRect(g, 10, 10, W - 20, H - 20, 26);
-    g.stroke();
-
-    // خطوط نت
-    for (var m = Math.ceil(this.loMidi); m <= Math.floor(this.hiMidi); m++) {
-      var y = this.yOfMidi(m);
-      var isC = ((m % 12) + 12) % 12 === 0;
-      g.strokeStyle = isC ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.05)';
-      g.lineWidth = isC ? 2 : 1;
-      g.beginPath();
-      g.moveTo(22, y);
-      g.lineTo(W - 22, y);
-      g.stroke();
-    }
-
-    if (!withTrace) return c;
-
-    // لایهٔ «آینده»: منحنی محو + نقطه‌های محو نت‌ها
-    g.strokeStyle = 'rgba(86,120,160,0.41)';
-    g.lineWidth = 4;
-    g.lineJoin = 'round';
-    g.lineCap = 'round';
-    for (var s = 0; s < this.segs.length; s++) {
-      var seg = this.segs[s];
-      g.beginPath();
-      g.moveTo(seg[0].x, seg[0].y);
-      for (var i = 1; i < seg.length; i++) g.lineTo(seg[i].x, seg[i].y);
-      g.stroke();
-    }
-
-    var self = this;
-    (this.notes || []).forEach(function (n) {
-      var f0 = n.f0_hz;
-      if (!f0 || f0 <= 0) return;
-      var x = self.xOfTime(n.start || 0);
-      var y = self.yOfMidi(CORE.hzToMidi(f0));
-      var rg = g.createRadialGradient(x, y, 0, x, y, 8.5);
-      rg.addColorStop(0, 'rgba(104,138,176,0.72)');
-      rg.addColorStop(1, 'rgba(104,138,176,0)');
-      g.fillStyle = rg;
-      g.beginPath();
-      g.arc(x, y, 8.5, 0, Math.PI * 2);
-      g.fill();
-    });
-
-    return c;
-  };
-
-  TraceRenderer.prototype.roundRect = function (g, x, y, w, h, r) {
-    g.beginPath();
-    g.moveTo(x + r, y);
-    g.arcTo(x + w, y, x + w, y + h, r);
-    g.arcTo(x + w, y + h, x, y + h, r);
-    g.arcTo(x, y + h, x, y, r);
-    g.arcTo(x, y, x + w, y, r);
-    g.closePath();
+  TraceRenderer.prototype.xOfTime = function (t) {
+    return this.xOfTimeIn(t, { t0: 0, t1: this.duration });
   };
 
   TraceRenderer.prototype.currentMidi = function (t) {
-    var times = this.times, mids = this.midi;
-    if (!times.length) return null;
-    var lo = 0, hi = times.length - 1, idx = 0;
-    // searchsorted
-    while (lo <= hi) {
-      var mid = (lo + hi) >> 1;
-      if (times[mid] <= t) { idx = mid; lo = mid + 1; } else { hi = mid - 1; }
-    }
-    if (isFinite(mids[idx])) {
-      if (idx >= times.length - 1) return mids[idx];
-      var t0 = times[idx], t1 = times[idx + 1], m0 = mids[idx], m1 = mids[idx + 1];
-      if (isFinite(m1) && t1 > t0) {
-        var fr = (t - t0) / (t1 - t0);
-        return m0 + (m1 - m0) * Math.max(0, Math.min(1, fr));
-      }
-      return m0;
-    }
-    /* در ویدیو: اگر همین حالا نتی خوانده نمی‌شود، نقطه پنهان می‌شود
-       (نه اینکه روی آخرین نت بچسبد) */
-    var maxGap = this.windowSec ? 0.12 : Infinity;
-    for (var i = idx; i >= 0; i--) {
-      if (isFinite(mids[i])) {
-        return (times[idx] - times[i] <= maxGap) ? mids[i] : null;
-      }
-    }
-    return null;
+    return LocalTraceStyle.currentMidi({
+      times: this.times, mids: this.midi
+    }, t);
   };
 
-  /* منحنی: limitT = تا چه زمانی (null = همهٔ بازهٔ دید)، faded = لایهٔ محو آینده */
-  TraceRenderer.prototype.drawCurve = function (g, view, X, limitT, faded) {
-    var styles = faded
-      ? [[4, 'rgba(86,120,160,0.41)']]
-      : [[12, 'rgba(255,214,126,0.13)'],
-         [7, 'rgba(255,214,126,0.31)'],
-         [4, 'rgba(247,209,113,1)']];
-    g.lineJoin = 'round';
-    g.lineCap = 'round';
-    for (var s = 0; s < this.segs.length; s++) {
-      var seg = this.segs[s];
-      var n = seg.length;
-      /* پرش سریع به لبهٔ چپ پنجره (نقاط قبل از پنجره لازم نیستند) */
-      var i = 0;
-      while (i < n && seg[i].t < view.t0) i++;
-      var pts = [];
-      if (i > 0) pts.push(seg[i - 1]);          // یک نقطه بیرون لبه → برش تمیز
-      for (; i < n; i++) {
-        var p = seg[i];
-        if (p.t > view.t1) { pts.push(p); break; }   // یک نقطه بیرون لبهٔ راست
-        if (limitT != null && p.t > limitT) break;
-        pts.push(p);
-      }
-      if (pts.length < 2) continue;
-      for (var k = 0; k < styles.length; k++) {
-        g.strokeStyle = styles[k][1];
-        g.lineWidth = styles[k][0];
-        g.beginPath();
-        g.moveTo(X(pts[0].t), pts[0].y);
-        for (var j = 1; j < pts.length; j++) g.lineTo(X(pts[j].t), pts[j].y);
-        g.stroke();
-      }
+  /* مشخصات رسم برای سبک مشترک */
+  TraceRenderer.prototype._spec = function (t) {
+    var view = this.viewAt(t);
+    var range = this.range;
+    if (!range) {
+      var self = this;
+      range = {
+        highest: self.highest ? { note_name: CORE.midiToName(CORE.hzToMidi(self.highest.f0_hz)),
+          f0_hz: self.highest.f0_hz, start: self.highest.start } : null,
+        lowest: self.lowest ? { note_name: CORE.midiToName(CORE.hzToMidi(self.lowest.f0_hz)),
+          f0_hz: self.lowest.f0_hz, start: self.lowest.start } : null,
+        span_semitones: (self.highest && self.lowest)
+          ? Math.round(12 * Math.log2(self.highest.f0_hz / self.lowest.f0_hz) * 10) / 10 : null
+      };
+      this.range = range;
     }
+    return {
+      W: this.W, H: this.H, dpr: 1,
+      times: this.times, mids: this.midi, notes: this.notes,
+      range: range,
+      duration: this.duration,
+      t: Math.max(0, Math.min(t, this.duration)),
+      view: view,
+      tightness: this.tightness
+    };
   };
 
   TraceRenderer.prototype.draw = function (time) {
-    var t = Math.max(0, Math.min(time, this.duration));
-    var g = this.ctx, W = this.W, H = this.H;
-    var view = this.viewAt(t);
-    var self = this;
-    var X = function (tt) {
-      return self.windowSec ? self.xOfTimeIn(tt, view) : self.xOfTime(tt);
-    };
-
-    if (!this._bg) this._bg = this.buildBackground();
-    g.clearRect(0, 0, W, H);
-    g.drawImage(this._bg, 0, 0);
-
-    /* در حالت نوار لغزان، هر چیزی که به x وابسته است همین‌جا رسم می‌شود */
-    g.save();
-    if (this.windowSec) {
-      g.beginPath();
-      g.rect(LAYOUT.ML - 4, LAYOUT.MT - 26, W - LAYOUT.ML - LAYOUT.MR + 8,
-        H - LAYOUT.MT - LAYOUT.MB + 40);
-      g.clip();
-    }
-
-    if (this.windowSec) {
-      /* لایهٔ محو آینده (مثل نمای کلی، ولی فقط داخل پنجره) */
-      this.drawCurve(g, view, X, null, true);
-      (this.notes || []).forEach(function (n) {
-        var f0 = n.f0_hz;
-        if (!f0 || f0 <= 0) return;
-        if (n.start < view.t0 || n.start > view.t1) return;
-        var x = X(n.start || 0), y = self.yOfMidi(CORE.hzToMidi(f0));
-        var rg = g.createRadialGradient(x, y, 0, x, y, 8.5);
-        rg.addColorStop(0, 'rgba(104,138,176,0.72)');
-        rg.addColorStop(1, 'rgba(104,138,176,0)');
-        g.fillStyle = rg;
-        g.beginPath(); g.arc(x, y, 8.5, 0, Math.PI * 2); g.fill();
-      });
-    }
-
-    // منحنی طلایی تا لحظهٔ t (سه لایه = درخشش)
-    var endT = this.windowSec ? Math.min(t, view.t1) : t;
-    this.drawCurve(g, view, X, endT, false);
-
-    // نقطه‌های طلایی روی نت‌های خوانده‌شده
-    (this.notes || []).forEach(function (n) {
-      var start = n.start || 0;
-      if (start > t) return;
-      if (self.windowSec && (start < view.t0 || start > view.t1)) return;
-      var f0 = n.f0_hz;
-      if (!f0 || f0 <= 0) return;
-      var x = X(start + (n.duration || 0) / 2);
-      var y = self.yOfMidi(CORE.hzToMidi(f0));
-      var r = (n.duration || 0) < 0.35 ? 4.6 : 6.0;
-      g.fillStyle = 'rgb(255,228,155)';
-      g.beginPath();
-      g.arc(x, y, r, 0, Math.PI * 2);
-      g.fill();
-    });
-
-    // خط پخش
-    var xn = X(t);
-    g.strokeStyle = 'rgba(255,255,255,0.16)';
-    g.lineWidth = 6;
-    g.beginPath(); g.moveTo(xn, 18); g.lineTo(xn, H - 18); g.stroke();
-    g.strokeStyle = 'rgba(255,255,255,0.82)';
-    g.lineWidth = 2;
-    g.beginPath(); g.moveTo(xn, 18); g.lineTo(xn, H - 18); g.stroke();
-
-    // نقطهٔ درخشان روی نت جاری
-    var mNow = this.currentMidi(t);
-    if (mNow != null) {
-      var yn = this.yOfMidi(mNow);
-      var halo = g.createRadialGradient(xn, yn, 0, xn, yn, 30);
-      halo.addColorStop(0, 'rgba(255,228,155,0.55)');
-      halo.addColorStop(0.45, 'rgba(255,228,155,0.18)');
-      halo.addColorStop(1, 'rgba(255,228,155,0)');
-      g.fillStyle = halo;
-      g.beginPath(); g.arc(xn, yn, 30, 0, Math.PI * 2); g.fill();
-
-      var core = g.createRadialGradient(xn, yn, 0, xn, yn, 12);
-      core.addColorStop(0, 'rgb(255,250,232)');
-      core.addColorStop(0.6, 'rgba(255,240,205,0.85)');
-      core.addColorStop(1, 'rgba(255,240,205,0)');
-      g.fillStyle = core;
-      g.beginPath(); g.arc(xn, yn, 12, 0, Math.PI * 2); g.fill();
-    }
-
-    // راهنمای بالاترین/پایین‌ترین نت
-    g.font = '15px system-ui, sans-serif';
-    g.textAlign = 'left';
-    var guides = [[this.highest, 'rgba(255,226,160,', 'HIGH', LAYOUT.ML],
-      [this.lowest, 'rgba(176,206,235,', 'LOW', W - 320]];
-    guides.forEach(function (gd) {
-      var note = gd[0];
-      if (!note || !note.f0_hz) return;
-      var y = self.yOfMidi(CORE.hzToMidi(note.f0_hz));
-      var x0 = Math.max(LAYOUT.ML, Math.min(X(note.start || 0), W - 40));
-      g.strokeStyle = gd[1] + '0.22)';
-      g.lineWidth = 1;
-      g.setLineDash([7, 7]);
-      g.beginPath(); g.moveTo(x0, y); g.lineTo(W - 30, y); g.stroke();
-      g.setLineDash([]);
-      g.fillStyle = gd[1] + '0.5)';
-      g.fillText(gd[2] + ' ' + CORE.midiToName(CORE.hzToMidi(note.f0_hz)), gd[3], y - 8);
-    });
-    g.restore();
-
-    // برچسب‌ها
-    var cur = (mNow == null) ? '—'
-      : CORE.midiToName(mNow) + '   ' + (CORE.midiToHz(mNow)).toFixed(1) + ' Hz';
-    g.font = 'bold 24px system-ui, sans-serif';
-    g.fillStyle = 'rgba(238,234,214,0.92)';
-    g.textAlign = 'left';
-    g.fillText(cur, 40, 46);
-
-    g.font = '16px system-ui, sans-serif';
-    g.fillStyle = 'rgba(150,168,200,0.59)';
-    g.fillText(t.toFixed(1) + ' / ' + this.duration.toFixed(1) + 's', W - 190, 56);
-
-    if (this.highest && this.lowest && this.highest.f0_hz && this.lowest.f0_hz) {
-      var span = 12 * Math.log2(this.highest.f0_hz / this.lowest.f0_hz);
-      var hiName = CORE.midiToName(CORE.hzToMidi(this.highest.f0_hz));
-      var loName = CORE.midiToName(CORE.hzToMidi(this.lowest.f0_hz));
-      var txt = hiName + '  ↕  ' + loName +
-        '   (' + span.toFixed(1) + ' semitones)';
-      g.font = '17px system-ui, sans-serif';
-      g.fillStyle = 'rgba(196,210,235,0.82)';
-      g.fillText(txt, W - 420, H - 30);
-    }
-    g.textAlign = 'left';
+    var t = (time == null) ? this.duration : time;
+    var spec = this._spec(t);
+    var g = this.ctx;
+    /* سبک مشترک با کلیپ ناحیهٔ نمودار (هیچ نقطه‌ای بیرون پنجره کشیده نشود) */
+    LocalTraceStyle.draw(g, spec);
     return this.canvas;
   };
 
@@ -826,8 +512,27 @@
   };
 
   /* ══════════════════════════════════════════════════════════════════════
-     ۳) ساخت ویدیو (canvas + MediaRecorder + صدای اصلی)
+     ۳) ویدیو — دو مسیر، یک خروجی
+     ----------------------------------------------------------------------
+     مسیر سریع (WebCodecs): فریم‌ها بدون پخش زنده رسم و کدگذاری می‌شوند،
+     پس یک ویدیوی ۳ دقیقه‌ای در چند ده ثانیه آماده می‌شود و برچسب زمانی هر
+     فریم دقیقاً i/fps است ⇒ صوت و تصویر بدون تأخیر هم‌زمان می‌مانند.
+     مسیر پشتیبان (MediaRecorder): همان روش قبلی (ضبط هم‌زمان با پخش)، برای
+     دستگاه‌هایی که WebCodecs/AAC ندارند.
      ══════════════════════════════════════════════════════════════════════ */
+  var VIDEO = { W: 1280, H: 720, fps: 60, bitrate: 5500000 };
+
+  /* برای فایل‌های بلند: نرخ بیت و (اگر لازم شد) فریم را کم می‌کنیم تا
+     حافظهٔ گوشی پر نشود؛ برای فایل کوتاه همان ۷۲۰p۶۰ و کیفیت بالا می‌ماند. */
+  function videoProfile(durationSec, askedFps) {
+    var fps = askedFps > 0 ? askedFps : VIDEO.fps;
+    var bitrate = VIDEO.bitrate;
+    if (durationSec > 300) { bitrate = 1800000; fps = Math.min(fps, 24); }
+    else if (durationSec > 150) { bitrate = 2800000; fps = Math.min(fps, 30); }
+    else if (durationSec > 75) { bitrate = 3800000; fps = Math.min(fps, 60); }
+    return { fps: Math.round(fps), bitrate: Math.round(bitrate) };
+  }
+
   function pickVideoMime() {
     var cands = [
       'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
@@ -836,31 +541,170 @@
       'video/webm;codecs=vp8,opus',
       'video/webm'
     ];
+    if (!global.MediaRecorder) return '';
     for (var i = 0; i < cands.length; i++) {
-      if (global.MediaRecorder && MediaRecorder.isTypeSupported(cands[i])) return cands[i];
+      if (MediaRecorder.isTypeSupported(cands[i])) return cands[i];
     }
     return '';
   }
 
-  async function renderVideoBlob(pitch, notes, wav, sr, onProgress) {
+  function webCodecsReady() {
+    return !!(global.VideoEncoder && global.AudioEncoder && global.VideoFrame &&
+      global.AudioData && global.Mp4Muxer && global.Mp4Muxer.Muxer && global.Mp4Muxer.ArrayBufferTarget);
+  }
+
+  /* کدک H.264: از بهترین به سازگارترین */
+  async function pickAvcConfig(w, h, fps, bitrate) {
+    var cands = ['avc1.640028', 'avc1.4D0028', 'avc1.42001F', 'avc1.42E01E'];
+    for (var i = 0; i < cands.length; i++) {
+      var cfg = {
+        codec: cands[i], width: w, height: h, framerate: fps,
+        bitrate: bitrate || VIDEO.bitrate, latencyMode: 'quality', avc: { format: 'avc' }
+      };
+      try {
+        if (!global.VideoEncoder.isConfigSupported) return cfg;
+        var sup = await global.VideoEncoder.isConfigSupported(cfg);
+        if (sup && sup.supported) return sup.config || cfg;
+      } catch (e) { /* کدک بعدی */ }
+    }
+    return null;
+  }
+
+  async function pickAacConfig(sr) {
+    var cands = ['mp4a.40.2', 'mp4a.40.5'];
+    for (var i = 0; i < cands.length; i++) {
+      var cfg = { codec: cands[i], sampleRate: sr, numberOfChannels: 1, bitrate: 128000 };
+      try {
+        if (!global.AudioEncoder.isConfigSupported) return cfg;
+        var sup = await global.AudioEncoder.isConfigSupported(cfg);
+        if (sup && sup.supported) return sup.config || cfg;
+      } catch (e) { /* کدک بعدی */ }
+    }
+    return null;
+  }
+
+  function yieldTick() {
+    return new Promise(function (r) { setTimeout(r, 0); });
+  }
+
+  async function renderVideoFast(pitch, notes, wav, sr, onProgress, opts) {
+    var W = VIDEO.W, H = VIDEO.H;
     var canvas = document.createElement('canvas');
-    canvas.width = LAYOUT.W;
-    canvas.height = LAYOUT.H;
-    /* فقط نمونه‌های داخل نت‌های واقعی — میلهٔ الکی در ویدیو کشیده نمی‌شود */
+    canvas.width = W; canvas.height = H;
     var trace = pitch.trace_freqs || (CORE.strictTraceFreqs
       ? CORE.strictTraceFreqs(pitch.times, pitch.freqs, notes) : pitch.freqs);
-    /* نوار لغزان: پنجرهٔ ۱۵ ثانیه‌ای با نقطهٔ میخ‌شده در وسط.
-       فایل کوتاه‌تر از پنجره ⇒ همان نمای کامل (بدون فضای خالیِ دو طرف). */
-    var full = new TraceRenderer(canvas, pitch.times, trace, notes);
-    var win = full.duration > VIDEO_WINDOW_SEC + 2 ? VIDEO_WINDOW_SEC : 0;
-    var renderer = win
-      ? new TraceRenderer(canvas, pitch.times, trace, notes, { windowSec: win })
-      : full;
-
-    var fps = 20;
+    var renderer = new TraceRenderer(canvas, pitch.times, trace, notes, {
+      windowSec: opts.windowSec || 0,
+      tightness: opts.tightness || 1
+    });
     var duration = Math.max(renderer.duration, 0.2);
-    if (duration > 60) fps = 15;
-    if (duration > 300) fps = 10;
+    var prof = videoProfile(duration, opts.fps);
+    var fps = prof.fps;
+    var totalFrames = Math.max(1, Math.round(duration * fps));
+
+    var vcfg = await pickAvcConfig(W, H, fps, prof.bitrate);
+    if (!vcfg) throw new Error('کدک H.264 در این دستگاه نیست');
+    var acfg = await pickAacConfig(sr);
+    if (!acfg) throw new Error('کدک AAC در این دستگاه نیست');
+
+    var muxer = new global.Mp4Muxer.Muxer({
+      target: new global.Mp4Muxer.ArrayBufferTarget(),
+      video: { codec: 'avc', width: W, height: H, frameRate: fps },
+      audio: { codec: 'aac', sampleRate: sr, numberOfChannels: 1 },
+      fastStart: 'in-memory'
+    });
+
+    var vChunks = [], aChunks = [], encError = null;
+    var venc = new global.VideoEncoder({
+      output: function (chunk, meta) { vChunks.push({ c: chunk, m: meta, ts: chunk.timestamp }); },
+      error: function (e) { encError = e; }
+    });
+    venc.configure(vcfg);
+    var aenc = new global.AudioEncoder({
+      output: function (chunk, meta) { aChunks.push({ c: chunk, m: meta, ts: chunk.timestamp }); },
+      error: function (e) { encError = e; }
+    });
+    aenc.configure(acfg);
+
+    /* ── فریم‌ها: رسم + کدگذاری با برچسب زمانی دقیق i/fps ── */
+    var t0 = Date.now();
+    for (var i = 0; i < totalFrames; i++) {
+      if (encError) throw encError;
+      var t = Math.min(i / fps, duration);
+      renderer.draw(t);
+      var vf = new global.VideoFrame(canvas, {
+        timestamp: Math.round((i / fps) * 1e6),
+        duration: Math.round(1e6 / fps)
+      });
+      venc.encode(vf, { keyFrame: (i % (fps * 2) === 0) });
+      vf.close();
+      if (venc.encodeQueueSize > 12) await yieldTick();
+      if ((i & 7) === 0) {
+        if (onProgress) onProgress(0.04 + 0.76 * (i / totalFrames));
+        await yieldTick();
+      }
+    }
+    await venc.flush();
+    if (encError) throw encError;
+
+    /* ── صدا: همان طول، بدون درز ── */
+    var CHUNK = 1024;
+    for (var off = 0; off < wav.length; off += CHUNK) {
+      var n = Math.min(CHUNK, wav.length - off);
+      var data = new Float32Array(CHUNK);              /* صفر-پُر کردن آخرین تکه */
+      data.set(wav.subarray(off, off + n));
+      var ad = new global.AudioData({
+        format: 'f32', sampleRate: sr, numberOfFrames: CHUNK, numberOfChannels: 1,
+        timestamp: Math.round((off / sr) * 1e6), data: data
+      });
+      aenc.encode(ad);
+      ad.close();
+      if (aenc.encodeQueueSize > 24) await yieldTick();
+      if ((off % (CHUNK * 96)) === 0) {
+        if (onProgress) onProgress(0.80 + 0.16 * (off / wav.length));
+        await yieldTick();
+      }
+    }
+    await aenc.flush();
+    if (encError) throw encError;
+
+    /* ── نوشتن در MP4 به ترتیب زمان ── */
+    var all = [];
+    for (var v = 0; v < vChunks.length; v++) { var vv = vChunks[v]; vv.kind = 'v'; all.push(vv); }
+    for (var a = 0; a < aChunks.length; a++) { var aa = aChunks[a]; aa.kind = 'a'; all.push(aa); }
+    all.sort(function (x, y) { return x.ts - y.ts; });
+    for (var z = 0; z < all.length; z++) {
+      if (all[z].kind === 'v') muxer.addVideoChunk(all[z].c, all[z].m);
+      else muxer.addAudioChunk(all[z].c, all[z].m);
+    }
+    muxer.finalize();
+    try { venc.close(); aenc.close(); } catch (e) { }
+    if (onProgress) onProgress(0.99);
+
+    return {
+      blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }),
+      mime: 'video/mp4',
+      name: 'radde-seda.mp4',
+      fast: true,
+      frames: totalFrames,
+      seconds: Math.round((Date.now() - t0) / 100) / 10
+    };
+  }
+
+  /* ── مسیر پشتیبان: ضبط هم‌زمان با پخش (همان روش قبلی، با کیفیت بالاتر) ── */
+  async function renderVideoRealtime(pitch, notes, wav, sr, onProgress, opts) {
+    var canvas = document.createElement('canvas');
+    canvas.width = VIDEO.W;
+    canvas.height = VIDEO.H;
+    var trace = pitch.trace_freqs || (CORE.strictTraceFreqs
+      ? CORE.strictTraceFreqs(pitch.times, pitch.freqs, notes) : pitch.freqs);
+    var renderer = new TraceRenderer(canvas, pitch.times, trace, notes, {
+      windowSec: opts.windowSec || 0,
+      tightness: opts.tightness || 1
+    });
+
+    var fps = opts.fps > 0 ? opts.fps : VIDEO.fps;
+    var duration = Math.max(renderer.duration, 0.2);
 
     var stream = canvas.captureStream(fps);
     var actx = new (global.AudioContext || global.webkitAudioContext)();
@@ -875,8 +719,8 @@
 
     var mime = pickVideoMime();
     var rec = new MediaRecorder(stream, mime ? {
-      mimeType: mime, videoBitsPerSecond: 4000000, audioBitsPerSecond: 160000
-    } : { videoBitsPerSecond: 4000000, audioBitsPerSecond: 160000 });
+      mimeType: mime, videoBitsPerSecond: VIDEO.bitrate, audioBitsPerSecond: 160000
+    } : { videoBitsPerSecond: VIDEO.bitrate, audioBitsPerSecond: 160000 });
 
     var chunks = [];
     rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
@@ -908,9 +752,26 @@
     var allTracks = stream.getTracks ? stream.getTracks()
       : [].concat(stream.getAudioTracks ? stream.getAudioTracks() : [],
                   stream.getVideoTracks ? stream.getVideoTracks() : []);
-    allTracks.forEach(function (t) { try { t.stop(); } catch (e) { } });
+    allTracks.forEach(function (t2) { try { t2.stop(); } catch (e) { } });
     if (onProgress) onProgress(1.0);
-    return { blob: blob, mime: mime || 'video/webm', name: (mime.indexOf('mp4') >= 0 ? 'radde-seda.mp4' : 'radde-seda.webm') };
+    return {
+      blob: blob,
+      mime: mime || 'video/webm',
+      name: (mime.indexOf('mp4') >= 0 ? 'radde-seda.mp4' : 'radde-seda.webm'),
+      fast: false
+    };
+  }
+
+  async function renderVideoBlob(pitch, notes, wav, sr, onProgress, opts) {
+    opts = opts || {};
+    if (opts.fast !== false && webCodecsReady()) {
+      try {
+        return await renderVideoFast(pitch, notes, wav, sr, onProgress, opts);
+      } catch (e) {
+        if (global.console) console.warn('رندر سریع ممکن نشد، مسیر پشتیبان:', e && e.message);
+      }
+    }
+    return renderVideoRealtime(pitch, notes, wav, sr, onProgress, opts);
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -1009,16 +870,24 @@
         job.progress = 0.02 + 0.96 * f;
         job.stage = 'video';
         jobUpdate(job);
-      });
+      }, job.videoOpts || {});
       job.videoBlob = out.blob;
       job.videoUrl = URL.createObjectURL(out.blob);
       job.videoName = out.name;
       job.report.meta.video_url = job.videoUrl;
       job.report.meta.video_name = out.name;
+      job.report.meta.video_fast = !!out.fast;
+      job.report.meta.video_frames = out.frames || null;
+      job.report.meta.video_render_sec = out.seconds != null ? out.seconds : null;
+      job.report.meta.video_window_sec = (job.videoOpts && job.videoOpts.windowSec) || 0;
+      job.report.meta.video_tightness = (job.videoOpts && job.videoOpts.tightness) || 1;
       job.result = {
         video_url: job.videoUrl,
         video_name: out.name,
-        video_type: out.mime
+        video_type: out.mime,
+        fast: !!out.fast,
+        frames: out.frames || null,
+        render_sec: out.seconds != null ? out.seconds : null
       };
       if (job.report.meta.downloads) job.report.meta.downloads.video = job.videoUrl;
       job.status = 'done'; job.stage = 'done'; job.progress = 1; jobUpdate(job);
@@ -1085,10 +954,20 @@
       return jsonResponse({ job_id: j.id, status: 'started' });
     }
 
-    // POST /api/video/{id}
+    // POST /api/video/{id}  (پارامترهای زوم هم از همین‌جا می‌آیند)
     if ((m = path.match(/\/api\/video\/([^/]+)$/)) && method === 'POST') {
       var jv = jobs[m[1]];
       if (!jv) return jsonResponse({ error: 'کار پیدا نشد' }, 404);
+      var vopts = {};
+      if (init && init.body && typeof init.body.get === 'function') {
+        var ws = parseFloat(init.body.get('window_sec'));
+        var tg = parseFloat(init.body.get('tightness'));
+        var fpr = parseFloat(init.body.get('fps'));
+        if (isFinite(ws) && ws > 0) vopts.windowSec = ws;
+        if (isFinite(tg) && tg > 0) vopts.tightness = tg;
+        if (isFinite(fpr) && fpr > 0) vopts.fps = fpr;
+      }
+      jv.videoOpts = vopts;
       runVideo(jv);
       return jsonResponse({ job_id: jv.id, status: 'started' });
     }
@@ -1332,6 +1211,8 @@
     report: CORE.buildReport,
     TraceRenderer: TraceRenderer,
     renderVideo: renderVideoBlob,
+    VIDEO: VIDEO,
+    webCodecsReady: webCodecsReady,
     jobs: jobs,
     version: '1.0.0'
   };

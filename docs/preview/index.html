@@ -48,6 +48,23 @@
       <input type="range" id="seek" min="0" max="1000" value="0" />
       <span id="clock" style="font-size:.8rem;color:var(--mut);direction:ltr;min-width:96px;text-align:left">0.0 / 0.0s</span>
     </div>
+    <div class="row">
+      <span style="font-size:.8rem;color:var(--mut)">زوم زمانی:</span>
+      <div class="seg" id="winSeg">
+        <button data-win="0" class="on">کل اجرا</button>
+        <button data-win="24">۲۴s</button>
+        <button data-win="12">۱۲s</button>
+        <button data-win="6">۶s</button>
+        <button data-win="3">۳s</button>
+      </div>
+      <span style="font-size:.8rem;color:var(--mut)">زوم ارتفاع:</span>
+      <div class="seg" id="zoomSeg">
+        <button data-tight="1" class="on">×۱</button>
+        <button data-tight="1.6">×۱٫۶</button>
+        <button data-tight="2.4">×۲٫۴</button>
+        <button data-tight="3.5">×۳٫۵</button>
+      </div>
+    </div>
     <div class="note">خط طلایی = گذشته، خط آبی محو = آینده؛ هر دو زیر نوار می‌لغزند و نقطه دقیقاً وسط می‌ماند.</div>
   </div>
 
@@ -85,6 +102,7 @@
 
 <script src="/app/engine.js"></script>
 <script src="/app/parallel.js"></script>
+<script src="/app/trace_style.js"></script>
 <script src="/app/offline.js"></script>
 <script>
 (async function () {
@@ -144,10 +162,35 @@
 
   /* ── ۴) بوم ویدیو: نوار لغزان ۱۵ ثانیه‌ای ── */
   const cvV = $('cv');
-  const WIN = 15;
-  const rendererV = new LocalOffline.TraceRenderer(cvV, out.times, trace, out.notes, { windowSec: WIN });
+  let WIN = 0;               /* ۰ = نمای کامل */
+  let TIGHT = 1;
+  let rendererV = new LocalOffline.TraceRenderer(cvV, out.times, trace, out.notes,
+    { windowSec: WIN, tightness: TIGHT });
   const dur = rendererV.duration;
   $('seek').max = '1000';
+
+  function rebuild() {
+    rendererV = new LocalOffline.TraceRenderer(cvV, out.times, trace, out.notes,
+      { windowSec: WIN, tightness: TIGHT });
+    rendererV.draw(t);
+  }
+  document.querySelectorAll('#winSeg button').forEach(b => {
+    b.onclick = () => {
+      document.querySelectorAll('#winSeg button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      const v = +b.dataset.win;
+      WIN = (v > 0 && v < dur * 0.92) ? v : 0;
+      rebuild();
+    };
+  });
+  document.querySelectorAll('#zoomSeg button').forEach(b => {
+    b.onclick = () => {
+      document.querySelectorAll('#zoomSeg button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      TIGHT = +b.dataset.tight;
+      rebuild();
+    };
+  });
 
   let t = 0, playing = false, lastTs = 0, raf = null;
   /* صدای نمونه هم پخش می‌شود تا حس واقعی ویدیو را بدهی */
