@@ -32,10 +32,16 @@
   است (نه هیسترزیس).
 - دستور تست دقت آفلاین (`node web/tests/accuracy_test.js`) به README اضافه شد.
 
+## ۴) دیکود: دمِ نت
+جزیرهٔ ±۱ نیم‌پرده‌ای که درست پیش از سکوت ظاهر می‌شود (دمِ ویبراتو) حالا تا
+۲۰۰ms و به‌شرط کِشیده‌بودن نتِ قبل، به همان نت برمی‌گردد. نتیجه در تست بازتولیدپذیر
+`node web/tests/note_engine_test.js`: ویبراتوی ±۹۰ سنت از **۵۴٫۱** به **۱۰۰**
+رسید (۰ نت کم، ۰ نت اضافه).
+
 ## وضعیت تست‌ها
-همهٔ ۸ مجموعه‌تست سبز است: accuracy (۲۰ بررسی)، render، video (شامل ۴ بررسی
+همهٔ ۹ مجموعه‌تست سبز است: accuracy (۲۰ بررسی)، render، video (شامل ۴ بررسی
 تازه برای قاب ۸ نتی)، page (کل صفحه با jsdom)، native، strict (۲۵ بررسی)،
-parallel، decode.
+parallel، decode، note_engine (۱۷ بررسی).
 
 ## نصب
 `release/radde-seda-1.2.5.apk` · versionName 1.2.5 · versionCode 8 · کاملاً آفلاین
@@ -44,4 +50,4 @@ parallel، decode.
 
 `https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.2.5/release/radde-seda-1.2.5.apk`
 
-اندازه ۱٬۷۴۲٬۹۵۰ بایت · md5 `33239bcfde1a8217c89008830b77d478`
+اندازه ۱٬۷۴۲٬۹۴۹ بایت · md5 `66cafa9198e8b420dbe319ea328d78bf`

@@ -1462,6 +1462,19 @@
        کوتاه که دو طرفش دقیقاً یک وضعیت یکسان دارند به همان وضعیت برگردانده
        می‌شود؛ نت‌های واقعی کوتاه‌تر از ۱۲۰ میلی‌ثانیه نیستند. */
     var absorbFrames = opts.absorb_frames != null ? opts.absorb_frames : 14;
+    /* جزیرهٔ بلندتر فقط وقتی پذیرفته می‌شود که کوکش با نتِ دو طرف یکی باشد
+       (نوسان ویبراتو)، نه یک نیم‌پردهٔ واقعیِ وسط. */
+    var absorbLong = opts.absorb_long_frames != null ? opts.absorb_long_frames : 26;
+    function runPitchHz(a, b) {
+      var sum = 0, w = 0;
+      for (var z = a; z <= b; z++) {
+        var fz = freqs[z];
+        if (!(fz > 0)) continue;
+        var wz = Math.max(0.05, conf ? conf[z] : 1);
+        sum += Math.log2(fz) * wz; w += wz;
+      }
+      return w > 0 ? Math.pow(2, sum / w) : 0;
+    }
     for (var pass = 0; pass < 2; pass++) {
       var runs = [];
       var runStart = 0;
@@ -1475,22 +1488,35 @@
       for (var r = 1; r < runs.length - 1; r++) {
         var cur = runs[r], before = runs[r - 1], after = runs[r + 1];
         var lenR = cur[1] - cur[0] + 1;
-        if (lenR > absorbFrames) continue;
         if (cur[2] === SIL) continue;
-        /* (الف) دو طرف یک وضعیت یکسان: جزیرهٔ ویبراتو */
-        if (before[2] === after[2] && before[2] !== SIL && Math.abs(cur[2] - before[2]) <= 1) {
+        /* (الف) دو طرف یک وضعیت یکسان: جزیرهٔ ویبراتو.
+           جزیرهٔ بلندتر از ۱۴۰ms فقط وقتی پذیرفته می‌شود که کوکش با همان نت
+           یکی باشد (نوسان ویبراتو)، نه یک نیم‌پردهٔ واقعیِ وسط. */
+        var limitA = absorbFrames;
+        if (lenR > absorbFrames && lenR <= absorbLong) {
+          var mhzA = runPitchHz(cur[0], cur[1]);
+          if (mhzA > 0 && Math.abs(cents(mhzA, midiToHz(lo + before[2]))) <= 40) limitA = absorbLong;
+        }
+        if (before[2] === after[2] && before[2] !== SIL && Math.abs(cur[2] - before[2]) <= 1 &&
+            lenR <= limitA) {
           for (var q3 = cur[0]; q3 <= cur[1]; q3++) path[q3] = before[2];
           changed = true;
           continue;
         }
-        /* (ب) دمِ نت: فرارِ یک‌نیم‌پرده‌ای درست پیش از سکوت */
-        if (after[2] === SIL && before[2] !== SIL && Math.abs(cur[2] - before[2]) <= 1) {
+        /* (ب) دمِ نت: فرارِ یک‌نیم‌پرده‌ای درست پیش از سکوت.
+           اگر نتِ قبل کِشیده باشد (≥۱۲۵ms)، دمِ تا ۲۰۰ms هم ویبراتو شمرده
+           می‌شود؛ نتِ واقعیِ کوتاه معمولاً همین‌قدر به نتِ قبلی نمی‌چسبد. */
+        var beforeLen = before[1] - before[0] + 1;
+        var tailLong = opts.absorb_tail_frames != null ? opts.absorb_tail_frames : 20;
+        if (after[2] === SIL && before[2] !== SIL && Math.abs(cur[2] - before[2]) <= 1 &&
+            lenR <= (beforeLen >= 25 ? tailLong : absorbFrames)) {
           for (var q4 = cur[0]; q4 <= cur[1]; q4++) path[q4] = before[2];
           changed = true;
           continue;
         }
         /* (ج) سرِ نت: همان حالت، بلافاصله پس از سکوت */
-        if (before[2] === SIL && after[2] !== SIL && Math.abs(cur[2] - after[2]) <= 1) {
+        if (before[2] === SIL && after[2] !== SIL && Math.abs(cur[2] - after[2]) <= 1 &&
+            lenR <= absorbFrames) {
           for (var q5 = cur[0]; q5 <= cur[1]; q5++) path[q5] = after[2];
           changed = true;
         }
