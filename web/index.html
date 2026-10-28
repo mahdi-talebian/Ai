@@ -500,6 +500,11 @@ function wsUrl(path) {
     return `${proto}://${location.host}${path}`;
   }
 }
+/* آدرس‌های نسبیِ برگشتی از سرور (مثل /api/file/…) در اپ اندروید — که صفحه از
+   مبدأ دیگری باز می‌شود — باید به آدرس سرور چسبانده شوند. در نسخهٔ وب API خالی
+   است و این تابع رشته را دست‌نخورده برمی‌گرداند */
+const apiPath = p => (!p ? p : ((API && String(p).charAt(0) === '/') ? API + p : p));
+
 const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const faN = n => String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
 const midiName = m => (m == null || isNaN(m)) ? '—' : NOTE_NAMES[Math.round(m) % 12] + (Math.floor(Math.round(m) / 12) - 1);
@@ -711,16 +716,16 @@ function renderReport(r) {
   /* ── دکمه‌های ذخیرهٔ آفلاین ── */
   const dls = (r.meta && r.meta.downloads) || {};
   if (dls.original) {
-    $('dlOriginal').href = dls.original;
+    $('dlOriginal').href = apiPath(dls.original);
     $('dlOriginal').setAttribute('download', (r.meta && r.meta.original_name) || 'original');
   }
-  if (dls.image) $('dlImage').href = dls.image;
-  if (dls.report) $('dlReport').href = dls.report;
+  if (dls.image) $('dlImage').href = apiPath(dls.image);
+  if (dls.report) $('dlReport').href = apiPath(dls.report);
   $('dlVideo').style.display = 'none';
   $('galleryBox').style.display = 'none';
 
   const audio = $('audioPlayer');
-  audio.src = r.meta.audio_url;
+  audio.src = apiPath(r.meta.audio_url);
   $('results').style.display = 'block';
   $('videoBox').style.display = 'none';
   $('videoStatus').textContent = '';
@@ -831,6 +836,12 @@ function galleryMessage(msg, isErr) {
 }
 
 function triggerDownload(url, name) {
+  /* در اپ اندروید، مرورگرِ درون‌برنامه‌ای blob را ذخیره نمی‌کند؛ پل بومی جایش می‌نشیند.
+     در مرورگر، NativeBridge وجود ندارد و مسیر زیر دقیقاً مثل قبل اجرا می‌شود. */
+  if (window.NativeBridge && window.NativeBridge.available) {
+    window.NativeBridge.save(url, name);
+    return;
+  }
   const a = document.createElement('a');
   a.href = url;
   a.download = name || '';
@@ -853,6 +864,12 @@ async function saveVideoToGallery() {
   const name = (base || 'radde-seda') + '-radde-seda.mp4';
 
   try {
+    /* در اپ اندروید: ویدیو مستقیم در گالری (پوشهٔ Movies) ذخیره می‌شود */
+    if (window.NativeBridge && window.NativeBridge.available) {
+      window.NativeBridge.saveToGallery(url, name);
+      galleryMessage('ویدیو در حال ذخیره در گالری است… اگر پیام «ذخیره شد» نیامد، از دکمهٔ «🎬 فایل ویدیو» استفاده کن.');
+      return;
+    }
     let file = null;
     try {
       const res = await fetch(url);
@@ -905,7 +922,7 @@ $('videoBtn').onclick = async () => {
     const res = await waitJob(r.job_id, 'vProg');
     hideProgress('vProg');
 
-    $('videoPlayer').src = res.video_url;
+    $('videoPlayer').src = apiPath(res.video_url);
     $('videoBox').style.display = 'block';
 
     const dl = $('dlVideo');
@@ -1485,8 +1502,8 @@ function renderTakes() {
         </div>
         <button data-act="play" data-id="${t.id}" title="پخش">▶</button>
         <a href="${t.url}" download="${t.name}" title="ذخیرهٔ صدا">⬇</a>
-        ${dls.image ? `<a href="${dls.image}" title="ذخیرهٔ تصویر">🖼</a>` : ''}
-        ${dls.report ? `<a href="${dls.report}" title="ذخیرهٔ گزارش">📄</a>` : ''}
+        ${dls.image ? `<a href="${apiPath(dls.image)}" title="ذخیرهٔ تصویر">🖼</a>` : ''}
+        ${dls.report ? `<a href="${apiPath(dls.report)}" title="ذخیرهٔ گزارش">📄</a>` : ''}
         ${t.report ? `<button data-act="open" data-id="${t.id}" title="نمایش تحلیل">🎚</button>` : ''}
       </div>`;
   }).join('');
@@ -1520,7 +1537,7 @@ async function analyzeTake(take) {
 
     const report = await waitJob(up.job_id, 'prog');
     take.report = report;
-    take.imageUrl = report.meta.visualization_url;
+    take.imageUrl = apiPath(report.meta.visualization_url);
     take.downloads = report.meta.downloads;
     take.busy = false;
     renderTakes();
@@ -1654,5 +1671,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 </script>
+<!-- پل بومی اپ اندروید (در مرورگر بی‌اثر است) -->
+<script src="native.js"></script>
 </body>
 </html>

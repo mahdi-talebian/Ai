@@ -219,31 +219,69 @@ python3 trace_video.py recitation.mp3 --png trace.png
 
 ---
 
-## موبایل و مسیر رسیدن به APK اندروید
+## موبایل و اپ اندروید (APK)
 
 رابط از ابتدا موبایل‌فرست نوشته شده (یک‌ستونه، دکمه‌های بزرگ، نوار تب چسبان،
 نمودار با مقیاس `devicePixelRatio`) و فونت محلی `Estedad` دارد.
 
-آماده‌های نصب به‌عنوان اپ (PWA):
+### 📱 APK آمادهٔ نصب
 
-- `web/manifest.webmanifest` — نام، آیکون‌ها (شامل maskable)، `display: standalone`
-- `web/sw.js` — کش پوستهٔ UI (HTML/فونت/آیکون) برای باز شدن آفلاین
-- `web/icons/*` — آیکون‌های ۱۹۲/۵۱۲/ماسکبل/اپل
+```
+release/radde-seda-1.0.0.apk
+```
 
-برای ساخت APK بعداً دو مسیر ساده:
+همهٔ قابلیت‌های نسخهٔ وب داخل اپ هم کار می‌کنند:
 
-1. **Bubblewrap / PWABuilder** — همین PWA را در یک Trusted Web Activity می‌پیچد.
-2. **Capacitor** — `web/` را داخل WebView می‌گذارد و با پلاگین‌هایی مثل
-   `@capacitor/filesystem` می‌توان ذخیرهٔ فایل‌ها را بومی کرد.
+| قابلیت | در اپ |
+|---|---|
+| انتخاب فایل از گوشی | انتخاب‌گر فایل اندروید |
+| تحلیل، نت‌ها، گستره، کیفیت | همان API سرور (CORS باز) |
+| ذخیرهٔ فایل اصلی / تصویر / گزارش / ویدیو | MediaStore → `Downloads/` و `Pictures/` با نام اصلی |
+| ذخیرهٔ ویدیو در گالری | دانلود بومی → `Movies/` با ایندکس رسانه |
+| اجرای زنده (لحظه‌ای/با ضبط) | میکروفون WebView + WebSocket |
+| ذخیرهٔ صدای هر ضبط | پل بومی، ارسال تکه‌تکه (فایل‌های چند مگابایتی) |
+| نمونهٔ آزمایشی | فایل داخل بستهٔ اپ |
 
-نکتهٔ مهم: در APK، صفحه از `https://localhost` سرو می‌شود و باید آدرس سرور
-تحلیل را بدهید. این کار از قبل پیش‌بینی شده است:
+ساخت و جزئیات در [`android/README.md`](android/README.md):
+
+```bash
+bash android/tools/fetch_toolchain.sh     # یک‌بار (java + aapt2 + d8 + apksigner)
+bash android/build_apk.sh                 # → release/radde-seda-<version>.apk
+```
+
+زنجیرهٔ ابزار بدون Gradle/Android Studio است (aapt2 + ecj + d8 + apksigner).
+
+اگر می‌خواهید APK از اول به سرور شما وصل باشد:
+
+```bash
+DEFAULT_API=https://your-server.example bash android/build_apk.sh
+```
+
+### آدرس سرور تحلیل در اپ
+
+صفحه در اپ از یک مبدأ امنِ داخلی (`https://appassets.local`) سرو می‌شود تا
+میکروفون/`localStorage`/WebSocket مثل یک سایت واقعی کار کنند؛ بنابراین آدرس
+سرور باید یک بار داده شود:
+
+```
+⚙ سرور  →  https://your-server.example
+```
+
+همین مقدار در `localStorage` (`api_base`) ذخیره می‌شود و همهٔ درخواست‌ها و
+WebSocketها از آن پیروی می‌کنند. در نسخهٔ وب هم می‌توان همان کار را کرد:
 
 ```
 ?api=https://your-server.example      # یا: localStorage.setItem('api_base', '...')
 ```
 
-همهٔ درخواست‌ها و WebSocketها (پیشرفت تحلیل و پیانوی زنده) از همان مقدار پیروی می‌کنند.
+> برای «اجرای زنده» آدرس **https** لازم است (WebSocket از صفحهٔ https به
+> `ws://` مسدود می‌شود).
+
+### PWA
+
+- `web/manifest.webmanifest` — نام، آیکون‌ها (شامل maskable)، `display: standalone`
+- `web/sw.js` — کش پوستهٔ UI (HTML/فونت/آیکون) برای باز شدن آفلاین
+- `web/native.js` — پل بومی؛ **در مرورگر بی‌اثر است**
 
 ---
 
