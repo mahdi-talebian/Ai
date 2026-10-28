@@ -4,7 +4,7 @@
 Gradle، بدون Android Studio و بدون Android SDK کامل**.
 
 ```
-release/radde-seda-1.2.0.apk      ← فایل آمادهٔ نصب (امضاشده، آفلاین + موازی)
+release/radde-seda-1.2.1.apk      ← فایل آمادهٔ نصب (امضاشده، آفلاین + موازی)
 ```
 
 > **از نسخهٔ ۱٫۱٫۰ به بعد اپ به هیچ سروری وصل نمی‌شود.** موتور تحلیل
@@ -16,7 +16,7 @@ release/radde-seda-1.2.0.apk      ← فایل آمادهٔ نصب (امضاشد
 
 ## نصب روی گوشی
 
-1. فایل `release/radde-seda-1.2.0.apk` را روی گوشی کپی کنید (کابل، تلگرام
+1. فایل `release/radde-seda-1.2.1.apk` را روی گوشی کپی کنید (کابل، تلگرام
    «Saved Messages»، Google Drive… هر چیزی).
 2. روی فایل بزنید؛ اگر پیام «نصب از منابع نامشخص» آمد، برای همین برنامه
    اجازه بدهید.
@@ -49,7 +49,7 @@ release/radde-seda-1.2.0.apk      ← فایل آمادهٔ نصب (امضاشد
 ### اگر عمداً نسخهٔ سروری می‌خواهید (اختیاری)
 
 ```bash
-DEFAULT_API=https://your-server.example APP_VERSION=1.2.0 bash android/build_apk.sh
+DEFAULT_API=https://your-server.example APP_VERSION=1.2.1 bash android/build_apk.sh
 ```
 
 این مقدار داخل `BuildConfig.DEFAULT_API` جای می‌گیرد. در نسخهٔ وب معادلش این است:
@@ -70,9 +70,11 @@ DEFAULT_API=https://your-server.example APP_VERSION=1.2.0 bash android/build_apk
 | آپلود + تحلیل + نتایج | موتور محلی داخل اپ (`web/engine.js`) — بدون شبکه |
 | ذخیرهٔ فایل اصلی / تصویر / گزارش JSON | MediaStore → `Downloads/` و `Pictures/` |
 | ساخت ویدیوی ردِّ صدا | دکمهٔ 🎬 — canvas + MediaRecorder داخل اپ (بدون ffmpeg) |
-| ذخیرهٔ ویدیو در گالری | بلاب محلی → `Movies/` + ایندکس رسانه (در گالری دیده می‌شود) |
+| ذخیرهٔ ویدیو در گالری | بلاب محلی → MediaStore `Movies/` (RELATIVE_PATH با اسلش پایانی، پسوند هم‌خوان با نوع فایل، نتیجه به صفحه برمی‌گردد) |
+| ذخیرهٔ تصویر تحلیل در گالری | بلاب PNG → MediaStore `Pictures/` |
 | ذخیرهٔ ویدیو در پوشهٔ دانلودها | DownloadManager → `Downloads/` با اعلان پیشرفت |
-| اجرای زنده — لحظه‌ای / با ضبط | میکروفون WebView (`onPermissionRequest`) + تحلیل محلی (بدون WebSocket)؛ در سکوت هیچ نتی ساخته نمی‌شود |
+| اجرا با ضبط (تنها حالت) | میکروفون WebView (`onPermissionRequest`) + تحلیل محلی (بدون WebSocket)؛ در سکوت هیچ نتی ساخته نمی‌شود |
+| حذف جلسه‌ها | 🗑 برای هر ضبط + «حذف همه»، هر دو با تأیید دو مرحله‌ای |
 | ذخیرهٔ صدای ضبط‌شده (WAV) و گزارش هر ضبط | پل بومی، ارسال تکه‌تکهٔ base64 (پایدار برای فایل‌های چند مگابایتی) |
 | نمونهٔ آزمایشی | همان فایل `demo_bayati.wav` از assets |
 

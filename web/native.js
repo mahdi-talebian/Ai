@@ -41,23 +41,91 @@
     return i >= 0 ? s.slice(i + 1) : s;
   }
 
+  function extOfMime(mime) {
+    var m = String(mime || '').toLowerCase();
+    if (m.indexOf('video/mp4') === 0) return '.mp4';
+    if (m.indexOf('video/webm') === 0) return '.webm';
+    if (m.indexOf('video/3gpp') === 0) return '.3gp';
+    if (m.indexOf('image/png') === 0) return '.png';
+    if (m.indexOf('image/jpeg') === 0) return '.jpg';
+    if (m.indexOf('image/webp') === 0) return '.webp';
+    if (m.indexOf('audio/wav') === 0 || m.indexOf('audio/wave') === 0) return '.wav';
+    if (m.indexOf('audio/mpeg') === 0) return '.mp3';
+    return '';
+  }
+
+  function mimeOfName(name) {
+    var n = String(name || '').toLowerCase();
+    if (/\.mp4$/.test(n)) return 'video/mp4';
+    if (/\.webm$/.test(n)) return 'video/webm';
+    if (/\.3gp$/.test(n)) return 'video/3gpp';
+    if (/\.png$/.test(n)) return 'image/png';
+    if (/\.jpe?g$/.test(n)) return 'image/jpeg';
+    if (/\.webp$/.test(n)) return 'image/webp';
+    if (/\.wav$/.test(n)) return 'audio/wav';
+    if (/\.mp3$/.test(n)) return 'audio/mpeg';
+    if (/\.json$/.test(n)) return 'application/json';
+    return '';
+  }
+
+  /* نوع و پسوند باید یکی باشند؛ وگرنه گالری فایل را نشان نمی‌دهد */
+  function fitName(name, mime) {
+    var n = safeName(name);
+    var m = String(mime || '').trim() || mimeOfName(n) || 'application/octet-stream';
+    var ext = extOfMime(m);
+    if (ext && !new RegExp(ext.replace('.', '\\.') + '$', 'i').test(n)) {
+      n = n.replace(/\.[a-z0-9]{1,5}$/i, '') + ext;
+    }
+    return { name: n, mime: m };
+  }
+
+  /* نتیجهٔ ذخیرهٔ بومی از سمت جاوا (window.__nativeSaveDone) */
+  var saveCallbacks = {};
+
+  window.__nativeSaveDone = function (token, ok, msg) {
+    var cb = saveCallbacks[token];
+    delete saveCallbacks[token];
+    var text = String(msg || (ok ? '✅ در گالری ذخیره شد' : 'ذخیره ناموفق بود'));
+    toast(text);
+    if (typeof cb === 'function') { try { cb(!!ok, text); } catch (e) {} }
+  };
+
   /* ذخیرهٔ یک Blob با ارسال تکه‌تکه (پایدار برای فایل‌های چند ده مگابایتی) */
-  function saveBlob(blob, name) {
+  function saveBlob(blob, name, target, done) {
     var token;
-    try {
-      token = NA.beginSave(safeName(name), blob.type || 'application/octet-stream');
-    } catch (e) {
-      toast('شروع ذخیره ناموفق بود: ' + e);
+    if (!blob || !blob.size) {
+      toast('فایل خالی است');
+      if (typeof done === 'function') done(false, 'فایل خالی است');
       return;
     }
-    if (!token) { toast('ذخیره ناموفق بود'); return; }
+    var fit = fitName(name, blob.type);
+    try {
+      token = (target === 'gallery' && typeof NA.beginSaveTo === 'function')
+        ? NA.beginSaveTo(fit.name, fit.mime, 'gallery')
+        : NA.beginSave(fit.name, fit.mime);
+    } catch (e) {
+      toast('شروع ذخیره ناموفق بود: ' + e);
+      if (typeof done === 'function') done(false, 'شروع ذخیره ناموفق بود: ' + e);
+      return;
+    }
+    if (!token) {
+      toast('ذخیره ناموفق بود');
+      if (typeof done === 'function') done(false, 'ذخیره ناموفق بود');
+      return;
+    }
+    if (typeof done === 'function') saveCallbacks[token] = done;
 
     var CHUNK = 384 * 1024;            // بایت خام در هر تکه
     var off = 0;
 
     function step() {
       if (off >= blob.size) {
-        try { NA.endSave(token); } catch (e) { toast('اتمام ذخیره ناموفق بود: ' + e); }
+        try { NA.endSave(token); }
+        catch (e) {
+          toast('اتمام ذخیره ناموفق بود: ' + e);
+          var cb = saveCallbacks[token]; delete saveCallbacks[token];
+          if (typeof cb === 'function') cb(false, 'اتمام ذخیره ناموفق بود: ' + e);
+        }
         return;
       }
       var part = blob.slice(off, Math.min(off + CHUNK, blob.size));
@@ -88,27 +156,42 @@
     catch (e) { return false; }
   }
 
-  function saveFromUrl(url, name) {
+  function saveFromUrl(url, name, target, done) {
     if (!url) return;
+    var isGallery = target === 'gallery';
     // فایل‌های خود اپ (بلاب محلی، data:، یا مسیر /api محلی) — بدون اینترنت
     if (/^(blob|data):/i.test(url) || isSameOrigin(url)) {
       try {
-        fetch(url).then(function (r) { return r.blob(); })
+        fetch(url).then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.blob();
+        })
           .then(function (b) {
-            if (!b) { toast('فایل پیدا نشد'); return; }
-            saveBlob(b, safeName(name) || 'output');
+            if (!b || !b.size) throw new Error('فایل خالی است');
+            saveBlob(b, safeName(name) || 'output', target, done);
           })
-          .catch(function (e) { toast('ذخیره ناموفق بود: ' + (e && e.message || e)); });
+          .catch(function (e) {
+            var m = 'ذخیره ناموفق بود: ' + (e && e.message || e);
+            toast(m);
+            if (typeof done === 'function') done(false, m);
+          });
       } catch (e) {
-        toast('ذخیره ناموفق بود: ' + (e && e.message || e));
+        var mm = 'ذخیره ناموفق بود: ' + (e && e.message || e);
+        toast(mm);
+        if (typeof done === 'function') done(false, mm);
       }
       return;
     }
     if (/^https?:/i.test(url)) {
       try {
-        NA.saveUrl(String(url), safeName(name));
+        if (isGallery && typeof NA.saveToGallery === 'function') NA.saveToGallery(String(url), safeName(name));
+        else NA.saveUrl(String(url), safeName(name));
         toast('در حال دانلود…');
-      } catch (e) { toast('دانلود ناموفق بود: ' + e); }
+        if (typeof done === 'function') done(true, 'در حال دانلود…');
+      } catch (e) {
+        toast('دانلود ناموفق بود: ' + e);
+        if (typeof done === 'function') done(false, 'دانلود ناموفق بود: ' + e);
+      }
       return;
     }
   }
@@ -125,13 +208,28 @@
      * ویدیوی آفلاین یک blob محلی است؛ آن را می‌خوانیم و می‌نویسیم
      * (نوع video/* ⇒ همان پوشهٔ Movies و در نتیجه در گالری دیده می‌شود).
      */
-    saveToGallery: function (url, name) {
+    saveToGallery: function (url, name, done) {
       if (/^(blob|data):/i.test(url) || isSameOrigin(url)) {
-        saveFromUrl(url, safeName(name));
+        saveFromUrl(url, safeName(name), 'gallery', done);
         return;
       }
-      try { NA.saveToGallery(String(url), safeName(name)); }
-      catch (e) { toast('ذخیره در گالری ناموفق بود: ' + e); }
+      try {
+        NA.saveToGallery(String(url), safeName(name));
+        if (typeof done === 'function') done(true, 'در حال دانلود…');
+      } catch (e) {
+        toast('ذخیره در گالری ناموفق بود: ' + e);
+        if (typeof done === 'function') done(false, 'ذخیره در گالری ناموفق بود: ' + e);
+      }
+    },
+
+    /** ذخیرهٔ مستقیم یک Blob در گالری (ویدیو → Movies، عکس → Pictures) */
+    saveBlobToGallery: function (blob, name, done) {
+      saveBlob(blob, safeName(name), 'gallery', done);
+    },
+
+    /** ذخیرهٔ Blob در پوشهٔ دانلودها */
+    saveBlob: function (blob, name, done) {
+      saveBlob(blob, safeName(name), 'downloads', done);
     }
   };
 
@@ -148,7 +246,14 @@
         abs.indexOf(location.origin + '/') === 0) {
       ev.preventDefault();
       ev.stopPropagation();
-      saveFromUrl(abs, a.getAttribute('download') || 'output');
+      var dlName = a.getAttribute('download') || 'output';
+      var hint = a.getAttribute('data-gallery') || '';
+      var mime = mimeOfName(dlName);
+      // ویدیو و عکس → گالری؛ بقیه → پوشهٔ دانلودها
+      var gallery = hint.indexOf('image') === 0 || hint.indexOf('video') === 0 ||
+                    mime.indexOf('video/') === 0 || mime.indexOf('image/') === 0 ||
+                    /\/video\b/.test(abs);
+      saveFromUrl(abs, dlName, gallery ? 'gallery' : 'downloads');
     }
   }, true);
 
