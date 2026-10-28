@@ -17,3 +17,7 @@ server/jobs/
 
 # کش منحنی‌های تحلیل (md5 → npz)
 server/cache/
+
+# آیکون‌های اپ (PWA/اندروید) و فونت‌های محلی
+!web/icons/*.png
+!web/fonts/*.woff2

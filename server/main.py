@@ -35,6 +35,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+# نوع MIME برای فایل‌های PWA (مانیفست و سرویس‌ورکر) — بعضی سیستم‌ها نمی‌شناسند
+import mimetypes
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+mimetypes.add_type("text/javascript", ".js")
+
 SERVER_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SERVER_DIR.parent
 PYTHON_DIR = PROJECT_DIR / "python"
@@ -198,13 +203,36 @@ def _cache_put(key, value):
 # مرحله ۱: آپلود
 # ============================================================================
 
+VIDEO_EXT = {".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".3gp", ".mpeg", ".mpg", ".ts"}
+
+
+def _write_original_name(job_dir: Path, name: str):
+    try:
+        (job_dir / "original_name.txt").write_text(name or "", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _read_original_name(job_dir: Path, fallback="input") -> str:
+    try:
+        p = job_dir / "original_name.txt"
+        if p.exists():
+            name = p.read_text(encoding="utf-8").strip()
+            if name:
+                return name
+    except Exception:
+        pass
+    return fallback
+
+
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     job_id = uuid.uuid4().hex[:12]
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    ext = Path(file.filename or "input.wav").suffix or ".wav"
+    original_name = Path(file.filename or "input.wav").name
+    ext = Path(original_name).suffix or ".wav"
     saved_path = job_dir / f"input{ext}"
     with open(saved_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
@@ -213,8 +241,11 @@ async def upload_file(file: UploadFile = File(...)):
     if size == 0:
         return JSONResponse({"error": "فایل خالی است"}, status_code=400)
 
-    return {"job_id": job_id, "filename": file.filename,
-            "saved_as": saved_path.name, "size_bytes": size}
+    _write_original_name(job_dir, original_name)
+
+    return {"job_id": job_id, "filename": original_name,
+            "saved_as": saved_path.name, "size_bytes": size,
+            "kind": "video" if ext.lower() in VIDEO_EXT else "audio"}
 
 
 # ============================================================================
@@ -278,8 +309,21 @@ async def start_analyze(job_id: str, denoise: bool = Form(False)):
                 _cache_put(cache_key, pub)
                 report = pub
 
-            report["meta"]["visualization_url"] = f"/api/file/{job_id}/range_trace.png"
-            report["meta"]["audio_url"] = f"/api/file/{job_id}/{Path(input_path).name}"
+            original_name = _read_original_name(job_dir, Path(input_path).name)
+            is_video = Path(input_path).suffix.lower() in VIDEO_EXT
+            report["meta"].update({
+                "original_name": original_name,
+                "original_kind": "video" if is_video else "audio",
+                "visualization_url": f"/api/file/{job_id}/range_trace.png",
+                "audio_url": f"/api/file/{job_id}/{Path(input_path).name}",
+                "original_url": f"/api/file/{job_id}/{Path(input_path).name}",
+                # لینک‌های «ذخیره روی دستگاه» (برای استفادهٔ آفلاین)
+                "downloads": {
+                    "original": f"/api/download/{job_id}/original",
+                    "image": f"/api/download/{job_id}/image",
+                    "report": f"/api/download/{job_id}/report",
+                },
+            })
 
             with open(job_dir / "report.json", "w", encoding="utf-8") as f:
                 json.dump(report, f, ensure_ascii=False, indent=1)
@@ -382,6 +426,47 @@ async def get_status(job_id: str):
     return {"id": job.id, "kind": job.kind, "status": job.status,
             "stage": job.stage, "progress": job.progress,
             "result": job.result, "error": job.error}
+
+
+@app.get("/api/download/{job_id}/{kind}")
+async def download_asset(job_id: str, kind: str):
+    """
+    ذخیرهٔ خروجی‌ها روی دستگاه کاربر (برنامه آفلاین):
+      original → همان فایل صوتی/ویدیویی که آپلود شده (با نام اصلی)
+      image    → تصویر تحلیل‌شده (PNG)
+      report   → گزارش کامل (JSON)
+      video    → ویدیوی «ردِّ صدا» (MP4) — اگر ساخته شده باشد
+    """
+    job_dir = JOBS_DIR / job_id
+    if not job_dir.exists():
+        return JSONResponse({"error": "job پیدا نشد"}, status_code=404)
+
+    original_name = _read_original_name(job_dir, "input")
+
+    if kind == "original":
+        files = [p for p in job_dir.glob("input.*") if p.is_file()]
+        if not files:
+            return JSONResponse({"error": "فایل ورودی پیدا نشد"}, status_code=404)
+        path = files[0]
+        name = original_name if Path(original_name).suffix else path.name
+    elif kind == "image":
+        path = job_dir / "range_trace.png"
+        name = "range-trace.png"
+    elif kind == "report":
+        path = job_dir / "report.json"
+        name = "range-report.json"
+    elif kind == "video":
+        path = job_dir / "range_trace.mp4"
+        name = "range-trace.mp4"
+    else:
+        return JSONResponse({"error": "نوع خروجی نامعتبر است"}, status_code=400)
+
+    if not path.exists():
+        return JSONResponse({"error": "این خروجی هنوز ساخته نشده است"}, status_code=404)
+
+    return FileResponse(str(path), filename=name,
+                        media_type="application/octet-stream" if kind == "report" else None,
+                        headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.get("/api/file/{job_id}/{filename}")

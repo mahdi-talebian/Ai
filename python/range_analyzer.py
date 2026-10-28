@@ -61,6 +61,43 @@ ROBUST_MIN_COUNT = 2            # و حداقل این تعداد بار
 # آماده‌سازی صدا
 # ============================================================================
 
+AUDIO_NATIVE_EXT = {".wav", ".flac"}
+
+
+def _ffmpeg_exe():
+    """ffmpeg را از PATH یا متغیر محیطی یا wheel رسمی imageio-ffmpeg پیدا می‌کند."""
+    import shutil as _sh
+    for cand in (os.environ.get("FFMPEG_BIN"), _sh.which("ffmpeg")):
+        if cand and os.path.exists(cand):
+            return cand
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+def _extract_audio_ffmpeg(path, out_path, sr=None):
+    """
+    صدا را از هر فایل ورودی (حتی ویدیو: mp4/mkv/mov/webm) با ffmpeg بیرون
+    می‌کشد — مونو، ۱۶ بیت. برای فایل‌هایی که soundfile/librosa مستقیم
+    نمی‌توانند بخوانند (ویدیو، برخی کانتینرهای خاص) لازم است.
+    """
+    import subprocess
+
+    ff = _ffmpeg_exe()
+    if not ff:
+        raise RuntimeError("ffmpeg پیدا نشد — برای خواندن این فایل لازم است.")
+    cmd = [ff, "-y", "-loglevel", "error", "-i", path, "-vn",
+           "-ac", "1"]
+    if sr:
+        cmd += ["-ar", str(int(sr))]
+    cmd += [out_path]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.PIPE)
+    return out_path
+
+
 def _prepare_wav(path, denoise=False, work_dir=None, keep_work_wav=False):
     """
     ورودی را به یک WAV مونو تبدیل می‌کند (در صورت نیاز denoise).
@@ -70,25 +107,41 @@ def _prepare_wav(path, denoise=False, work_dir=None, keep_work_wav=False):
     تحلیل‌شده (مثلاً نویزگرفته‌شده) برای mux ویدیو استفاده شود — بدون
     کپی اضافه. با keep_work_wav=True دست‌نخورده می‌ماند (پاک‌سازی نهایی با
     TTL پوشهٔ job انجام می‌شود).
+
+    ورودی می‌تواند **ویدیو** هم باشد (mp4/mkv/mov/webm): در این حالت صدا با
+    ffmpeg جدا و به WAV تبدیل می‌شود.
     """
-    if path.lower().endswith(".wav") and not denoise:
-        return path, None
-
-    import librosa
-    import soundfile as sf
-
-    y, sr = librosa.load(path, sr=None, mono=True)
-    if denoise:
-        try:
-            import noisereduce as nr
-            y = nr.reduce_noise(y=y, sr=sr, stationary=False)
-        except ImportError:
-            print("هشدار: noisereduce نصب نیست — کاهش نویز انجام نشد.")
-
+    ext = os.path.splitext(path)[1].lower()
     base = work_dir or os.path.dirname(os.path.abspath(path))
     tmp = os.path.join(base, "audio_for_video.wav")
-    sf.write(tmp, y, sr)
-    return tmp, (None if keep_work_wav else tmp)
+
+    if ext in AUDIO_NATIVE_EXT and not denoise:
+        return path, None
+
+    try:
+        import librosa
+        import soundfile as sf
+
+        try:
+            y, sr = librosa.load(path, sr=None, mono=True)
+        except Exception:
+            # ویدیو یا کانتینر ناشناخته → اول صدا را با ffmpeg بیرون بکش
+            _extract_audio_ffmpeg(path, tmp)
+            y, sr = librosa.load(tmp, sr=None, mono=True)
+
+        if denoise:
+            try:
+                import noisereduce as nr
+                y = nr.reduce_noise(y=y, sr=sr, stationary=False)
+            except ImportError:
+                print("هشدار: noisereduce نصب نیست — کاهش نویز انجام نشد.")
+
+        sf.write(tmp, y, sr)
+        return tmp, (None if keep_work_wav else tmp)
+    except Exception:
+        # آخرین تلاش: فقط ffmpeg (مثلاً اگر librosa در دسترس نبود)
+        _extract_audio_ffmpeg(path, tmp)
+        return tmp, (None if keep_work_wav else tmp)
 
 
 # ============================================================================
@@ -257,6 +310,12 @@ def analyze_range(path, denoise=False, make_plot=True, plot_dir=None,
         raw_lo = _fmt_note(low_raw) if low_raw else None
 
         span_cents = 1200.0 * np.log2(hi_hz / lo_hz) if lo_hz and hi_hz else 0.0
+        span_semitones = span_cents / 100.0
+        full_octaves = int(span_semitones // 12)
+        rest_semitones = round(span_semitones - full_octaves * 12, 2)
+        if rest_semitones >= 11.995:      # مثلاً ۱۲٫۰۰ نیم‌پرده = یک اکتاو کامل
+            full_octaves += 1
+            rest_semitones = 0.0
         center_hz = float(np.median(voiced)) if len(voiced) else 0.0
         center_note = _fmt_note({"f0_hz": center_hz}) if center_hz > 0 else None
 
@@ -322,9 +381,14 @@ def analyze_range(path, denoise=False, make_plot=True, plot_dir=None,
                 "raw_highest": raw_hi,
                 "raw_lowest": raw_lo,
                 "robust": robust_stats,
-                "span_semitones": round(span_cents / 100.0, 2),
-                "span_octaves": round(span_cents / 1200.0, 2),
+                # گستره به سه شکل: نیم‌پرده، اکتاو اعشاری و «اکتاو + باقی‌مانده»
+                "span_semitones": round(span_semitones, 2),
+                "span_octaves": round(span_semitones / 12.0, 2),
                 "span_cents": round(span_cents, 1),
+                "full_octaves": full_octaves,
+                "rest_semitones": rest_semitones,
+                "quarter_tones": round(span_semitones * 2, 1),
+                "of_octave_pct": round(100.0 * span_semitones / 12.0, 1),
                 "center": center_note,
             },
             "notes": notes,
@@ -389,7 +453,8 @@ def main():
     if lo:
         print(f"پایین‌ترین نت: {lo['note_name']}  ({lo['f0_hz']} Hz)")
     print(f"گسترهٔ صدا  : {r['span_semitones']} نیم‌پرده "
-          f"({r['span_octaves']} اکتاو)")
+          f"({r['span_octaves']} اکتاو = {r['full_octaves']} اکتاو کامل + "
+          f"{r['rest_semitones']} نیم‌پرده، {r.get('of_octave_pct')}٪ یک اکتاو)")
     print(f"مدت        : {pub['basic']['duration_sec']} ثانیه "
           f"| نت‌های تشخیص‌داده‌شده: {pub['basic']['num_notes_detected']}")
     print("─" * 52)
