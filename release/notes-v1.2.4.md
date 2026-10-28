@@ -33,3 +33,9 @@
 
 فایل: `release/radde-seda-1.2.4.apk` · versionName 1.2.4 · versionCode 7
 کاملاً آفلاین؛ هیچ داده‌ای به جایی فرستاده نمی‌شود.
+
+## دانلود مستقیم
+
+`https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.2.4/release/radde-seda-1.2.4.apk`
+
+اندازه ۱٬۷۴۲٬۹۴۸ بایت · md5 `0f14f82b798b7d14dbf57333ad7e93f9`
