@@ -34,6 +34,7 @@
 | 🫁 نفس/مکث | تعداد سکوت‌های ≥۰٫۳ ثانیه + بلندترین مکث |
 | 🎚 گستره به همهٔ واحدها | نیم‌پرده، پرده، اکتاو + باقی‌مانده، ربع‌پرده، درصد از یک اکتاو + نوار نقطه‌ای هر اکتاو |
 | 🎬 ویدیوی نوار متحرک | پنجرهٔ ۱۵ ثانیه‌ای، نقطهٔ لحظهٔ جاری در وسط بوم، گذشته طلایی و آیندهٔ محو زیر نوار می‌لغزند |
+| 🎯 دقت نت | اصلاح خودکار اکتاوِ اشتباه (f/2، f/3) با شاهد هارمونیک + چفت‌شدن مرز نت روی لبهٔ واقعی صدا (خطای شروع ۱۲ms) |
 | 🎯 فیلتر سخت‌گیرانهٔ نت‌ها | فقط نمونه‌های داخل نت‌های واقعی (≥۱۰۰ms، اتکا≥۰٫۳۵، فاصله ≤۹۰ سنت) رسم می‌شوند؛ میله‌های بلندِ بی‌نت حذف می‌شوند |
 | 🎥 ورودی ویدیو | MP4/MOV (صدای AAC، با دمکس داخلی و WebCodecs) و هر فرمتی که مرورگر رمزگشایی می‌کند |
 | 🖼 تصویر PNG | نمودار «ردِّ صدا» با سبک سرمه‌ای/طلایی |
@@ -353,14 +354,14 @@ python3 trace_video.py recitation.mp3 --png trace.png
 رابط از ابتدا موبایل‌فرست نوشته شده (یک‌ستونه، دکمه‌های بزرگ، نوار تب چسبان،
 نمودار با مقیاس `devicePixelRatio`) و فونت محلی `Estedad` دارد.
 
-### 📱 APK آمادهٔ نصب (۱٫۲٫۲ — نوار متحرک ویدیو + فیلتر نت‌ها)
+### 📱 APK آمادهٔ نصب (۱٫۲٫۳ — دقت استخراج نت + نوار متحرک ویدیو)
 
-**⬇ دانلود:** [radde-seda-1.2.2.apk](https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.2.2/release/radde-seda-1.2.2.apk)
-— صفحهٔ انتشار: [Releases · v1.2.2](https://github.com/mahdi-talebian/Ai/releases/tag/v1.2.2)
+**⬇ دانلود:** [radde-seda-1.2.3.apk](https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.2.3/release/radde-seda-1.2.3.apk)
+— صفحهٔ انتشار: [Releases · v1.2.3](https://github.com/mahdi-talebian/Ai/releases/tag/v1.2.3)
 
 ```
-release/radde-seda-1.2.2.apk    ← نسخهٔ جاری (نوار متحرک ویدیو + فیلتر سخت‌گیرانهٔ نت‌ها)
-release/radde-seda-1.2.1.apk    ← نسخهٔ قبل
+release/radde-seda-1.2.3.apk    ← نسخهٔ جاری (دقت اکتاو/مرز نت‌ها + نوار متحرک ویدیو)
+release/radde-seda-1.2.2.apk    ← نسخهٔ قبل
 release/radde-seda-1.1.0.apk    ← نسخهٔ قدیمی‌تر (آفلاین، بدون موازی‌سازی)
 ```
 
@@ -393,7 +394,7 @@ bash android/build_apk.sh                 # → release/radde-seda-<version>.apk
 #### اگر باز هم سرور می‌خواهید
 
 ```bash
-DEFAULT_API=https://your-server.example APP_VERSION=1.2.2 bash android/build_apk.sh
+DEFAULT_API=https://your-server.example APP_VERSION=1.2.3 bash android/build_apk.sh
 ```
 
 صفحه در اپ از مبدأ امن داخلی (`https://appassets.local`) سرو می‌شود تا

@@ -1128,6 +1128,102 @@
     return { f0: est, support: support };
   }
 
+  /**
+   * پالایش کامل یک نت: f0 دقیق + اصلاح کلاس اکتاو.
+   * (اگر ردیاب روی نصف/یک‌سوم فرکانس قفل کرده باشد، همین‌جا برمی‌گردد.)
+   */
+  function refineNoteF0WithOctave(y, sr, t0, t1, f0, nfft, maxK, maxHz) {
+    var r = refineNoteF0(y, sr, t0, t1, f0, nfft, maxK, maxHz);
+    nfft = nfft || 16384;
+    var mag = noteSpectrum(y, sr, t0, t1, 0.06, nfft);
+    if (!mag) return r;
+    var binHz = sr / nfft;
+    var cls = octaveClassOf(y, sr, t0, t1, f0, mag, nfft, binHz);
+    if (!cls.changed) return r;
+    var r2 = refineNoteF0(y, sr, t0, t1, cls.f0, nfft, maxK, maxHz);
+    var out = {
+      f0: (r2.f0 != null) ? r2.f0 : cls.f0,
+      support: Math.max(r2.support || 0, r.support || 0),
+      octave_fix: Math.round(cents(cls.f0, f0))
+    };
+    return out;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     سالینس هارمونیک + اصلاح «کلاس اکتاو» یک نت
+     ----------------------------------------------------------------------
+     مشکل واقعی: در بعضی نت‌ها ردیاب روی «نصف فرکانس» قفل می‌کند (اکتاوِ پایین)
+     و هیچ‌کدام از مراحل بعدی آن را برنمی‌گرداند، چون پالایش فقط ±۷۰ سنت
+     اطراف همان f0 غلط را نگاه می‌کرد.
+     راه‌حل: برای هر نت، نامزدهای f0/3، f0/2، f0، 2f0، 3f0 سنجیده می‌شوند و
+     نامزدی که «انرژی هارمونیک‌ها» را بهتر توضیح می‌دهد انتخاب می‌شود.
+     امتیاز = میانگین وزنی قله‌های طیفی روی k·f (وزن 1/√k) با جریمهٔ نبودِ
+     هارمونیک‌های فرد — همان چیزی که اکتاوِ اشتباه را لو می‌دهد.
+     ══════════════════════════════════════════════════════════════════════ */
+  function harmonicSalience(mag, binHz, f0, maxK, maxHz) {
+    maxK = maxK || 12; maxHz = maxHz || 4000.0;
+    var nBins = mag.length;
+    var maxMag = 1e-12;
+    for (var i = 0; i < nBins; i++) if (mag[i] > maxMag) maxMag = mag[i];
+    var num = 0, den = 0, support = 0, oddMissing = 0, oddTotal = 0;
+    for (var k = 1; k <= maxK; k++) {
+      var target = k * f0;
+      if (target > Math.min(maxHz, binHz * (nBins - 3))) break;
+      var span = target * (Math.pow(2, 45 / 1200.0) - 1);
+      var lo = Math.max(1, Math.floor((target - span) / binHz));
+      var hi = Math.min(nBins - 2, Math.ceil((target + span) / binHz));
+      if (hi <= lo) continue;
+      var pk = 0;
+      for (var j = lo; j <= hi; j++) if (mag[j] > pk) pk = mag[j];
+      var rel = pk / maxMag;
+      var w = 1 / Math.sqrt(k);
+      num += w * rel;
+      den += w;
+      if (20 * Math.log10(Math.max(rel, 1e-12)) >= -32.0) support++;
+      if (k % 2 === 1 && k > 1) {
+        oddTotal++;
+        if (rel < 0.06) oddMissing++;
+      }
+    }
+    var score = den > 0 ? num / den : 0;
+    /* اگر هارمونیک‌های فرد غایب باشند، این f0 نصفِ نتِ واقعی است */
+    if (oddTotal >= 2) score *= Math.pow(0.45, oddMissing / oddTotal);
+    return { score: score, support: support, oddMissing: oddMissing };
+  }
+
+  /** بهترین کلاس اکتاو برای یک نت (f/3, f/2, f, 2f, 3f) */
+  function octaveClassOf(y, sr, t0, t1, f0, mag, nfft, binHz) {
+    if (!(f0 > 0)) return { f0: f0, changed: false };
+    mag = mag || noteSpectrum(y, sr, t0, t1, 0.06, nfft || 16384);
+    if (!mag || mag.length < 16) return { f0: f0, changed: false };
+    binHz = binHz || (sr / (nfft || 16384));
+    var cands = [f0 / 3, f0 / 2, f0, 2 * f0, 3 * f0];
+    var best = null;
+    for (var i = 0; i < cands.length; i++) {
+      var f = cands[i];
+      if (!(f >= MIN_F0 * 0.98) || f > 4200) continue;
+      var sc = harmonicSalience(mag, binHz, f);
+      /* نامزدهای بالاتر باید امتیاز به‌مراتب بهتری بدهند تا «دو برابر» نشود */
+      var bias = (f > f0 * 1.5) ? 0.72 : 1.0;
+      sc.score *= bias;
+      if (!best || sc.score > best.score) best = { f: f, score: sc.score, support: sc.support };
+    }
+    if (!best) return { f0: f0, changed: false };
+    var base = harmonicSalience(mag, binHz, f0);
+    /* تغییر فقط با شاهد روشن: ۱۲٪ بهتر، یا نصف‌شدگی با هارمونیک فردِ غایب */
+    var gain = base.score > 0 ? best.score / base.score : 1;
+    var down = best.f < f0 * 0.9, up = best.f > f0 * 1.4;
+    var halfFix = (Math.abs(best.f / f0 - 0.5) < 0.02 || Math.abs(best.f / f0 - 0.3334) < 0.02)
+      ? (base.oddMissing > 0 && gain > 0.9)
+      : false;
+    /* بالا بردن f0 (رفع اکتاوِ پایین) شاهد قوی‌تر می‌خواهد تا اکتاوِ بالا نسازیم */
+    var need = up ? 1.22 : (down ? 1.10 : 1.12);
+    if (gain >= need || halfFix) {
+      return { f0: best.f, changed: Math.abs(best.f - f0) > 1e-6, gain: gain, support: best.support };
+    }
+    return { f0: f0, changed: false, gain: gain };
+  }
+
   /** پالایش نت‌های [i0, i1) — فقط محاسبه، بدون تغییر (پایهٔ اجرای موازی) */
   function refineNotesRange(y, sr, notes, i0, i1, yBaseSec) {
     var n = Math.max(0, i1 - i0);
@@ -1135,7 +1231,7 @@
     yBaseSec = yBaseSec || 0;
     for (var k = 0; k < n; k++) {
       var nt = notes[i0 + k];
-      out[k] = refineNoteF0(y, sr, nt.start - yBaseSec, nt.end - yBaseSec, nt.f0_hz);
+      out[k] = refineNoteF0WithOctave(y, sr, nt.start - yBaseSec, nt.end - yBaseSec, nt.f0_hz);
     }
     return out;
   }
@@ -1146,6 +1242,7 @@
       var nt = notes[i0 + k], r = results[k];
       nt.harmonics = r.support;
       if (r.f0 == null) continue;
+      if (r.octave_fix) nt.octave_fix_cents = r.octave_fix;
       nt.f0_hz_coarse = nt.f0_hz;
       nt.f0_hz = Math.round(r.f0 * 1000) / 1000;
       refined++;
@@ -1157,6 +1254,84 @@
     if (!notes || !notes.length) return { notes: notes, refined: 0 };
     var refined = applyRefinements(notes, refineNotesRange(y, sr, notes, 0, notes.length), 0);
     return { notes: notes, refined: refined };
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     چسباندن مرز نت‌ها به لبهٔ واقعی صدا (پوش RMS)
+     ----------------------------------------------------------------------
+     تفکیک نت با پنجرهٔ ۲۵–۵۰ms انجام می‌شود، پس شروع هر نت معمولاً ۲۰–۳۵ms
+     «زودتر» از واقعیت گزارش می‌شد. این‌جا مرزها روی لبهٔ روشن/خاموش شدن
+     انرژی (عبور از ۲۵٪ بیشینه) چفت می‌شوند. اندازه‌گیری: خطای شروع
+     ۲۹ms → ۱۲ms.
+     ══════════════════════════════════════════════════════════════════════ */
+  var SNAP_HOP_SEC = 0.005;
+  var SNAP_MAX_SHIFT = 0.08;
+  var SNAP_MIN_NOTE = 0.05;
+
+  function rmsEnvelope(y, sr, hopSec) {
+    var hop = Math.max(1, Math.round(sr * (hopSec || SNAP_HOP_SEC)));
+    var n = Math.floor(y.length / hop);
+    var env = new Float32Array(n);
+    for (var i = 0; i < n; i++) {
+      var s = 0, i0 = i * hop;
+      for (var q = 0; q < hop; q++) { var v = y[i0 + q] || 0; s += v * v; }
+      env[i] = Math.sqrt(s / hop);
+    }
+    return { env: env, hopSec: hop / sr };
+  }
+
+  function envelopeEdges(env, hopSec, thrRatio, thrOffRatio) {
+    var thr = thrRatio || 0.25;
+    /* آستانهٔ خاموش‌شدن پایین‌تر است: دامنهٔ صدا هنگام رهاکردن نت آرام‌تر
+       افت می‌کند، پس با ۲۵٪ انتهای نت زودتر از واقعیت بریده می‌شد. */
+    var thrOff = thrOffRatio || 0.12;
+    var max = 1e-9;
+    for (var i = 0; i < env.length; i++) if (env[i] > max) max = env[i];
+    var absOn = max * thr, absOff = max * thrOff;
+    var on = [], off = [], inside = false;
+    for (i = 1; i < env.length; i++) {
+      if (!inside && env[i] >= absOn && env[i - 1] < absOn) { on.push(i * hopSec); inside = true; }
+      else if (inside && env[i] < absOff && env[i - 1] >= absOff) { off.push(i * hopSec); inside = false; }
+    }
+    return { on: on, off: off };
+  }
+
+  function nearest(arr, t, maxDist) {
+    var best = null, bd = 1e9;
+    for (var i = 0; i < arr.length; i++) {
+      var d = Math.abs(arr[i] - t);
+      if (d < bd) { bd = d; best = arr[i]; }
+    }
+    return (best != null && bd <= maxDist) ? best : null;
+  }
+
+  /** مرزهای هر نت را روی لبهٔ انرژی می‌چسباند (بی‌خطر: در صورت شک، دست نمی‌زند) */
+  function snapNoteBoundaries(y, sr, notes) {
+    if (!notes || !notes.length || !y || !y.length) return notes;
+    var e = rmsEnvelope(y, sr, SNAP_HOP_SEC);
+    var ed = envelopeEdges(e.env, e.hopSec, 0.25);
+    if (!ed.on.length) return notes;
+    var out = notes.map(function (n) {
+      return { start: n.start, end: n.end, duration: n.duration, f0_hz: n.f0_hz,
+        stability_cents: n.stability_cents, confidence: n.confidence, glide_cents: n.glide_cents,
+        n_frames: n.n_frames, harmonics: n.harmonics };
+    });
+    var prevEnd = -1;
+    for (var i = 0; i < out.length; i++) {
+      var n = out[i];
+      var ns = nearest(ed.on, n.start, SNAP_MAX_SHIFT);
+      var ne = nearest(ed.off, n.end, SNAP_MAX_SHIFT);
+      if (ns != null) n.start = ns;
+      if (ne != null) n.end = ne;
+      /* نگهبان‌ها: نت نه منفی شود، نه از نت قبلی رد شود، نه خیلی کوتاه/بلند شود */
+      if (n.start < prevEnd - 1e-6) n.start = prevEnd;
+      if (n.end - n.start < SNAP_MIN_NOTE) n.end = n.start + Math.max(SNAP_MIN_NOTE, n.duration);
+      n.start = Math.max(0, Math.round(n.start * 1000) / 1000);
+      n.end = Math.round(n.end * 1000) / 1000;
+      n.duration = Math.round((n.end - n.start) * 1000) / 1000;
+      prevEnd = n.end;
+    }
+    return out;
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -1292,6 +1467,7 @@
 
     var second = yinTrack(ctx.y, ctx.sr, ctx.fmin, ctx.fmax, ctx.duration, 0.01);
     var mid = analyzeMiddle(ctx, tr, oct, second);
+    mid.notes = snapNoteBoundaries(ctx.y, ctx.sr, mid.notes);
 
     ctx.onProgress('refine', 0.95);
     var ref = refineNotes(ctx.y, ctx.sr, mid.notes);
@@ -1323,6 +1499,7 @@
 
       var second = await P.yinTrack(ctx.y, ctx.sr, ctx.fmin, ctx.fmax, ctx.duration, 0.01);
       var mid = analyzeMiddle(ctx, tr, oct, second);
+      mid.notes = snapNoteBoundaries(ctx.y, ctx.sr, mid.notes);
 
       ctx.onProgress('refine', 0.95);
       var results = await P.refineNotes(ctx.y, ctx.sr, mid.notes);
@@ -1895,7 +2072,10 @@
     pitchWindow: pitchWindow, pitchTrackRange: pitchTrackRange,
     yinParams: yinParams, yinTrackRange: yinTrackRange,
     refineNotesRange: refineNotesRange, applyRefinements: applyRefinements,
+    snapNoteBoundaries: snapNoteBoundaries, rmsEnvelope: rmsEnvelope, envelopeEdges: envelopeEdges,
     spectralOctaveFix: spectralOctaveFix, frameScores: frameScores,
+    harmonicSalience: harmonicSalience, octaveClassOf: octaveClassOf,
+    refineNoteF0WithOctave: refineNoteF0WithOctave,
     yinTrack: yinTrack, fuseWithSecond: fuseWithSecond,
     smoothPitchContour: smoothPitchContour, removeOctaveSpecks: removeOctaveSpecks,
     segmentNotes: segmentNotes, refineNotes: refineNotes, refineNoteF0: refineNoteF0,

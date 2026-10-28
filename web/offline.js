@@ -621,6 +621,45 @@
     g.closePath();
   };
 
+  /* بلوک هر نت با نامش (پشت منحنی) — نمایش دقیق مرزها و نام نت */
+  TraceRenderer.prototype.drawNoteBlocks = function (g, view, X) {
+    var self = this;
+    (this.notes || []).forEach(function (n) {
+      var f0 = n.f0_hz;
+      if (!f0 || f0 <= 0) return;
+      var t0 = n.start || 0, t1 = t0 + (n.duration || 0);
+      if (t1 < view.t0 || t0 > view.t1) return;
+      var x0 = Math.max(LAYOUT.ML, X(t0));
+      var x1 = Math.min(self.W - LAYOUT.MR, X(t1));
+      var w = x1 - x0;
+      if (w < 2.5) return;
+      var y = self.yOfMidi(CORE.hzToMidi(f0));
+      var h = 16;
+
+      /* نوار نت (نقش پیانو-رول): یک نگاه = یک نت */
+      g.fillStyle = 'rgba(240,214,138,0.085)';
+      g.fillRect(x0, y - h / 2, w, h);
+      g.strokeStyle = 'rgba(240,214,138,0.30)';
+      g.lineWidth = 1;
+      g.beginPath(); g.moveTo(x0, y - h / 2); g.lineTo(x1, y - h / 2); g.stroke();
+      g.beginPath(); g.moveTo(x0, y + h / 2); g.lineTo(x1, y + h / 2); g.stroke();
+
+      /* مرزهای دقیق نت: تیک کوتاه، نه خط سراسری (تا شلوغ نشود) */
+      g.strokeStyle = 'rgba(240,214,138,0.55)';
+      g.lineWidth = 1.4;
+      g.beginPath(); g.moveTo(x0, y - h / 2 - 5); g.lineTo(x0, y + h / 2 + 5); g.stroke();
+      g.beginPath(); g.moveTo(x1, y - h / 2 - 5); g.lineTo(x1, y + h / 2 + 5); g.stroke();
+
+      /* نام و مدت نت، فقط اگر جا دارد */
+      if (w > 52) {
+        var nm = n.note_name || CORE.midiToName(CORE.hzToMidi(f0));
+        g.font = '12px system-ui, sans-serif';
+        g.fillStyle = 'rgba(255,238,190,0.62)';
+        g.fillText(nm, x0 + 5, y - h / 2 - 7);
+      }
+    });
+  };
+
   TraceRenderer.prototype.currentMidi = function (t) {
     var times = this.times, mids = this.midi;
     if (!times.length) return null;
@@ -697,6 +736,8 @@
     if (!this._bg) this._bg = this.buildBackground();
     g.clearRect(0, 0, W, H);
     g.drawImage(this._bg, 0, 0);
+    /* لایهٔ «نت‌ها»: بلوک + نام + مرز (نمای دقیق) */
+    this.drawNoteBlocks(g, view, X);
 
     /* در حالت نوار لغزان، هر چیزی که به x وابسته است همین‌جا رسم می‌شود */
     g.save();
@@ -793,7 +834,11 @@
 
     // برچسب‌ها
     var cur = (mNow == null) ? '—'
-      : CORE.midiToName(mNow) + '   ' + (CORE.midiToHz(mNow)).toFixed(1) + ' Hz';
+      : CORE.midiToName(mNow) + '   ' + (CORE.midiToHz(mNow)).toFixed(1) + ' Hz'
+        + (function () {
+            var c = 100 * (mNow - Math.round(mNow));
+            return '   (' + (c >= 0 ? '+' : '') + c.toFixed(0) + '¢)';
+          })();
     g.font = 'bold 24px system-ui, sans-serif';
     g.fillStyle = 'rgba(238,234,214,0.92)';
     g.textAlign = 'left';
