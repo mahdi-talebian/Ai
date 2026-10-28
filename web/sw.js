@@ -8,11 +8,13 @@
      ذخیرهٔ آن‌ها با دکمهٔ «ذخیره» در خود اپ انجام می‌شود.
    • درخواست‌های API/WebSocket هرگز کش نمی‌شوند (تحلیل همیشه تازه است).
    ========================================================================== */
-const CACHE = 'radde-seda-shell-v7';
+const CACHE = 'radde-seda-shell-v8';
 const SHELL = [
   './',
   './index.html',
   './engine.js',
+  './parallel.js',
+  './worker.js',
   './offline.js',
   './manifest.webmanifest',
   './fonts/Estedad-Variable.woff2',

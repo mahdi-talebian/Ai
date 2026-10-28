@@ -285,6 +285,37 @@ function printResults() {
     !!(liveMsg && liveMsg.session && (liveMsg.session.highest || liveMsg.session.span_semitones != null)),
     liveMsg && liveMsg.session ? JSON.stringify(liveMsg.session.highest) : '-');
 
+  // ── اجرای زنده در سکوت: هیچ نتی نباید ساخته شود ──
+  const silentRun = await new Promise((resolve) => {
+    const ws = new w.WebSocket(w.eval("wsUrl('/ws/live-pitch')"));
+    const sr = 48000, seen = [];
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ sample_rate: sr, reset: true }));
+      for (let round = 0; round < 8; round++) {
+        const n = Math.round(sr * 0.12);
+        const pkt = new Uint8Array(n * 4 + 1);
+        pkt[0] = 0;                              // همهٔ نمونه‌ها صفر ⇒ سکوت
+        ws.send(pkt);
+      }
+      setTimeout(() => { try { ws.close(); } catch (e) { } resolve(seen); }, 300);
+    };
+    ws.onmessage = (ev) => {
+      try { seen.push(JSON.parse(ev.data)); } catch (e) { }
+    };
+    setTimeout(() => resolve(seen), 4000);
+  });
+  const notesInSilence = silentRun.filter(m => m.note);
+  check('اجرای زنده در سکوت هیچ نتی نمی‌سازد', notesInSilence.length === 0,
+    'پیام‌ها=' + silentRun.length + ' نت=' + notesInSilence.length);
+  check('اجرای زنده در سکوت «ساکت» گزارش می‌کند',
+    silentRun.length > 0 && silentRun[silentRun.length - 1].silent === true);
+  check('رکورد جلسه در سکوت خالی می‌ماند',
+    silentRun.length > 0 && !silentRun[silentRun.length - 1].session.highest);
+
+  // ── وضعیت موازی‌سازی در صفحه ──
+  const par = w.eval('JSON.stringify(LocalOffline.parallel())');
+  check('وضعیت موازی‌سازی در صفحه گزارش می‌شود', !!par && /available/.test(par), par);
+
   // هیچ درخواست بیرونی به سرور نرفته باشد
   const external = netCalls.filter(u => /^https?:/.test(u) && !/appassets\.local/.test(u));
   check('هیچ درخواست اینترنتی نرفته', external.length === 0, external.join(', '));

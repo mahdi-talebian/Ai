@@ -490,6 +490,7 @@
 
 <!-- موتور آفلاین: همهٔ تحلیل روی همین دستگاه، بدون هیچ سروری -->
 <script src="engine.js"></script>
+<script src="parallel.js"></script>
 <script src="offline.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════
@@ -593,13 +594,26 @@ function setFile(f) {
    پیشرفت
    ═══════════════════════════════════════════════════════════════════ */
 const STAGE_FA = {
-  loading: 'بارگذاری فایل', pitch: 'استخراج پردهٔ صدا', clean: 'پاک‌سازی و هموارسازی',
-  notes: 'تفکیک نت‌ها', plot: 'ساخت تصویر', video: 'رندر ویدیو',
+  loading: 'بارگذاری فایل', preparing: 'آماده‌سازی صدا', pitch: 'استخراج پردهٔ صدا',
+  octave: 'اصلاح اکتاو', pyin: 'هم‌سنجی دو موتور', clean: 'پاک‌سازی و هموارسازی',
+  notes: 'تفکیک نت‌ها', refine: 'پالایش هر نت', plot: 'ساخت تصویر', video: 'رندر ویدیو',
   analyzing: 'تحلیل ضبط', uploading: 'ارسال ضبط', done: 'پایان'
 };
+
+/* نشان موازی‌سازی: چند هسته در حال کار است */
+function parallelTag() {
+  try {
+    const p = LocalOffline && LocalOffline.parallel ? LocalOffline.parallel() : null;
+    if (p && p.available) return ' ⚡' + faN(p.cores) + ' هسته';
+  } catch (e) {}
+  return '';
+}
+
 function setProgress(prefix, stage, frac) {
   $(prefix + 'Wrap').style.display = 'block';
-  $(prefix + 'Label').textContent = (STAGE_FA[stage] || stage || 'در حال پردازش') + '…';
+  const heavy = (stage === 'pitch' || stage === 'pyin' || stage === 'refine');
+  $(prefix + 'Label').textContent =
+    (STAGE_FA[stage] || stage || 'در حال پردازش') + (heavy ? parallelTag() : '') + '…';
   const pct = Math.round(frac * 100);
   $(prefix + 'Fill').style.width = pct + '%';
   $(prefix + 'Pct').textContent = faN(pct) + '٪';
@@ -1285,7 +1299,10 @@ const LIVE = {
   mode: 'live',               // live | rec
   ws: null, ctx: null, stream: null, node: null, recNode: null, on: false,
   midi: null, hi: null, lo: null, points: [], startAt: 0,
-  chunks: [], recStart: 0, recTimer: null, takes: []
+  chunks: [], recStart: 0, recTimer: null, takes: [],
+  /* نمایش نرم: target از موتور می‌آید، shown با میان‌یابی نرم به آن می‌رسد */
+  target: null, shown: null, dotAlpha: 0, silent: true,
+  raf: null, lastTs: 0, lastDraw: 0, lastLabel: ''
 };
 
 const MODE_HINT = {
@@ -1325,6 +1342,7 @@ checkIframe();
 
 function resetSession() {
   LIVE.hi = null; LIVE.lo = null; LIVE.points = []; LIVE.midi = null;
+  LIVE.target = null; LIVE.shown = null; LIVE.dotAlpha = 0; LIVE.lastLabel = '';
   $('liveHi').textContent = '—'; $('liveLo').textContent = '—';
   $('liveSpan').textContent = '—'; $('liveDur').textContent = '—';
   $('liveNote').textContent = '—';
@@ -1376,6 +1394,8 @@ $('micBtn').onclick = async () => {
   LIVE.ws.onopen = () => {
     LIVE.ws.send(JSON.stringify({ sample_rate: LIVE.ctx.sampleRate, reset: true }));
     LIVE.on = true;
+    LIVE.target = null; LIVE.shown = null; LIVE.dotAlpha = 0; LIVE.lastLabel = '';
+    startLiveLoop();
     LIVE.startAt = performance.now() / 1000;
     LIVE.recStart = Date.now();
     $('micBtn').classList.add('on');
@@ -1391,20 +1411,33 @@ $('micBtn').onclick = async () => {
   LIVE.ws.onmessage = ev => {
     try {
       const d = JSON.parse(ev.data);
+      LIVE.silent = !!d.silent;
+
       if (d.note) {
-        LIVE.midi = d.note.midi_exact;
+        LIVE.target = d.note.midi_exact;
         LIVE.points.push({ t: performance.now() / 1000, m: d.note.midi_exact });
         if (LIVE.points.length > 1600) LIVE.points.shift();
-        $('liveNote').textContent = d.note.note_name;
+        /* متن فقط وقتی عوض شود که واقعاً عوض شده (بدون لرزش و چیدمان مجدد) */
+        if (d.note.note_name !== LIVE.lastLabel) {
+          LIVE.lastLabel = d.note.note_name;
+          $('liveNote').textContent = d.note.note_name;
+        }
         $('liveSub').textContent =
           `${d.note.f0_hz} Hz · ${d.note.cents_offset > 0 ? '+' : ''}${d.note.cents_offset} سنت`;
+      } else if (d.silent) {
+        LIVE.target = null;
+        LIVE.lastLabel = '';
+        $('liveNote').textContent = '—';
+        $('liveSub').textContent = '🔇 سکوت — صدایی شنیده نمی‌شود';
       }
+      /* بستهٔ «نگه‌داشت» بین دو نت عمداً نمایش را تغییر نمی‌دهد */
+
       const s = d.session || {};
       if (s.highest) { LIVE.hi = s.highest; $('liveHi').textContent = s.highest.note_name; }
       if (s.lowest) { LIVE.lo = s.lowest; $('liveLo').textContent = s.lowest.note_name; }
       if (s.span_semitones != null) $('liveSpan').textContent = faN(s.span_semitones) + ' نیم‌پرده';
       $('liveDur').textContent = fmtClock((performance.now() / 1000) - LIVE.startAt);
-      drawLive();
+      /* رسم در حلقهٔ rAF انجام می‌شود، نه در هر پیام */
     } catch (e) {}
   };
   LIVE.ws.onclose = () => { if (LIVE.on) stopLive(); };
@@ -1429,6 +1462,8 @@ $('micBtn').onclick = async () => {
 };
 
 function stopLive() {
+  stopLiveLoop();
+  LIVE.target = null; LIVE.shown = null; LIVE.dotAlpha = 0;
   const wasRec = LIVE.mode === 'rec' && LIVE.chunks.length > 0;
   const sampleRate = LIVE.ctx ? LIVE.ctx.sampleRate : 0;
   const chunks = LIVE.chunks.slice();
@@ -1577,6 +1612,47 @@ function openTake(take) {
   switchTab('Upload');
 }
 
+/* ═══════════ حلقهٔ نمایش نرم زنده (rAF + میان‌یابی) ═══════════
+   پیام‌ها هر ~۱۲۰ms می‌رسند، ولی صفحه ۶۰ بار در ثانیه رسم می‌شود؛ 따라서
+   نقطه روی خطوط نت «می‌لغزد» نه اینکه بپرد. متن‌ها فقط با تغییر واقعی نت
+   عوض می‌شوند تا چیدمان صفحه هر ۱۲۰ms بازچینی نشود. */
+function startLiveLoop() {
+  if (LIVE.raf) return;
+  LIVE.lastTs = 0;
+  LIVE.raf = requestAnimationFrame(liveFrame);
+}
+
+function stopLiveLoop() {
+  if (LIVE.raf) { try { cancelAnimationFrame(LIVE.raf); } catch (e) {} LIVE.raf = null; }
+  LIVE.lastTs = 0;
+}
+
+function liveFrame(ts) {
+  if (!LIVE.on) { LIVE.raf = null; return; }
+  LIVE.raf = requestAnimationFrame(liveFrame);
+
+  const dt = LIVE.lastTs ? Math.min(0.06, (ts - LIVE.lastTs) / 1000) : 0.016;
+  LIVE.lastTs = ts;
+
+  /* نزدیک شدن نرم به نت هدف (بدون پرش، بدون تأخیر محسوس) */
+  if (LIVE.target != null) {
+    if (LIVE.shown == null || Math.abs(LIVE.target - LIVE.shown) > 6) {
+      LIVE.shown = LIVE.target;               // پرش بزرگ = نت جدید، نه لغزش
+    } else {
+      const k = 1 - Math.exp(-dt / 0.055);
+      LIVE.shown += (LIVE.target - LIVE.shown) * k;
+      if (Math.abs(LIVE.target - LIVE.shown) < 0.004) LIVE.shown = LIVE.target;
+    }
+    LIVE.dotAlpha = Math.min(1, LIVE.dotAlpha + dt / 0.10);
+  } else {
+    LIVE.dotAlpha = Math.max(0, LIVE.dotAlpha - dt / 0.18);
+    if (LIVE.dotAlpha <= 0) LIVE.shown = null;
+  }
+
+  /* حداکثر ~۳۰ رسم در ثانیه: نرم برای چشم، سبک برای باتری */
+  if (ts - LIVE.lastDraw >= 32) { LIVE.lastDraw = ts; drawLive(); }
+}
+
 /* ═══════════ بوم زنده (مختصات CSS + DPR) ═══════════ */
 function drawLive() {
   const cv = $('liveCanvas');
@@ -1597,8 +1673,9 @@ function drawLive() {
   g.strokeStyle = 'rgba(120,152,205,.28)'; g.lineWidth = 1.4;
   roundRect(g, 3, 3, W - 6, H - 6, 14); g.stroke();
 
-  let center = LIVE.midi;
-  if (center == null) center = LIVE.hi ? LIVE.hi.midi : 60;
+  let center = (LIVE.shown != null) ? LIVE.shown
+             : (LIVE.target != null) ? LIVE.target
+             : (LIVE.hi ? LIVE.hi.midi : 60);
   const loLim = Math.round(center) - 12;
   const hiLim = Math.round(center) + 12;
   const yOf = m => MT + (1 - (m - loLim) / (hiLim - loLim)) * (H - MT - MB);
@@ -1644,9 +1721,11 @@ function drawLive() {
     g.fillText(`${tag} ${rec.note_name}`, tx, y - 4);
   });
 
-  // نقطهٔ جاری
-  if (LIVE.midi != null) {
-    const y = yOf(LIVE.midi);
+  // نقطهٔ جاری (با محو شدن نرم وقتی صدا قطع می‌شود)
+  if (LIVE.shown != null && LIVE.dotAlpha > 0.01) {
+    g.save();
+    g.globalAlpha = LIVE.dotAlpha;
+    const y = yOf(LIVE.shown);
     const x = W / 2;
     const R = phone ? 28 : 24;
     const glow = g.createRadialGradient(x, y, 0, x, y, R);
@@ -1657,6 +1736,7 @@ function drawLive() {
     g.beginPath(); g.arc(x, y, R, 0, Math.PI * 2); g.fill();
     g.fillStyle = '#fffaf0';
     g.beginPath(); g.arc(x, y, phone ? 5.5 : 4.6, 0, Math.PI * 2); g.fill();
+    g.restore();
   }
 }
 

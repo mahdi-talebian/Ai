@@ -863,7 +863,8 @@
 
       job.stage = 'preparing'; job.progress = 0.02; jobUpdate(job);
 
-      var res = CORE.analyzeChannels(decoded.channels, decoded.sr, {
+      // موازی (Web Worker) — اگر در دسترس نباشد، خودش به مسیر سریال برمی‌گردد
+      var res = await CORE.analyzeChannelsAsync(decoded.channels, decoded.sr, {
         denoise: !!denoise,
         onProgress: function (stage, frac) {
           job.stage = stage;
@@ -1137,17 +1138,19 @@
     arr.forEach(function (fn) { try { fn(ev); } catch (e) { } });
   };
 
-  /* ── اجرای زنده: همان پروتکل سرور، ولی محلی ─────────────────────────── */
+  /* ── اجرای زنده: همان پروتکل سرور، ولی محلی و ضدپرش ───────────────────
+     تصمیم‌گیری در CORE.LiveTracker است (engine.js): دروازهٔ بلندی تطبیقی،
+     میانهٔ زمانی، ردِ پرش اکتاو و پایداری سه‌بسته‌ای. این‌جا فقط بستهٔ صوتی
+     به آن داده می‌شود و پیام پروتکل ساخته می‌شود.
+     ───────────────────────────────────────────────────────────────────── */
   function LiveSession(ws) {
     this.ws = ws;
     this.sr = 16000;
-    this.smooth = null;
-    this.stableMidi = null;
-    this.stableCount = 0;
-    this.lo = null;
-    this.hi = null;
-    this.STABLE_CHUNKS = 3;
+    this.chunkSec = 0.12;
+    this.tracker = new CORE.LiveTracker({ chunkSec: this.chunkSec });
     this.dead = false;
+    this.frames = 0;
+    this.voicedFrames = 0;
   }
 
   LiveSession.prototype.stop = function () { this.dead = true; };
@@ -1158,10 +1161,15 @@
       try {
         var cfg = JSON.parse(data);
         if (cfg.sample_rate) this.sr = cfg.sample_rate;
+        if (cfg.chunk_sec) {
+          this.chunkSec = cfg.chunk_sec;
+          this.tracker.chunkSec = cfg.chunk_sec;
+        }
         if (cfg.reset) {
-          this.smooth = null; this.stableMidi = null; this.stableCount = 0;
-          this.lo = this.hi = null;
-          this.ws._sendMsg(JSON.stringify({ reset: true }));
+          this.tracker.reset();
+          this.frames = 0;
+          this.voicedFrames = 0;
+          this.ws._sendMsg(JSON.stringify({ reset: true, silent: true, note: null }));
         }
       } catch (e) { }
       return;
@@ -1181,49 +1189,19 @@
       for (var i = 0; i < iv.length; i++) samples[i] = iv[i] / 32768;
     }
 
-    var f0 = CORE.extractPitchChunk(samples, this.sr, 60.0, 1000.0);
-    var note = null;
-    if (f0) {
-      var midi = CORE.hzToMidi(f0);
-      if (this.smooth == null || Math.abs(midi - this.smooth) > 1.0) this.smooth = midi;
-      else this.smooth += 0.5 * (midi - this.smooth);
+    this.frames++;
+    var info = CORE.extractPitchChunkInfo(samples, this.sr, {});
+    if (info.f0 > 0) this.voicedFrames++;
+    var frame = this.tracker.push(info);
 
-      var hz = CORE.midiToHz(this.smooth);
-      var midiF = CORE.hzToMidi(hz);
-      var midiR = Math.round(midiF);
-      var rounded = Math.round(midi);
-      if (rounded === this.stableMidi) this.stableCount++;
-      else { this.stableMidi = rounded; this.stableCount = 1; }
-      if (this.stableCount >= this.STABLE_CHUNKS) {
-        if (!this.hi || midi > this.hi.midi) this.hi = { midi: midi, f0: f0 };
-        if (!this.lo || midi < this.lo.midi) this.lo = { midi: midi, f0: f0 };
-      }
-      note = {
-        note_name: CORE.midiToName(midiF),
-        midi: midiR,
-        midi_exact: Math.round(midiF * 1000) / 1000,
-        f0_hz: Math.round(hz * 100) / 100,
-        cents_offset: Math.round((midiF - midiR) * 100),
-        stable: this.stableCount >= this.STABLE_CHUNKS
-      };
-    }
-
-    this.ws._sendMsg(JSON.stringify({
-      note: note,
-      session: {
-        lowest: this.lo ? {
-          note_name: CORE.midiToName(CORE.hzToMidi(this.lo.f0)),
-          midi: Math.round(this.lo.midi * 100) / 100,
-          f0_hz: Math.round(this.lo.f0 * 100) / 100
-        } : null,
-        highest: this.hi ? {
-          note_name: CORE.midiToName(CORE.hzToMidi(this.hi.f0)),
-          midi: Math.round(this.hi.midi * 100) / 100,
-          f0_hz: Math.round(this.hi.f0 * 100) / 100
-        } : null,
-        span_semitones: (this.lo && this.hi) ? Math.round((this.hi.midi - this.lo.midi) * 100) / 100 : 0
-      }
-    }));
+    var msg = {
+      note: frame.note,
+      silent: frame.silent,
+      voiced: frame.voiced,
+      level: Math.round(Math.min(1, info.rms * 8) * 100) / 100,
+      session: frame.session
+    };
+    this.ws._sendMsg(JSON.stringify(msg));
   };
 
   global.WebSocket = function (url, protocols) { return new FakeWebSocket(url, protocols); };
@@ -1255,7 +1233,14 @@
     decodeFile: decodeFile,
     analyzeFile: async function (file, opts) {
       var decoded = await decodeFile(file);
-      return CORE.analyzeChannels(decoded.channels, decoded.sr, opts || {});
+      return CORE.analyzeChannelsAsync(decoded.channels, decoded.sr, opts || {});
+    },
+    analyzeChannels: CORE.analyzeChannels,
+    analyzeChannelsAsync: CORE.analyzeChannelsAsync,
+    parallel: function () {
+      var P = global.LocalParallel;
+      return P ? { available: !!P.available, cores: P.cores || 0, reason: P.reason || '' }
+        : { available: false, cores: 0, reason: 'بارگذاری نشده' };
     },
     report: CORE.buildReport,
     TraceRenderer: TraceRenderer,

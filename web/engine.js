@@ -387,35 +387,138 @@
     return Math.round(Math.min(snr, 45.0) * 10) / 10;
   }
 
+  /* ── خودهمبستگی با FFT حقیقی (نصف کارِ FFT مختلط) ────────────────────
+     نمونه‌های زوج/فرد در یک آرایهٔ مختلطِ نصف‌اندازه بسته‌بندی می‌شوند؛
+     از نظر ریاضی همان acf حاصل از FFT مختلط است (خطای ~1e-16)، ولی
+     تقریباً دو برابر سریع‌تر. اعتبارسنجی: web/tests/parallel_test.js
+     ────────────────────────────────────────────────────────────────────── */
+  function rfftScratch(n) {
+    var m = n >> 1, k;
+    // جدول‌های چرخش، یک بار برای همیشه (بدون Math.cos در حلقهٔ فریم‌ها)
+    var cw = new Float64Array(m), sw = new Float64Array(m);
+    for (k = 0; k < m; k++) {
+      var a = -Math.PI * k / m;
+      cw[k] = Math.cos(a); sw[k] = Math.sin(a);
+    }
+    return {
+      zr: new Float64Array(m), zi: new Float64Array(m),
+      power: new Float64Array(m + 1), acf: new Float64Array(n),
+      cw: cw, sw: sw
+    };
+  }
+
+  /**
+   * acf[τ] = Σ x[i]·x[i+τ]  (خطی، به شرط n ≥ len(x) + τmax)
+   * @param {Float64Array} x نمونه‌ها (بقیهٔ x تا n صفر فرض می‌شود)
+   * @param {number} len تعداد نمونه‌های معتبر x
+   * @param {number} n اندازهٔ FFT (توان دو)
+   */
+  /** |X[k]|² برای k=0..n/2 از خروجی FFT مختلطِ بسته‌بندی‌شده */
+  function rfftPowerInto(zr, zi, n, sc) {
+    var m = n >> 1, k;
+    var pw = sc.power;
+    for (k = 0; k < m; k++) {
+      var k2 = (m - k) % m;
+      var ar = zr[k], ai = zi[k];
+      var br = zr[k2], bi = -zi[k2];              // conj(Z[M-k])
+      var er = 0.5 * (ar + br), ei = 0.5 * (ai + bi);
+      var dr = ar - br, di = ai - bi;
+      var orr = 0.5 * di, oi = -0.5 * dr;         // O = (Z - conj)/(2i)
+      var wr = sc.cw[k], wi = sc.sw[k];           // W^k = e^{-2πik/n}
+      var tr = wr * orr - wi * oi, ti = wr * oi + wi * orr;
+      var xr = er + tr, xi = ei + ti;
+      pw[k] = xr * xr + xi * xi;
+    }
+    var nyq = zr[0] - zi[0];                      // X[n/2] حقیقی است
+    pw[m] = nyq * nyq;
+    return pw;
+  }
+
+  /** بسته‌بندی نمونه‌های حقیقی + FFT نصف‌اندازه → طیف توان */
+  function rfftPack(x, len, n, sc) {
+    var m = n >> 1, i;
+    var zr = sc.zr, zi = sc.zi;
+    for (i = 0; i < m; i++) {
+      var i0 = i << 1;
+      zr[i] = i0 < len ? x[i0] : 0;
+      zi[i] = (i0 + 1) < len ? x[i0 + 1] : 0;
+    }
+    fft(zr, zi);                                  // FFT مختلطِ اندازهٔ n/2
+    return rfftPowerInto(zr, zi, n, sc);
+  }
+
+  function rfftAcf(x, len, n, sc) {
+    var m = n >> 1, i, k;
+    var zr = sc.zr, zi = sc.zi;
+    var pw = rfftPack(x, len, n, sc);
+    for (k = 0; k < m; k++) {
+      var k2 = (m - k) % m;
+      var ar = zr[k], ai = zi[k];
+      var br = zr[k2], bi = -zi[k2];              // conj(Z[M-k])
+      var er = 0.5 * (ar + br), ei = 0.5 * (ai + bi);
+      var dr = ar - br, di = ai - bi;
+      var orr = 0.5 * di, oi = -0.5 * dr;         // O = (Z - conj)/(2i)
+      var wr = sc.cw[k], wi = sc.sw[k];           // W^k = e^{-2πik/n}
+      var tr = wr * orr - wi * oi, ti = wr * oi + wi * orr;
+      var xr = er + tr, xi = ei + ti;
+      pw[k] = xr * xr + xi * xi;
+    }
+    var nyq = zr[0] - zi[0];                      // X[n/2] حقیقی است
+    pw[m] = nyq * nyq;
+
+    // معکوسِ حقیقی: acf = IDFT(power)
+    for (k = 0; k < m; k++) {
+      if (k === 0) {
+        zr[0] = 0.5 * (pw[0] + pw[m]);
+        zi[0] = 0.5 * (pw[0] - pw[m]);
+        continue;
+      }
+      var a2 = pw[k], b2 = pw[m - k];
+      var e2 = 0.5 * (a2 + b2), od = 0.5 * (a2 - b2);
+      var wr2 = sc.cw[k], wi2 = -sc.sw[k];        // W^{-k}
+      zr[k] = e2 - wi2 * od;
+      zi[k] = wr2 * od;
+    }
+    ifft(zr, zi);
+    var out = sc.acf;
+    for (i = 0; i < m; i++) { out[i << 1] = zr[i]; out[(i << 1) + 1] = zi[i]; }
+    return out;
+  }
+
   /* ══════════════════════════════════════════════════════════════════════
      مرحلهٔ ۲ — استخراج F0 (هم‌ارز Praat to_pitch_ac + very_accurate)
      روش: خودهمبستگی نرمال‌شدهٔ پنجره‌ای (Boersma) + گام ۵ میلی‌ثانیه
      ══════════════════════════════════════════════════════════════════════ */
-  function pitchFrame(x, sr, fmin, fmax) {
+  /** حافظهٔ موقتِ قابل استفادهٔ مجدد برای یک فریم (حذف تخصیص در حلقهٔ اصلی) */
+  function pitchScratch(L, tauMax, nfft) {
+    var sc = rfftScratch(nfft);
+    sc.nfft = nfft;
+    sc.cs = new Float64Array(L + 1);
+    sc.rs = new Float64Array(tauMax + 2);
+    return sc;
+  }
+
+  /**
+   * محاسبهٔ F0 یک فریم با بافرهای از پیش تخصیص‌یافته.
+   * دقیقاً همان ریاضیات pitchFrame؛ فقط بدون ساختن آرایهٔ تازه در هر فریم.
+   */
+  function pitchFrameInto(x, sr, fmin, fmax, sc, strict) {
     var L = x.length;
     var tauMin = Math.max(2, Math.floor(sr / fmax));
     var tauMax = Math.min(L - 2, Math.ceil(sr / fmin));
     if (tauMax <= tauMin) return { f0: 0, strength: 0 };
 
-    var nfft = nextPow2(L + tauMax + 1);
-    var re = new Float64Array(nfft), im = new Float64Array(nfft);
     var i;
-    for (i = 0; i < L; i++) re[i] = x[i];
-    fft(re, im);
-    for (i = 0; i < nfft; i++) {
-      var p = re[i] * re[i] + im[i] * im[i];
-      re[i] = p; im[i] = 0;
-    }
-    ifft(re, im);
-    var acf = re;                            // acf[τ] = Σ x[i] x[i+τ]
+    var acf = rfftAcf(x, L, sc.nfft, sc);    // acf[τ] = Σ x[i] x[i+τ]
 
     // انرژی تجمعی برای نرمال‌سازی دقیق (لبه‌های پنجره)
-    var cs = new Float64Array(L + 1);
+    var cs = sc.cs;
+    cs[0] = 0;
     for (i = 0; i < L; i++) cs[i + 1] = cs[i] + x[i] * x[i];
     var etot = cs[L];
 
     var best = -1, bestTau = 0;
-    var rs = new Float64Array(tauMax + 1);
+    var rs = sc.rs;
     for (var tau = tauMin; tau <= tauMax; tau++) {
       var e0 = cs[L - tau];                 // انرژی بخش اول
       var e1 = etot - cs[tau];              // انرژی بخش دوم
@@ -435,8 +538,20 @@
       }
     }
 
-    // درون‌یابی سهمی برای دقت زیر-نمونه
     var f0 = 0, strength = clamp(best, 0, 1);
+
+    // ── حالت سخت‌گیرانه (اجرای زنده) ──
+    // اگر بهترین تأخیر روی لبهٔ بازهٔ جست‌وجو افتاده باشد، یعنی «دورهٔ واقعی»
+    // بیرون از بازه است (هام/رامبل/نویز) — نه یک نت. همچنین پیک باید
+    // یک ماکسیمم محلیِ واقعی باشد، نه سرازیری/سربالایی بریده‌شده.
+    if (strict) {
+      if (bestTau <= tauMin || bestTau >= tauMax) return { f0: 0, strength: strength };
+      if (rs[bestTau] < rs[bestTau - 1] || rs[bestTau] <= rs[bestTau + 1]) {
+        return { f0: 0, strength: strength };
+      }
+    }
+
+    // درون‌یابی سهمی برای دقت زیر-نمونه
     if (bestTau > tauMin && bestTau < tauMax) {
       var a = rs[bestTau - 1], b = rs[bestTau], c = rs[bestTau + 1];
       var den2 = (a - 2 * b + c);
@@ -452,43 +567,81 @@
     return { f0: f0, strength: strength };
   }
 
-  function pitchTrack(y, sr, fmin, fmax, onProgress) {
-    fmin = fmin || MIN_F0;
-    fmax = fmax || MAX_F0;
+  /** نسخهٔ ساده (بدون بافر مشترک) — همان نتیجه، برای مصارف تک‌فریمی */
+  function pitchFrame(x, sr, fmin, fmax, strict) {
+    var L = x.length;
+    var tauMax = Math.min(L - 2, Math.ceil(sr / fmin));
+    var nfft = nextPow2(L + tauMax + 1);
+    return pitchFrameInto(x, sr, fmin, fmax, pitchScratch(L, tauMax, nfft), strict);
+  }
+
+  /* پارامترهای پنجره/گام — یک بار محاسبه، در همهٔ تکه‌ها یکسان */
+  function pitchWindow(y, sr, fmin) {
     var winN = Math.max(256, Math.round(WIN_PERIODS / fmin * sr));
     if (winN % 2) winN++;
     var hopN = Math.round(TIME_STEP * sr);
     var nFrames = Math.max(1, Math.floor((y.length - winN) / hopN) + 1);
-    var times = new Float32Array(nFrames);
-    var freqs = new Float32Array(nFrames);
-    var strength = new Float32Array(nFrames);
-    var win = hann(winN);
-    var buf = new Float64Array(winN);
-    var lastReport = 0;
+    return { winN: winN, hopN: hopN, nFrames: nFrames };
+  }
 
-    for (var i = 0; i < nFrames; i++) {
-      var start = i * hopN;
-      var m = 0;
-      for (var k = 0; k < winN; k++) {
-        var v = y[start + k] || 0;
-        buf[k] = v * win[k];
-        m += buf[k];
+  /**
+   * محاسبهٔ F0 فقط برای بازهٔ فریم‌های [i0, i1) — پایهٔ پردازش موازی/جریانی.
+   * خروجی بر حسب اندیس مطلق همان pitchTrack است (freqs[k] ↔ فریم i0+k).
+   */
+  function pitchTrackRange(y, sr, fmin, fmax, opt, i0, i1, win, yBase) {
+    var strict = !!(opt && opt.strict);
+    var winN = opt.winN, hopN = opt.hopN;
+    var n = Math.max(0, i1 - i0);
+    var freqs = new Float32Array(n);
+    var strength = new Float32Array(n);
+    if (!n) return { i0: i0, i1: i1, freqs: freqs, strength: strength };
+    if (!win) win = hann(winN);
+    yBase = yBase || 0;                 // آفست نمونه‌ای y در سیگنال اصلی
+    var buf = new Float64Array(winN);
+    var tauMax = Math.min(winN - 2, Math.ceil(sr / fmin));
+    var sc = pitchScratch(winN, tauMax, nextPow2(winN + tauMax + 1));
+    for (var k = 0; k < n; k++) {
+      var i = i0 + k;
+      var start = i * hopN - yBase;
+      var m = 0, j;
+      for (j = 0; j < winN; j++) {
+        var v = y[start + j] || 0;
+        buf[j] = v * win[j];
+        m += buf[j];
       }
       m /= winN;
-      for (k = 0; k < winN; k++) buf[k] -= m;
+      for (j = 0; j < winN; j++) buf[j] -= m;
 
-      var r = pitchFrame(buf, sr, fmin, fmax);
-      times[i] = i * TIME_STEP;
-      freqs[i] = r.f0;
-      strength[i] = r.strength;
+      var r = pitchFrameInto(buf, sr, fmin, fmax, sc, strict);
+      freqs[k] = r.f0;
+      strength[k] = r.strength;
+    }
+    return { i0: i0, i1: i1, freqs: freqs, strength: strength };
+  }
 
-      if (onProgress && (i - lastReport) > Math.max(200, nFrames / 40)) {
-        lastReport = i;
-        onProgress(i / nFrames);
-      }
+  function pitchTrack(y, sr, fmin, fmax, onProgress) {
+    fmin = fmin || MIN_F0;
+    fmax = fmax || MAX_F0;
+    var w = pitchWindow(y, sr, fmin);
+    var nFrames = w.nFrames;
+    var times = new Float32Array(nFrames);
+    for (var i = 0; i < nFrames; i++) times[i] = i * TIME_STEP;
+
+    var freqs = new Float32Array(nFrames);
+    var strength = new Float32Array(nFrames);
+    var win = hann(w.winN);
+
+    // جریانی: قطعه‌قطعه تا حافظهٔ موقت کم بماند و پیشرفت زنده گزارش شود
+    var CHUNK = 1200;   // ۶ ثانیه در هر گام
+    for (var a = 0; a < nFrames; a += CHUNK) {
+      var b = Math.min(nFrames, a + CHUNK);
+      var part = pitchTrackRange(y, sr, fmin, fmax, w, a, b, win);
+      freqs.set(part.freqs, a);
+      strength.set(part.strength, a);
+      if (onProgress) onProgress(b / nFrames);
     }
     if (onProgress) onProgress(1.0);
-    return { times: times, freqs: freqs, strength: strength };
+    return { times: times, freqs: freqs, strength: strength, winN: w.winN, hopN: w.hopN, nFrames: nFrames };
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -617,33 +770,34 @@
   /* ══════════════════════════════════════════════════════════════════════
      مرحلهٔ ۴ — موتور دوم مستقل (YIN) فقط برای «هم‌رأیی/اطمینان»
      ══════════════════════════════════════════════════════════════════════ */
-  function yinTrack(y, sr, fmin, fmax, duration, hopSec) {
-    if (duration > PYIN_MAX_SEC) return null;
+  function yinParams(y, sr, fmin, fmax, hopSec) {
     hopSec = hopSec || 0.01;
     var W = Math.round(0.025 * sr);
     var hop = Math.round(hopSec * sr);
     var tauMin = Math.max(2, Math.floor(sr / fmax));
     var tauMax = Math.min(W - 2, Math.ceil(sr / fmin));
     var nFrames = Math.max(1, Math.floor((y.length - W - tauMax) / hop) + 1);
-    var f0 = new Float32Array(nFrames);
-    var prob = new Float32Array(nFrames);
+    return { W: W, hop: hop, tauMin: tauMin, tauMax: tauMax, nFrames: nFrames, hopSec: hopSec };
+  }
 
+  /** YIN فقط برای بازهٔ فریم‌های [i0, i1) — پایهٔ اجرای موازی */
+  function yinTrackRange(y, sr, fmin, fmax, p, i0, i1, yBase) {
+    var W = p.W, hop = p.hop, tauMin = p.tauMin, tauMax = p.tauMax;
+    var n = Math.max(0, i1 - i0);
+    var f0 = new Float32Array(n);
+    var prob = new Float32Array(n);
+    if (!n) return { i0: i0, i1: i1, f0: f0, prob: prob };
     var nfft = nextPow2(W + tauMax + 1);
-    for (var f = 0; f < nFrames; f++) {
-      var start = f * hop;
-      var x = new Float64Array(W);
+    var sc = rfftScratch(nfft);
+    var x = new Float64Array(W);
+    yBase = yBase || 0;
+    for (var q = 0; q < n; q++) {
+      var f = i0 + q;
+      var start = f * hop - yBase;
       var i;
       for (i = 0; i < W; i++) x[i] = y[start + i] || 0;
 
-      var re = new Float64Array(nfft), im = new Float64Array(nfft);
-      for (i = 0; i < W; i++) re[i] = x[i];
-      fft(re, im);
-      for (i = 0; i < nfft; i++) {
-        var p = re[i] * re[i] + im[i] * im[i];
-        re[i] = p; im[i] = 0;
-      }
-      ifft(re, im);
-      var acf = re;
+      var acf = rfftAcf(x, W, nfft, sc);        // FFT حقیقی (نصف کار)
 
       var cs = new Float64Array(W + 1);
       for (i = 0; i < W; i++) cs[i + 1] = cs[i] + x[i] * x[i];
@@ -675,11 +829,26 @@
           tt = tt + clamp(dl, -0.5, 0.5);
         }
         var hz = sr / tt;
-        f0[f] = (hz >= fmin && hz <= fmax) ? hz : 0;
-        prob[f] = clamp(1.0 - cmnd[bestTau], 0, 1);
+        f0[q] = (hz >= fmin && hz <= fmax) ? hz : 0;
+        prob[q] = clamp(1.0 - cmnd[bestTau], 0, 1);
       }
     }
-    return { f0: f0, prob: prob, hop: hopSec };
+    return { i0: i0, i1: i1, f0: f0, prob: prob };
+  }
+
+  function yinTrack(y, sr, fmin, fmax, duration, hopSec) {
+    if (duration > PYIN_MAX_SEC) return null;
+    var p = yinParams(y, sr, fmin, fmax, hopSec);
+    var f0 = new Float32Array(p.nFrames);
+    var prob = new Float32Array(p.nFrames);
+    var CHUNK = 600;
+    for (var a = 0; a < p.nFrames; a += CHUNK) {
+      var b = Math.min(p.nFrames, a + CHUNK);
+      var part = yinTrackRange(y, sr, fmin, fmax, p, a, b);
+      f0.set(part.f0, a);
+      prob.set(part.prob, a);
+    }
+    return { f0: f0, prob: prob, hop: p.hopSec };
   }
 
   function fuseWithSecond(times, freqs, strength, second, hop) {
@@ -860,6 +1029,22 @@
     return i + 0.5 * (a - c) / den;
   }
 
+  /* بافرهای مشترک طیف (بدون تخصیص در حلقهٔ نت‌ها) */
+  var _specScratch = {}, _specFrame = null;
+  function spectrumScratch(nfft) {
+    var k = 's' + nfft;
+    if (!_specScratch[k]) {
+      var sc = rfftScratch(nfft);
+      sc.nfft = nfft;
+      _specScratch[k] = sc;
+    }
+    return _specScratch[k];
+  }
+  function spectrumFrame(winN) {
+    if (!_specFrame || _specFrame.length < winN) _specFrame = new Float64Array(winN);
+    return _specFrame;
+  }
+
   function noteSpectrum(y, sr, t0, t1, winSec, nfft) {
     winSec = winSec || 0.06; nfft = nfft || 16384;
     var dur = Math.max(0, t1 - t0);
@@ -879,11 +1064,12 @@
 
     var w = hann(winN);
     var acc = new Float64Array((nfft >> 1) + 1);
+    var sc = spectrumScratch(nfft);
+    var frame = spectrumFrame(winN);
     for (var si = 0; si < starts.length; si++) {
-      var frame = new Float32Array(winN);
-      for (var k = 0; k < winN; k++) frame[k] = y[i0 + starts[si] + k] || 0;
-      var mag = rfftMag(frame, nfft, w);
-      for (var q = 0; q < acc.length; q++) acc[q] += mag[q];
+      for (var k = 0; k < winN; k++) frame[k] = (y[i0 + starts[si] + k] || 0) * w[k];
+      var pw = rfftPack(frame, winN, nfft, sc);   // FFT حقیقی (نصف کار)
+      for (var q = 0; q < acc.length; q++) acc[q] += Math.sqrt(pw[q]);
     }
     for (q = 0; q < acc.length; q++) acc[q] /= starts.length;
     return acc;
@@ -942,18 +1128,34 @@
     return { f0: est, support: support };
   }
 
-  function refineNotes(y, sr, notes) {
-    if (!notes || !notes.length) return { notes: notes, refined: 0 };
+  /** پالایش نت‌های [i0, i1) — فقط محاسبه، بدون تغییر (پایهٔ اجرای موازی) */
+  function refineNotesRange(y, sr, notes, i0, i1, yBaseSec) {
+    var n = Math.max(0, i1 - i0);
+    var out = new Array(n);
+    yBaseSec = yBaseSec || 0;
+    for (var k = 0; k < n; k++) {
+      var nt = notes[i0 + k];
+      out[k] = refineNoteF0(y, sr, nt.start - yBaseSec, nt.end - yBaseSec, nt.f0_hz);
+    }
+    return out;
+  }
+
+  function applyRefinements(notes, results, i0) {
     var refined = 0;
-    for (var i = 0; i < notes.length; i++) {
-      var nt = notes[i];
-      var r = refineNoteF0(y, sr, nt.start, nt.end, nt.f0_hz);
+    for (var k = 0; k < results.length; k++) {
+      var nt = notes[i0 + k], r = results[k];
       nt.harmonics = r.support;
       if (r.f0 == null) continue;
       nt.f0_hz_coarse = nt.f0_hz;
       nt.f0_hz = Math.round(r.f0 * 1000) / 1000;
       refined++;
     }
+    return refined;
+  }
+
+  function refineNotes(y, sr, notes) {
+    if (!notes || !notes.length) return { notes: notes, refined: 0 };
+    var refined = applyRefinements(notes, refineNotesRange(y, sr, notes, 0, notes.length), 0);
     return { notes: notes, refined: refined };
   }
 
@@ -992,48 +1194,55 @@
    * خط لولهٔ کامل روی نمونه‌های خام (بدون DOM) — قابل تست در Node.
    * ورودی: channels (آرایهٔ Float32Array/Float64Array)، sr
    */
-  function analyzeChannels(channels, srIn, opts) {
+  function nowMs() {
+    return (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  }
+
+  /** آماده‌سازی مشترک هر دو مسیر (سریال و موازی) */
+  function analyzeBegin(channels, srIn, opts) {
     opts = opts || {};
     var onProgress = opts.onProgress || function () {};
-    var t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-
+    var t0 = nowMs();
     onProgress('preparing', 0.02);
     var prep = prepareAudio(channels, srIn, opts);
-    var y = prep.y, sr = prep.sr, duration = prep.duration, diag = prep.diag;
-
+    var diag = prep.diag;
     var fmin = MIN_F0, fmax = MAX_F0;
     diag.f0_range_hz = [Math.round(fmin), Math.round(fmax)];
     diag.f0_range_mode = 'fixed';
     diag.time_step_sec = TIME_STEP;
+    return {
+      opts: opts, onProgress: onProgress, t0: t0, prep: prep,
+      y: prep.y, sr: prep.sr, duration: prep.duration, diag: diag,
+      fmin: fmin, fmax: fmax
+    };
+  }
 
-    onProgress('pitch', 0.10);
-    var tr = pitchTrack(y, sr, fmin, fmax, function (f) {
-      onProgress('pitch', 0.10 + 0.55 * f);
-    });
-
-    onProgress('octave', 0.68);
-    var oct = spectralOctaveFix(y, sr, tr.times, tr.freqs, fmin, fmax);
+  /** بخش میانی (ارزان و سریال): اصلاح نردبان → هم‌سنجی → پاک‌سازی → تفکیک نت */
+  function analyzeMiddle(ctx, tr, oct, second) {
+    var diag = ctx.diag;
     diag.octave_fixes = { halved: oct.nDown, doubled: oct.nUp };
 
-    onProgress('pyin', 0.74);
-    var second = yinTrack(y, sr, fmin, fmax, duration, 0.01);
+    ctx.onProgress('pyin', 0.74);
     var fused = fuseWithSecond(tr.times, oct.freqs, tr.strength, second, 0.01);
     diag.pyin_agreement_pct = fused.agreement;
     diag.pyin_used = fused.agreement != null;
     diag.pyin_engine = 'yin';
 
-    onProgress('clean', 0.86);
+    ctx.onProgress('clean', 0.86);
     var freqs = removeOctaveSpecks(tr.times, fused.freqs);
     freqs = smoothPitchContour(freqs, 3);
 
-    onProgress('notes', 0.92);
+    ctx.onProgress('notes', 0.92);
     var notes = segmentNotes(tr.times, freqs, fused.conf);
+    return { freqs: freqs, conf: fused.conf, notes: notes, fused: fused };
+  }
 
-    onProgress('refine', 0.95);
-    var ref = refineNotes(y, sr, notes);
-    notes = ref.notes;
-    diag.notes_refined = ref.refined;
+  /** پایان مشترک: شمارش، کیفیت و خروجی */
+  function analyzeEnd(ctx, tr, mid, notes, refined) {
+    var diag = ctx.diag;
+    diag.notes_refined = refined;
 
+    var freqs = mid.freqs;
     var voicedCount = 0;
     for (var i = 0; i < freqs.length; i++) if (freqs[i] > 0) voicedCount++;
     diag.voiced_ratio_pct = freqs.length ? Math.round(1000 * 100 * voicedCount / freqs.length) / 1000 : 0;
@@ -1043,19 +1252,81 @@
     var q = qualityStatus(diag);
     diag.status = q.status;
     diag.warnings = q.warnings;
-    diag.engine_sec = Math.round(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0) / 100) / 10;
+    diag.engine_sec = Math.round((nowMs() - ctx.t0) / 100) / 10;
+    diag.parallel = !!ctx.parallel;
 
-    onProgress('done', 1.0);
+    ctx.onProgress('done', 1.0);
     return {
       times: tr.times,
       freqs: freqs,
-      conf: fused.conf,
+      conf: mid.conf,
       notes: notes,
-      sr: sr,
-      duration: duration,
+      sr: ctx.sr,
+      duration: ctx.duration,
       quality: diag,
-      wav: y
+      wav: ctx.y
     };
+  }
+
+  /** خط لولهٔ کامل، سریال (همیشه در دسترس — مبنای مقایسه) */
+  function analyzeChannels(channels, srIn, opts) {
+    var ctx = analyzeBegin(channels, srIn, opts);
+    ctx.parallel = false;
+
+    ctx.onProgress('pitch', 0.10);
+    var tr = pitchTrack(ctx.y, ctx.sr, ctx.fmin, ctx.fmax, function (f) {
+      ctx.onProgress('pitch', 0.10 + 0.55 * f);
+    });
+
+    ctx.onProgress('octave', 0.68);
+    var oct = spectralOctaveFix(ctx.y, ctx.sr, tr.times, tr.freqs, ctx.fmin, ctx.fmax);
+
+    var second = yinTrack(ctx.y, ctx.sr, ctx.fmin, ctx.fmax, ctx.duration, 0.01);
+    var mid = analyzeMiddle(ctx, tr, oct, second);
+
+    ctx.onProgress('refine', 0.95);
+    var ref = refineNotes(ctx.y, ctx.sr, mid.notes);
+    return analyzeEnd(ctx, tr, mid, ref.notes, ref.refined);
+  }
+
+  /**
+   * خط لولهٔ کامل، موازی (Web Worker / worker_threads).
+   * اگر موازی‌سازی در دسترس یا موفق نباشد، بی‌صدا همان مسیر سریال اجرا می‌شود؛
+   * پس نتیجه همیشه یکسان است و فقط سرعت تفاوت می‌کند.
+   */
+  async function analyzeChannelsAsync(channels, srIn, opts) {
+    opts = opts || {};
+    var P = global.LocalParallel;
+    if (!P || !P.available || opts.parallel === false) return analyzeChannels(channels, srIn, opts);
+
+    try {
+      var ctx = analyzeBegin(channels, srIn, opts);
+      ctx.parallel = true;
+      ctx.diag.parallel_cores = P.cores || 1;
+
+      ctx.onProgress('pitch', 0.10);
+      var tr = await P.pitchTrack(ctx.y, ctx.sr, ctx.fmin, ctx.fmax, function (f) {
+        ctx.onProgress('pitch', 0.10 + 0.55 * f);
+      });
+
+      ctx.onProgress('octave', 0.68);
+      var oct = spectralOctaveFix(ctx.y, ctx.sr, tr.times, tr.freqs, ctx.fmin, ctx.fmax);
+
+      var second = await P.yinTrack(ctx.y, ctx.sr, ctx.fmin, ctx.fmax, ctx.duration, 0.01);
+      var mid = analyzeMiddle(ctx, tr, oct, second);
+
+      ctx.onProgress('refine', 0.95);
+      var results = await P.refineNotes(ctx.y, ctx.sr, mid.notes);
+      var refined = applyRefinements(mid.notes, results, 0);
+
+      return analyzeEnd(ctx, tr, mid, mid.notes, refined);
+    } catch (e) {
+      // مسیر موازی هرگز نباید کار را خراب کند
+      if (typeof console !== 'undefined' && console.warn) console.warn('[engine] parallel fallback:', e && e.message);
+      var P2 = global.LocalParallel;
+      if (P2 && P2.reset) { try { P2.reset(); } catch (e2) { } }
+      return analyzeChannels(channels, srIn, opts);
+    }
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -1280,22 +1551,222 @@
   /* ══════════════════════════════════════════════════════════════════════
      مرحلهٔ ۸ — اجرای زنده (هم‌ارز extract_pitch_chunk روی سرور)
      ══════════════════════════════════════════════════════════════════════ */
-  function extractPitchChunk(samples, sr, fmin, fmax) {
-    fmin = fmin || 60.0; fmax = fmax || 1000.0;
-    if (!samples || samples.length < sr * 0.03) return null;
-    // کاهش نرخ به ۱۶ کیلوهرتز برای سرعت (همان کاری که سرور با ۱۶k می‌کرد)
-    var target = 16000;
+  /**
+   * یک بستهٔ کوتاه میکروفون → {f0, strength, rms}
+   * سه دروازهٔ مستقل، تا در سکوت یا نویز «نتِ الکی» ساخته نشود:
+   *   ۱) بلندی (rms) بالای کف باشد            → سکوت/نجوا نت نمی‌دهد
+   *   ۲) دوره‌ای‌بودن (strength) به‌اندازهٔ کافی → هیس/رامبل نت نمی‌دهد
+   *   ۳) پنجره دست‌کم ۲٫۵ دورهٔ f0 را بپوشاند  → نت‌های بی‌پایه رد می‌شوند
+   */
+  function extractPitchChunkInfo(samples, sr, opts) {
+    opts = opts || {};
+    var fmin = opts.fmin || 60.0, fmax = opts.fmax || 1000.0;
+    var target = opts.sr || 16000;
+    var out = { f0: 0, strength: 0, rms: 0, silent: true, reason: 'short' };
+    if (!samples || !samples.length) return out;
+
     var y = (sr !== target) ? resample(samples, sr, target, 24) : samples;
-    var winN = Math.min(y.length, Math.round(3.0 / fmin * target));
+    if (y.length < target * 0.03) return out;
+    // حذف هام/رامبل/لرزش میز: زیر ۷۵ هرتز در «اجرای زنده» صدا حساب نمی‌شود
+    y = highpass(y, target, opts.hiPassHz || 75.0);
+
+    // بلندی کل بسته (قبل از هر پنجره‌ای)
+    var sum2 = 0, n = y.length, i;
+    for (i = 0; i < n; i++) { var v = y[i] || 0; sum2 += v * v; }
+    var rms = Math.sqrt(sum2 / n);
+    out.rms = rms;
+    if (rms < (opts.minRms || 0.0035)) { out.reason = 'quiet'; return out; }
+
+    // پنجره: ۳ دورهٔ fmin، ولی نه بیشتر از کل بسته
+    var winN = Math.min(n, Math.round(3.0 / fmin * target));
     if (winN % 2) winN++;
     var seg = new Float64Array(winN);
-    var start = Math.max(0, y.length - winN);
-    for (var i = 0; i < winN; i++) seg[i] = y[start + i] || 0;
+    var start = Math.max(0, n - winN);
+    for (i = 0; i < winN; i++) seg[i] = y[start + i] || 0;
     var m = mean(seg);
     for (i = 0; i < winN; i++) seg[i] -= m;
-    var r = pitchFrame(seg, target, fmin, fmax);
+    // پنجرهٔ هَنّ: لبه‌های بسته دیگر در خودهمبستگی اثر کاذب نمی‌گذارند
+    var w = hann(winN);
+    for (i = 0; i < winN; i++) seg[i] *= w[i];
+
+    var r = pitchFrame(seg, target, Math.max(fmin, 70.0), fmax, true);
+    out.strength = r.strength;
+    if (!(r.f0 > 0)) { out.reason = 'unvoiced'; return out; }
+    if (r.strength < (opts.voicing || 0.55)) { out.reason = 'weak'; return out; }
+    var periods = r.f0 * (winN / target);
+    if (periods < 2.5) { out.reason = 'fewPeriods'; return out; }
+    if (r.f0 < fmin || r.f0 > fmax) { out.reason = 'range'; return out; }
+
+    out.f0 = r.f0;
+    out.silent = false;
+    out.reason = 'ok';
+    return out;
+  }
+
+  /** سازگاری با نسخهٔ قبل: فقط f0 (یا null) */
+  function extractPitchChunk(samples, sr, fmin, fmax) {
+    var r = extractPitchChunkInfo(samples, sr, { fmin: fmin || 60.0, fmax: fmax || 1000.0 });
     return r.f0 > 0 ? r.f0 : null;
   }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     مرحلهٔ ۹ — ردیاب «اجرای زنده» (ضدپرش و نرم)
+     ----------------------------------------------------------------------
+     سه لایهٔ پالایش پشت سر هم:
+       ۱) دروازهٔ بلندیِ تطبیقی — کف نویز اتاق یاد گرفته می‌شود؛ سکوت ⇒ هیچ نتی
+       ۲) میانهٔ زمانیِ ۵ بسته + ردِ پرش اکتاو — تخمین‌های تکی نادیده می‌مانند
+       ۳) پایداری ۳ بسته‌ای + هیسترزیس — فقط نتی که «مانده» نمایش داده می‌شود
+     ══════════════════════════════════════════════════════════════════════ */
+  function LiveTracker(opts) {
+    opts = opts || {};
+    this.stableChunks = opts.stableChunks || 3;    // ≈۰٫۳۶ ثانیه
+    this.tolSemis = opts.tolSemis || 0.6;          // اختلاف مجاز برای «همان نت»
+    this.octaveWindow = opts.octaveWindow || 0.7;  // آستانهٔ اصلاح اکتاو
+    this.graceSec = opts.graceSec || 0.30;         // نگه‌داشتن نت بعد از قطع صدا
+    this.chunkSec = opts.chunkSec || 0.12;
+    this.reset();
+  }
+
+  LiveTracker.prototype.reset = function () {
+    this.hist = [];            // میانهٔ متحرک (سنتی/میانه)
+    this.stable = null;        // {midi, since, chunks}
+    this.shown = null;         // نتی که همین حالا نمایش داده می‌شود
+    this.shownAt = 0;
+    this.floor = 0.0025;       // کف نویز تخمینی (rms)
+    this.lo = null;
+    this.hi = null;
+    this.t = 0;                // زمان داخلی (ثانیه)
+    this.lastVoiced = -1e9;
+    this.lastF0 = 0;
+    this.reason = 'reset';
+  };
+
+  LiveTracker.prototype._medianHist = function () {
+    if (!this.hist.length) return null;
+    var a = this.hist.slice().sort(function (x, y) { return x - y; });
+    return a[a.length >> 1];
+  };
+
+  /** فاصلهٔ اکتاوی: اگر تخمین نزدیک ۲×/۰٫۵× مقدار قبلی باشد، اصلاح می‌شود */
+  LiveTracker.prototype._fixOctave = function (midi, ref) {
+    if (ref == null) return midi;
+    var cands = [midi - 12, midi, midi + 12];
+    var best = midi, bestD = Infinity;
+    for (var i = 0; i < cands.length; i++) {
+      var d = Math.abs(cands[i] - ref);
+      if (d < bestD) { bestD = d; best = cands[i]; }
+    }
+    return bestD <= this.octaveWindow ? best : midi;
+  };
+
+  /**
+   * یک بسته را وارد کن. ورودی: خروجی extractPitchChunkInfo
+   * خروجی: {note, silent, stable, midi, session}
+   */
+  LiveTracker.prototype.push = function (info) {
+    var dt = this.chunkSec;
+    this.t += dt;
+    var rms = (info && info.rms) || 0;
+
+    // ── ۱) دروازهٔ بلندیِ تطبیقی ──
+    var gate = Math.max(0.0035, this.floor * 1.8);
+    var voiced = !!(info && info.f0 > 0 && rms >= gate);
+
+    if (!voiced) {
+      // هر بستهٔ «بی‌نت» شاهدِ نویز است ⇒ کف نویز آرام‌آرام بالا می‌آید
+      // (با سقف، تا یک صدای بلندِ غیرصدا کف را برای همیشه بالا نبرد)
+      if (rms > 0) this.floor = 0.90 * this.floor + 0.10 * Math.min(rms, 0.06);
+      this.hist = [];
+      this.reason = (info && info.reason) || 'quiet';
+    } else {
+      // کف نویز: کمی بالاتر از بلندترین «سکوتِ اخیر» نگه داشته می‌شود
+      if (rms < this.floor * 1.4) this.floor = 0.97 * this.floor + 0.03 * rms;
+      var midi = hzToMidi(info.f0);
+      // ── ۲) میانهٔ زمانی + اصلاح اکتاو نسبت به نتِ فعلی ──
+      midi = this._fixOctave(midi, this.stable ? this.stable.midi : (this.lastF0 > 0 ? hzToMidi(this.lastF0) : null));
+      this.hist.push(midi);
+      if (this.hist.length > 5) this.hist.shift();
+      var med = this._medianHist();
+      if (this.stable && Math.abs(med - this.stable.midi) <= this.tolSemis) {
+        this.stable.chunks++;
+        this.stable.midi = this.stable.midi + 0.35 * (med - this.stable.midi);   // نرم‌سازی
+        this.stable.f0 = midiToHz(this.stable.midi);
+      } else {
+        this.stable = { midi: med, chunks: 1, f0: midiToHz(med) };
+      }
+      this.lastF0 = this.stable.f0;
+      this.lastVoiced = this.t;
+    }
+
+    // ── ۳) تصمیم نمایش ──
+    var stableEnough = voiced && this.stable && this.stable.chunks >= this.stableChunks;
+    var fresh = (this.t - this.lastVoiced) <= this.graceSec;
+    var note = null, silent = false;
+
+    if (stableEnough) {
+      var midiS = this.stable.midi;
+      var f0S = midiToHz(midiS);
+      var midiR = Math.round(midiS);
+      this.shown = { midi: midiS, f0: f0S };
+      this.shownAt = this.t;
+      note = {
+        note_name: midiToName(midiS),
+        midi: midiR,
+        midi_exact: Math.round(midiS * 1000) / 1000,
+        f0_hz: Math.round(f0S * 100) / 100,
+        cents_offset: Math.round((midiS - midiR) * 100),
+        stable: true,
+        quality: Math.round(Math.min(1, this.stable.chunks / (this.stableChunks + 2)) * 100) / 100
+      };
+      // رکورد جلسه فقط از نتِ پایدار
+      var lo = this.lo, hi = this.hi;
+      if (!hi || midiS > hi.midi) this.hi = { midi: midiS, f0: f0S };
+      if (!lo || midiS < lo.midi) this.lo = { midi: midiS, f0: f0S };
+      void lo; void hi;
+    } else if (!fresh) {
+      // صدا قطع شده و مهلت تمام شده ⇒ «چیزی خوانده نمی‌شود»
+      silent = true;
+      this.shown = null;
+      this.stable = null;
+    } else {
+      // در مهلت: همان نت قبلی می‌ماند (بدون پرش)
+      note = null;
+      if (this.shown) {
+        note = {
+          note_name: midiToName(this.shown.midi),
+          midi: Math.round(this.shown.midi),
+          midi_exact: Math.round(this.shown.midi * 1000) / 1000,
+          f0_hz: Math.round(this.shown.f0 * 100) / 100,
+          cents_offset: Math.round((this.shown.midi - Math.round(this.shown.midi)) * 100),
+          stable: false,
+          hold: true
+        };
+      }
+    }
+
+    return {
+      note: note,
+      silent: silent,
+      voiced: voiced,
+      reason: this.reason,
+      rms: Math.round(rms * 10000) / 10000,
+      floor: Math.round(this.floor * 10000) / 10000,
+      midi: note ? note.midi_exact : null,
+      session: {
+        lowest: this.lo ? {
+          note_name: midiToName(this.lo.midi),
+          midi: Math.round(this.lo.midi * 100) / 100,
+          f0_hz: Math.round(this.lo.f0 * 100) / 100
+        } : null,
+        highest: this.hi ? {
+          note_name: midiToName(this.hi.midi),
+          midi: Math.round(this.hi.midi * 100) / 100,
+          f0_hz: Math.round(this.hi.f0 * 100) / 100
+        } : null,
+        span_semitones: (this.lo && this.hi) ? Math.round((this.hi.midi - this.lo.midi) * 100) / 100 : 0
+      }
+    };
+  };
 
   /* ══════════════════════════════════════════════════════════════════════
      خروجی
@@ -1307,12 +1778,18 @@
     resample: resample, highpass: highpass, denoise: denoise,
     prepareAudio: prepareAudio, safeDownmix: safeDownmix,
     pitchTrack: pitchTrack, pitchFrame: pitchFrame,
+    pitchWindow: pitchWindow, pitchTrackRange: pitchTrackRange,
+    yinParams: yinParams, yinTrackRange: yinTrackRange,
+    refineNotesRange: refineNotesRange, applyRefinements: applyRefinements,
     spectralOctaveFix: spectralOctaveFix, frameScores: frameScores,
     yinTrack: yinTrack, fuseWithSecond: fuseWithSecond,
     smoothPitchContour: smoothPitchContour, removeOctaveSpecks: removeOctaveSpecks,
     segmentNotes: segmentNotes, refineNotes: refineNotes, refineNoteF0: refineNoteF0,
-    analyzeChannels: analyzeChannels, buildReport: buildReport,
+    analyzeChannels: analyzeChannels, analyzeChannelsAsync: analyzeChannelsAsync,
+    buildReport: buildReport,
     extractPitchChunk: extractPitchChunk,
+    extractPitchChunkInfo: extractPitchChunkInfo,
+    LiveTracker: LiveTracker,
     qualityStatus: qualityStatus,
     midiToName: midiToName, hzToMidi: hzToMidi, midiToHz: midiToHz, median: median, percentile: percentile
   };
