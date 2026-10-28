@@ -11,3 +11,13 @@ __pycache__/
 server/jobs/
 *.mp4
 .env
+
+# نمونهٔ آزمایشی رابط وب (برای دکمهٔ «نمونهٔ آزمایشی» لازم است)
+!web/demo_bayati.wav
+
+# کش منحنی‌های تحلیل (md5 → npz)
+server/cache/
+
+# آیکون‌های اپ (PWA/اندروید) و فونت‌های محلی
+!web/icons/*.png
+!web/fonts/*.woff2
