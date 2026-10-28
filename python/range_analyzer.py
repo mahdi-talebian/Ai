@@ -33,7 +33,7 @@ from datetime import datetime
 
 import numpy as np
 
-from pitch_engine import freq_to_note_info
+from pitch_engine import freq_to_note_info, suppress_pitch_bars
 
 # نت‌هایی که کمتر از این کشش دارند «گذرا» هستند و در تعیین بالاترین/پایین‌ترین
 # نتِ خوانده‌شدهٔ کاربر حساب نمی‌شوند (جلوگیری از اثر نویز و لرزش‌های لحظه‌ای).
@@ -194,9 +194,18 @@ def _robust_extremes(notes, sung_total):
 
 
 def _downsample_contour(times, freqs, max_points=1800):
-    """منحنی را برای رسم سریع در مرورگر نازک می‌کند (فرکانس صفر = بی‌صدا)."""
+    """
+    منحنی را برای رسم سریع در مرورگر نازک می‌کند (فرکانس صفر = بی‌صدا).
+
+    پیش از نازک‌سازی، فیلتر نمایشی «میله‌ها» اعمال می‌شود: جهش‌های آنیِ
+    غیرواقعی (که در رسم، میلهٔ عمودیِ بدون نتِ اجراشده می‌سازند) حذف می‌شوند.
+    این فیلتر فقط برای نمودار/ویدیو است — گزارش نت‌ها و «تصویر تحلیل» PNG
+    از همان منحنی خام ساخته می‌شوند و دست‌نخورده می‌مانند.
+    """
     if len(times) == 0:
         return {"t": [], "midi": []}
+    freqs = suppress_pitch_bars(np.asarray(times, dtype=float),
+                                np.asarray(freqs, dtype=float))
     step = max(1, int(np.ceil(len(times) / max_points)))
     t = times[::step]
     f = freqs[::step]

@@ -998,12 +998,16 @@ function buildSegments() {
   if (cur.length > 1) runs.push(cur);
 
   const segs = [];
+  // تبدیل پیکسل عمودی به میدی (برای سطح‌سنجی هنگام پل‌زدن)
+  const mOf = y => TRACE.loLim + (1 - (y - TRACE.MT) / (TRACE.H - TRACE.MT - TRACE.MB)) * (TRACE.hiLim - TRACE.loLim);
   runs.forEach(run => {
     if (!segs.length) { segs.push(run.slice()); return; }
     const prev = segs[segs.length - 1];
-    const gap = run[0].t - prev[prev.length - 1].t;
-    if (gap <= GAP) {
-      const a = prev[prev.length - 1], b = run[0];
+    const a = prev[prev.length - 1], b = run[0];
+    const gap = b.t - a.t;
+    // فقط بین سطوح هم‌تراز پل زده می‌شود تا خط پل، «میلهٔ عمودی» نسازد
+    const sameLevel = Math.abs(mOf(a.y) - mOf(b.y)) <= 6;
+    if (gap <= GAP && sameLevel) {
       const n = Math.max(2, Math.min(24, Math.round(gap * 40) + 2));
       for (let j = 1; j < n; j++) {
         const f = j / n;

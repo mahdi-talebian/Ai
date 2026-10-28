@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🎬 رندر «ردِّ صدا» (Pitch Trace) — نمودار خطی نرم + نقطهٔ نورانی متحرک
-=====================================================================
+🎬 رندر «ردِّ صدا» (Pitch Trace) — نمای «نوار متحرک» + نقطهٔ نورانی
+====================================================================
 این ماژول فقط یک کار می‌کند: منحنی پردهٔ صدا را به شکل یک تصویر/ویدیوی
-مینیمال و نرم نشان می‌دهد (به سبک تصاویر مرجع):
+مینیمال و نرم نشان می‌دهد:
+
+  • ویدیو (mp4): «نوار متحرک» — پنجرهٔ زمانی حول لحظهٔ جاری می‌چرخد و
+    نقطهٔ نورانی همیشه در مرکز افقی می‌ماند و بالا/پایین می‌رود؛
+    تیک‌های ثانیهٔ عمودیِ محو، حرکت نوار را خوانا می‌کنند.
+  • تصویر PNG («تصویر تحلیل»): همان نمای کلی ثابت — دست‌نخورده.
+  • در نمای ویدیو، «فیلتر میله‌ها» اعمال می‌شود: جهش‌های آنیِ غیرواقعی
+    (میله‌های عمودیِ بدون نتِ اجراشده) حذف می‌شوند ولی خودِ نت‌ها به‌صورت
+    نقطه نمایش داده می‌شوند.
 
   • پس‌زمینهٔ سرمه‌ای تیره + خطوط افقی «نت» (یک خط برای هر نیم‌پرده)
-  • منحنی پیوستهٔ صدا که به‌نرمی بین خطوط نت جابه‌جا می‌شود
-  • نقطهٔ نورانی (glow) روی هر نتِ خوانده‌شده
-  • خط عمودی «پخش» + نقطهٔ درخشان روی نت جاری
+  • نقطهٔ نورانی (glow) روی نت جاری
   • بخش خوانده‌شده طلایی، بخش آینده آبی محو
 
 هیچ تحلیل مقام/سولفژی در این ماژول نیست — ورودی فقط زمان و فرکانس است.
 
 استفادهٔ خط‌فرمان:
     python3 trace_video.py recitation.mp3 --output trace.mp4 --fps 20
-    python3 trace_video.py recitation.mp3 --png trace.png
+    python3 trace_video.py recitation.mp3 --png trace.png   # نمای کلی PNG
+    python3 trace_video.py recitation.mp3 --overview        # ویدیوی نمای کلی (قدیمی)
 """
 
 import math
@@ -27,6 +34,8 @@ import sys
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
+
+from pitch_engine import suppress_pitch_bars
 
 # ============================================================================
 # پالت و ابعاد (هم‌خوان با تصاویر مرجع: سرمه‌ای تیره + طلایی)
@@ -52,6 +61,7 @@ LABEL_DIM = (150, 168, 200, 150)
 DEFAULT_FPS = 20
 GAP_BRIDGE_SEC = 0.75     # سکوت‌های کوتاه‌تر از این مقدار با خط نرم پر می‌شوند
 GAP_SPLIT_SEC = 0.75      # سکوت‌های بلندتر، منحنی را به دو بخش جدا می‌شکنند
+BRIDGE_MAX_ST = 6.0       # حداکثر اختلاف سطح برای پل‌زدن (جلوگیری از «دیوار» عمودی)
 
 _NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -138,21 +148,32 @@ class _Sprites:
 
 class TraceRenderer:
     """
-    یک رندرر حالت‌دار: پس‌زمینه، خطوط نت و لایهٔ «آینده» را یک‌بار می‌سازد
-    و برای هر لحظه فقط لایهٔ طلایی + نقطه + خط پخش را می‌کشد.
+    یک رندرر حالت‌دار:
+      • mode="overview": پس‌زمینه، خطوط نت و لایهٔ «آینده» یک‌بار ساخته
+        می‌شود و برای هر لحظه فقط لایهٔ طلایی + نقطه + خط پخش کشیده می‌شود
+        (همان نمای کلی ثابتِ قبلی — برای PNG «تصویر تحلیل»).
+      • mode="tape": نمای «نوار متحرک» — پنجرهٔ زمانی حول لحظهٔ جاری است،
+        خط پخش در مرکز ثابت می‌ماند و منحنی مانند نوار از راست به چپ می‌لغزد
+        (برای ویدیو). با filter_curve=True جهش‌های غیرواقعی («میله‌ها»)
+        پیش از رسم حذف می‌شوند.
     """
 
     def __init__(self, times, freqs, notes=None, width=W, height=H,
-                 show_labels=True, show_range_guides=True):
+                 show_labels=True, show_range_guides=True,
+                 mode="overview", filter_curve=False):
         self.W, self.H = width, height
         self.show_labels = show_labels
         self.show_range_guides = show_range_guides
+        self.mode = "tape" if mode == "tape" else "overview"
         self.sprites = _Sprites()
 
         times = np.asarray(times, dtype=float)
         freqs = np.asarray(freqs, dtype=float)
         order = np.argsort(times)
         times, freqs = times[order], freqs[order]
+        if filter_curve:
+            # فقط لایهٔ نمایش: میله‌های عمودیِ غیرواقعی حذف می‌شوند
+            freqs = suppress_pitch_bars(times, freqs)
 
         voiced = freqs > 0
         self.duration = float(times[-1]) if len(times) else 0.0
@@ -194,13 +215,21 @@ class TraceRenderer:
         self.px, self.py = self._to_pixels(times, mids)
         self.py = self._smooth_py(self.py)
 
-        # قطع‌های پیوستهٔ منحنی یک‌بار محاسبه می‌شوند (در هر فریم ثابت‌اند)
-        self._segs = self._segments()
-        self._draw_segs = self._subsets()
-        self.background = self._build_background()
-        self.dim_layer = self._build_static_layer()
-        self.base = self.background.copy()
-        self.base.alpha_composite(self.dim_layer)
+        if self.mode == "tape":
+            # نوار متحرک: پنجرهٔ زمانی حول لحظهٔ جاری (نسبت به طول فایل)
+            self.window = float(min(max(self.duration * 0.22, 4.0), 12.0))
+            self._tsegs = self._build_time_segments()
+            self.background = self._build_background()
+            self.base = self.background          # بدون لایهٔ ثابتِ «آینده»
+            self._segs, self._draw_segs, self.dim_layer = [], [], None
+        else:
+            # قطع‌های پیوستهٔ منحنی یک‌بار محاسبه می‌شوند (در هر فریم ثابت‌اند)
+            self._segs = self._segments()
+            self._draw_segs = self._subsets()
+            self.background = self._build_background()
+            self.dim_layer = self._build_static_layer()
+            self.base = self.background.copy()
+            self.base.alpha_composite(self.dim_layer)
 
     # ---------------------------------------------------------------- ابزار
     def _x_of_time(self, t):
@@ -355,6 +384,181 @@ class TraceRenderer:
             layer.alpha_composite(spr, (int(x - spr.width / 2), int(y - spr.height / 2)))
         return layer
 
+    # ------------------------------------------------- نوار متحرک (ویدیو)
+    def _m_of_y(self, y):
+        """معکوسِ `_y_of_midi`: پیکسل عمودی → میدی (برای سطح‌سنجی پل‌ها)."""
+        usable = self.H - MARGIN_T - MARGIN_B
+        frac = 1.0 - (y - MARGIN_T) / max(1e-6, usable)
+        return self.lo_midi + frac * (self.hi_midi - self.lo_midi)
+
+    def _build_time_segments(self):
+        """
+        قطعه‌های منحنی در دامنهٔ زمان (برای نمای نوار).
+
+        مثل `_segments` سکوت‌های کوتاه پل می‌خورند، ولی با یک شرط مهم:
+        فقط بین سطوح هم‌تراز (اختلاف کمتر از BRIDGE_MAX_ST نیم‌پرده) پل
+        زده می‌شود — تا خط پل، خودش «میلهٔ عمودی» نسازد.
+        خروجی: لیستی از (ts, ys) به‌صورت آرایهٔ numpy.
+        """
+        times, py = self.times, self.py
+        valid = ~np.isnan(py)
+        runs, cur = [], []
+        for i in range(len(times)):
+            if not valid[i]:
+                if len(cur) > 1:
+                    runs.append(cur)
+                cur = []
+                continue
+            if cur and (float(times[i]) - float(times[cur[-1]])) > GAP_BRIDGE_SEC:
+                if len(cur) > 1:
+                    runs.append(cur)
+                cur = []
+            cur.append(i)
+        if len(cur) > 1:
+            runs.append(cur)
+
+        groups = []                     # هر گروه: لیست ایندکس‌های قابل اتصال
+        for run in runs:
+            if not groups:
+                groups.append(list(run))
+                continue
+            prev = groups[-1]
+            gap = float(times[run[0]] - times[prev[-1]])
+            lvl = abs(self._m_of_y(py[run[0]]) - self._m_of_y(py[prev[-1]]))
+            if gap <= GAP_BRIDGE_SEC and lvl <= BRIDGE_MAX_ST:
+                prev.extend(run)
+            else:
+                groups.append(list(run))
+
+        segs = []
+        for g in groups:
+            idx = np.asarray(g, dtype=int)
+            segs.append((times[idx], py[idx]))
+        return segs
+
+    def _frame_tape(self, t):
+        """
+        فریم «نوار متحرک»: پنجرهٔ [t-window/2, t+window/2] همیشه مرکزش روی
+        لحظهٔ جاری است؛ خط پخش در مرکز ثابت و منحنی از راست به چپ می‌لغزد.
+        """
+        W, H = self.W, self.H
+        usable = W - MARGIN_L - MARGIN_R
+        half = self.window / 2.0
+        view0, view1 = t - half, t + half
+
+        def x_of(tt):
+            return MARGIN_L + ((tt - view0) / self.window) * usable
+
+        img = self.background.copy()
+        overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(overlay)
+
+        # --- تیک‌های ثانیه (نشانهٔ حرکت نوار) ---
+        s = int(math.floor(view0))
+        s_end = int(math.ceil(view1))
+        while s <= s_end:
+            if s >= 0:
+                x = x_of(float(s))
+                if 14 <= x <= W - 14:
+                    strong = (s % 5 == 0)
+                    d.line([(x, 20), (x, H - 20)],
+                           fill=(255, 255, 255, 34 if strong else 15),
+                           width=1)
+            s += 1
+
+        # --- منحنی محو (باقی‌ماندهٔ نوار) + نقطه‌های محو نت‌ها ---
+        for ts, ys in self._tsegs:
+            lo = max(0, int(np.searchsorted(ts, view0, side="left")) - 1)
+            hi = min(len(ts), int(np.searchsorted(ts, view1, side="right")))
+            if hi - lo < 2:
+                continue
+            seg_t, seg_y = ts[lo:hi], ys[lo:hi]
+            pts = [(float(x_of(a)), float(b)) for a, b in zip(seg_t, seg_y)]
+            d.line(pts, fill=(86, 120, 160, 60), width=7, joint="curve")
+            d.line(pts, fill=DIM_LINE, width=3, joint="curve")
+
+        for note in self.notes:
+            f0 = note.get("f0_hz")
+            if not f0 or f0 <= 0:
+                continue
+            midi = 69.0 + 12.0 * math.log2(f0 / 440.0)
+            tt = (note.get("start") or 0.0) + (note.get("duration") or 0.0) / 2.0
+            if not (view0 <= tt <= view1):
+                continue
+            x, y = x_of(tt), self._y_of_midi(midi)
+            spr = self.sprites.get(8.5, DIM_DOT, core_alpha=150)
+            overlay.alpha_composite(spr, (int(x - spr.width / 2),
+                                          int(y - spr.height / 2)))
+
+        # --- بخش خوانده‌شده: منحنی طلایی تا لحظهٔ t (سه لایه = درخشش) ---
+        for ts, ys in self._tsegs:
+            lo = max(0, int(np.searchsorted(ts, view0, side="left")) - 1)
+            hi = min(len(ts), int(np.searchsorted(ts, view1, side="right")))
+            if hi - lo < 2:
+                continue
+            seg_t, seg_y = ts[lo:hi], ys[lo:hi]
+            mask = seg_t <= t
+            if not mask.any():
+                continue
+            k = int(np.flatnonzero(mask)[-1])
+            tail_t = seg_t[:k + 1]
+            tail_y = seg_y[:k + 1]
+            if k + 1 < len(seg_t):            # نیم‌قدم تا فریم بعدیِ نرسیده
+                f = 0.5
+                px_end = x_of(float(seg_t[k])) + \
+                    (x_of(float(seg_t[k + 1])) - x_of(float(seg_t[k]))) * f
+                py_end = float(seg_y[k]) + (float(seg_y[k + 1]) - float(seg_y[k])) * f
+                tail = [(float(x_of(a)), float(b)) for a, b in zip(tail_t, tail_y)]
+                tail.append((float(px_end), py_end))
+            else:
+                tail = [(float(x_of(a)), float(b)) for a, b in zip(tail_t, tail_y)]
+            if len(tail) < 2:
+                continue
+            for width, alpha in ((12, 34), (7, 80), (4, 235)):
+                d.line(tail,
+                       fill=(255, 214, 126, alpha) if width != 4 else GOLD,
+                       width=width, joint="curve")
+
+        # --- نقطه‌های طلایی نت‌های خوانده‌شده ---
+        for note in self.notes:
+            start = note.get("start") or 0.0
+            if start > t:
+                continue
+            f0 = note.get("f0_hz")
+            if not f0 or f0 <= 0:
+                continue
+            midi = 69.0 + 12.0 * math.log2(f0 / 440.0)
+            tt = start + (note.get("duration") or 0.0) / 2.0
+            if not (view0 <= tt <= view1):
+                continue
+            x, y = x_of(tt), self._y_of_midi(midi)
+            r = 4.6 if (note.get("duration") or 0) < 0.35 else 6.0
+            d.ellipse([x - r, y - r, x + r, y + r], fill=GOLD_SOFT)
+
+        img.alpha_composite(overlay)
+
+        # --- خط پخش ثابت در مرکز + نقطهٔ نورانیِ نت جاری ---
+        x_now = MARGIN_L + usable / 2.0
+        d2 = ImageDraw.Draw(img)
+        d2.line([(x_now, 18), (x_now, H - 18)], fill=(255, 255, 255, 40), width=6)
+        d2.line([(x_now, 18), (x_now, H - 18)], fill=PLAYHEAD, width=2)
+
+        m_now = self._current_midi(t)
+        if m_now is not None:
+            y_now = self._y_of_midi(m_now)
+            halo = self.sprites.get(30.0, GOLD_SOFT, core_alpha=140)
+            img.alpha_composite(halo, (int(x_now - halo.width / 2),
+                                       int(y_now - halo.height / 2)))
+            dot = self.sprites.get(12.0, (255, 250, 232), core_alpha=255)
+            img.alpha_composite(dot, (int(x_now - dot.width / 2),
+                                      int(y_now - dot.height / 2)))
+
+        if self.show_range_guides:
+            self._draw_range_guides(img, t)
+        if self.show_labels:
+            self._draw_labels(img, t, m_now)
+        return img.convert("RGB")
+
     # ------------------------------------------------------- نقطهٔ جاری
     def _current_midi(self, t):
         """میدی جاری در لحظهٔ t (با درون‌یابی خطی — حرکت نرم)."""
@@ -399,6 +603,8 @@ class TraceRenderer:
 
     def frame(self, t):
         t = max(0.0, min(t, self.duration))
+        if self.mode == "tape":
+            return self._frame_tape(t)
         img = self.base.copy()
 
         overlay = Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0))
@@ -471,7 +677,10 @@ class TraceRenderer:
                 continue
             midi = 69.0 + 12.0 * math.log2(note["f0_hz"] / 440.0)
             y = self._y_of_midi(midi)
-            x0 = self._x_of_time(note.get("start") or 0.0)
+            # در نمای نوار، خط راهنما از چپِ قاب شروع می‌شود (موقعیت یادداشت
+            # ممکن است از پنجره بیرون رفته باشد)
+            x0 = (MARGIN_L if self.mode == "tape"
+                  else self._x_of_time(note.get("start") or 0.0))
             # خط‌چین کم‌رنگ تا انتهای نمودار
             step = 14
             x = x0
@@ -537,19 +746,24 @@ MAX_FRAMES = 24000     # سقف تعداد فریم (برای فایل‌های 
 
 
 def render_video(times, freqs, notes, wav_path, out_path, fps=None,
-                 progress_callback=None, width=W, height=H):
+                 progress_callback=None, width=W, height=H, mode="tape"):
     """
     ویدیوی mp4 می‌سازد: فریم‌ها با rawvideo به ffmpeg داده و هم‌زمان با صدای
     اصلی mux می‌شوند (بدون فایل میانی، سریع و کم‌حافظه).
 
     fps اگر None باشد خودکار انتخاب می‌شود: ۲۰ برای فایل‌های کوتاه و کمتر
     برای فایل‌های طولانی، تا تعداد فریم‌ها از MAX_FRAMES بیشتر نشود.
+
+    mode="tape" (پیش‌فرض): نمای «نوار متحرک» — پنجرهٔ زمانی حول لحظهٔ جاری
+    می‌چرخد و نقطهٔ نورانی در مرکز بالا/پایین می‌رود. «فیلتر میله‌ها» همیشه
+    در ویدیو اعمال می‌شود. mode="overview": نمای کلی ثابت (نسخهٔ قدیمی).
     """
     if fps is None:
         probe = max(float(times[-1]) if len(times) else 1.0, 0.2)
         fps = int(min(DEFAULT_FPS, max(8, MAX_FRAMES / probe)))
     fps = max(8, min(int(fps), 30))
-    renderer = TraceRenderer(times, freqs, notes, width=width, height=height)
+    renderer = TraceRenderer(times, freqs, notes, width=width, height=height,
+                             mode=mode, filter_curve=True)
     duration = max(renderer.duration, 0.2)
     n_frames = max(1, int(math.ceil(duration * fps)))
 
@@ -611,14 +825,19 @@ def main():
     ap.add_argument("--png", default=None, help="فقط تصویر PNG")
     ap.add_argument("--fps", type=int, default=DEFAULT_FPS)
     ap.add_argument("--denoise", action="store_true")
+    ap.add_argument("--overview", action="store_true",
+                    help="ویدیوی نمای کلی ثابت (به‌جای نوار متحرک)")
     args = ap.parse_args()
 
     rep = analyze_range(args.file, denoise=args.denoise, make_plot=False)
     if args.png:
+        render_static_png(rep["_times"], rep["_freqs"], rep["notes"], args.png)
         print("PNG ساخته شد:", args.png)
     out = args.output or (os.path.splitext(args.file)[0] + "_trace.mp4")
     print("در حال رندر ویدیو...")
-    render_video(rep["_times"], rep["_freqs"], rep["notes"], rep["_wav"], out, fps=args.fps)
+    render_video(rep["_times"], rep["_freqs"], rep["notes"], rep["_wav"], out,
+                 fps=args.fps,
+                 mode=("overview" if args.overview else "tape"))
     print("ویدیو ساخته شد:", out)
 
 

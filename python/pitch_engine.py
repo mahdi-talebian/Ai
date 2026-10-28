@@ -652,6 +652,153 @@ def smooth_pitch_contour(freqs, median_window=3):
     return out
 
 
+def suppress_pitch_bars(times, freqs, jump_st=2.5, ret_dev_st=3.0,
+                        max_side_sec=0.6):
+    """
+    فیلتر نمایشی «میله‌های بزرگ» منحنی فرکانس
+    ===========================================
+    بعضی فایل‌ها جهش‌های آنی (یک‌دو فریم) به ارتفاع ده‌ها نیم‌پرده دارند؛
+    در رسم نمودار تبدیل به «میلهٔ عمودی غیرواقعی» می‌شوند — جایی که اصلاً
+    نتی خوانده نشده. این تابع فقط روی لایهٔ نمایش اثر می‌گذارد (تحلیل نت‌ها
+    و گزارش دست‌نخورده می‌ماند):
+
+      • هر جهش غیرواقعی بین دو فریم مجاور (بیشتر از jump_st نیم‌پرده در
+        گام ۵ میلی‌ثانیه‌ای = سرعتی که صدای انسان هرگز ندارد) شناسایی می‌شود.
+      • سمت «جزیره‌ای» که از میانهٔ قطعه فاصلهٔ بیشتری دارد و کوتاه است
+        (کمتر از max_side_sec) کامل حذف می‌شود — همان میله.
+      • اگر هر دو طرف بلند باشند (جهش میانیِ اکتاوی)، فقط خط بریده می‌شود
+        تا میلهٔ عمودی رسم نشود ولی هیچ داده‌ای از دست نرود.
+      • دو طرفِ جهش وقتی هر دو «کوتاه»‌اند، سمتی که از میانه دورتر است
+        حذف می‌شود (طرف دیگر به‌عنوان نتِ غالب می‌ماند).
+
+    خروجی: آرایهٔ جدید freqs (۰ = بی‌صدا) — مقدارهای اصلی تغییر نمی‌کنند.
+    """
+    freqs = np.asarray(freqs, dtype=float)
+    times = np.asarray(times, dtype=float)
+    n = len(freqs)
+    if n < 3:
+        return freqs.copy()
+
+    out = freqs.copy()
+    voiced = out > 0
+    if voiced.sum() < 3:
+        return out
+
+    # گام زمانی میانه (برای تبدیل آستانهٔ نیم‌پرده به ثانیه)
+    dts = np.diff(times[voiced])
+    dt = float(np.median(dts)) if len(dts) else 0.005
+    dt = max(dt, 1e-4)
+
+    mids = np.full(n, np.nan)
+    mids[voiced] = 69.0 + 12.0 * np.log2(out[voiced] / 440.0)
+
+    # قطعه‌های صدادار پیوسته (ایندکس‌ها)
+    runs = []
+    i = 0
+    while i < n:
+        if np.isnan(mids[i]):
+            i += 1
+            continue
+        j = i
+        while j < n and not np.isnan(mids[j]):
+            j += 1
+        if j - i >= 3:
+            runs.append([i, j])
+        i = j
+
+    def _level_run_bounds(m, a, b, k, side):
+        """
+        مرزهای «سطحِ فریم k» را در بازه [a, b) برمی‌گرداند.
+        side='L' به چپ، 'R' به راست — حرکت تا وقتی که |m - سطح| < ret_dev.
+        """
+        lvl = m[k]
+        if side == "L":
+            e = k
+            while e - 1 >= a and abs(m[e - 1] - lvl) < ret_dev_st:
+                e -= 1
+            return e, k
+        e = k
+        while e + 1 < b and abs(m[e + 1] - lvl) < ret_dev_st:
+            e += 1
+        return k, e
+
+    queue = list(runs)
+    guard = 0
+    while queue and guard < 200000:
+        guard += 1
+        a, b = queue.pop(0)
+        if b - a < 3:
+            continue
+
+        seg = mids[a:b]
+        if np.isnan(seg).any():          # نگهبان تضادین: قطعه باید بدون NaN باشد
+            i2 = a
+            while i2 < b:
+                if np.isnan(mids[i2]):
+                    i2 += 1
+                    continue
+                j2 = i2
+                while j2 < b and not np.isnan(mids[j2]):
+                    j2 += 1
+                if j2 - i2 >= 3:
+                    queue.append([i2, j2])
+                i2 = j2
+            continue
+
+        idx = np.arange(a, b)
+        diffs = np.abs(np.diff(seg))
+        if not len(diffs) or float(diffs.max()) <= jump_st:
+            continue                     # بدون جهشِ غیرواقعی — تمام
+
+        k = int(idx[int(np.argmax(diffs))])   # فریم چپِ جهش
+
+        # میانهٔ سالمِ قطعه به‌عنوان مرجع «سطح عادی»
+        base = float(np.nanmedian(seg))
+
+        # مرزهای سطحِ فریم چپ و راست جهش
+        la, lk = _level_run_bounds(mids, a, b, k, "L")
+        rk, rr = _level_run_bounds(mids, a, b, k + 1, "R")
+        dur_l = (lk - la + 1) * dt
+        dur_r = (rr - rk + 1) * dt
+        far_l = abs(mids[k] - base)
+        far_r = abs(mids[k + 1] - base)
+
+        # کدام سمت «میله» است؟ سمت دورتر از میانه؛ در تساوی، سمت کوتاه‌تر
+        if far_l > far_r + 2.0:
+            side = "L"
+        elif far_r > far_l + 2.0:
+            side = "R"
+        else:
+            side = "L" if dur_l <= dur_r else "R"
+
+        if side == "L" and dur_l <= max_side_sec:
+            mids[la:lk + 1] = np.nan      # کل سمتِ میله حذف می‌شود
+        elif side == "R" and dur_r <= max_side_sec:
+            mids[rk:rr + 1] = np.nan      # کل سمتِ میله حذف می‌شود
+        else:
+            # هر دو طرف بلند: فقط خط عمودی بریده می‌شود (بدون حذف داده)
+            mids[k] = np.nan
+
+        # ادامهٔ پردازش روی زیرقطعه‌های تازه
+        i2 = a
+        while i2 < b:
+            if np.isnan(mids[i2]):
+                i2 += 1
+                continue
+            j2 = i2
+            while j2 < b and not np.isnan(mids[j2]):
+                j2 += 1
+            if j2 - i2 >= 3:
+                queue.append([i2, j2])
+            i2 = j2
+
+    # بازنویسی خروجی
+    out[voiced] = 440.0 * (2.0 ** ((mids[voiced] - 69.0) / 12.0))
+    dead = voiced & np.isnan(mids)
+    out[dead] = 0.0
+    return out
+
+
 def segment_notes(times, freqs, min_duration=0.06, stability_cents=35,
                    merge_gap_sec=0.12, merge_pitch_cents=60):
     """
