@@ -28,11 +28,17 @@
     return;
   }
 
+  /* ── آفلاین همیشه، مگر در حالت توسعهٔ وب ─────────────────────────────────
+     داخل APK صفحه از https://appassets.local باز می‌شود و پل بومی
+     (window.NativeApp) هم هست؛ در آن حالت حتی اگر کسی آدرس را با
+     ?engine=server دستی عوض کند، موتور آفلاین خاموش نمی‌شود. */
   var params = new URLSearchParams(global.location ? location.search : '');
-  var FORCE_SERVER = params.get('engine') === 'server';
+  var IN_APP = !!global.NativeApp ||
+    /^https?:\/\/appassets\.local/i.test(String((global.location && global.location.href) || ''));
+  var FORCE_SERVER = !IN_APP && params.get('engine') === 'server';
   if (FORCE_SERVER) {
     global.LocalOffline = { enabled: false };
-    return;                                  // مسیر سرور (Docker/توسعه) دست‌نخورده
+    return;                                  // مسیر سرور (فقط دمو/توسعهٔ وب)
   }
 
   var SR = CORE.SR;
