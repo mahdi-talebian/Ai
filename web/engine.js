@@ -1,0 +1,1322 @@
+/* ============================================================================
+   🎯 موتور آفلاین «ردِّ صدا» — web/engine.js
+   ----------------------------------------------------------------------------
+   همهٔ تحلیل، همان‌جا روی گوشی/مرورگر انجام می‌شود؛ هیچ درخواستی به هیچ
+   سروری فرستاده نمی‌شود. این ماژول همان خط لولهٔ Python پروژه را به
+   جاوااسکریپت برگردانده است:
+
+     python/analysis_engine.py  →  prepareAudio / pitchTrack / spectralOctaveFix
+                                   / yinTrack / segmentNotes / refineNotes / کیفیت
+     python/range_analyzer.py   →  analyzeRange (گزارش JSON با همان کلیدها)
+     python/trace_video.py      →  TraceRenderer (PNG/MP4 با همان چیدمان)
+     python/pitch_engine.py     →  extractPitchChunk (اجرای زنده)
+
+   نکتهٔ مهم دربارهٔ «یکسان بودن نتیجه»: همان اصول ثابت پروژه رعایت شده —
+   مونوی فازمحافظ، ۲۲٬۰۵۰ هرتز، حذف DC، بالاگذر ۴۵ هرتز، نرمال‌سازی پیک ۰٫۹،
+   گام زمانی ثابت ۵ میلی‌ثانیه و بازهٔ جست‌وجوی ثابت ۵۵–۱۲۰۰ هرتز — بنابراین
+   یک فایل همیشه یک نتیجه می‌دهد؛ مستقل از نرخ نمونه/کانال/بلندی/فرمت.
+   ========================================================================== */
+(function (global) {
+  'use strict';
+
+  /* ══════════════════════════════════════════════════════════════════════
+     ثابت‌ها (هم‌نام و هم‌مقدار با Python)
+     ══════════════════════════════════════════════════════════════════════ */
+  var SR = 22050;
+  var HIGHPASS_HZ = 45.0;
+  var PEAK_TARGET = 0.9;
+  var MIN_F0 = 55.0;
+  var MAX_F0 = 1200.0;
+  var TIME_STEP = 0.005;
+  var PYIN_MAX_SEC = 180.0;
+  var LADDER = [0.25, 1.0 / 3.0, 0.5, 1.0, 2.0, 3.0, 4.0];
+
+  var MIN_NOTE_SEC = 0.10;
+  var MAX_STABILITY_CENTS = 70.0;
+  var PAUSE_MIN_SEC = 0.30;
+  var ROBUST_MIN_TOTAL_SEC = 0.35;
+  var ROBUST_MIN_TOTAL_PCT = 0.2;
+  var ROBUST_MIN_COUNT = 2;
+
+  var VOICING_THRESHOLD = 0.42;     // معادل voicing_threshold در Praat
+  var WIN_PERIODS = 3.0;            // پنجره = ۳ دورهٔ fmin (مثل Praat)
+  var NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+  /* ══════════════════════════════════════════════════════════════════════
+     ابزارهای پایه
+     ══════════════════════════════════════════════════════════════════════ */
+  function nextPow2(n) { var p = 1; while (p < n) p <<= 1; return p; }
+
+  function zeros(n) { return new Float64Array(n); }
+
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+
+  function median(arr) {
+    if (!arr.length) return 0;
+    var a = Array.prototype.slice.call(arr).sort(function (x, y) { return x - y; });
+    var m = a.length >> 1;
+    return a.length % 2 ? a[m] : 0.5 * (a[m - 1] + a[m]);
+  }
+
+  function percentile(arr, p) {
+    if (!arr.length) return 0;
+    var a = Array.prototype.slice.call(arr).sort(function (x, y) { return x - y; });
+    var k = clamp((a.length - 1) * p / 100.0, 0, a.length - 1);
+    var lo = Math.floor(k), hi = Math.ceil(k);
+    return lo === hi ? a[lo] : a[lo] + (a[hi] - a[lo]) * (k - lo);
+  }
+
+  function mean(arr) {
+    if (!arr.length) return 0;
+    var s = 0;
+    for (var i = 0; i < arr.length; i++) s += arr[i];
+    return s / arr.length;
+  }
+
+  function cents(a, b) { return 1200.0 * Math.log2(Math.max(a, 1e-9) / Math.max(b, 1e-9)); }
+
+  function hzToMidi(f) { return 69.0 + 12.0 * Math.log2(f / 440.0); }
+  function midiToHz(m) { return 440.0 * Math.pow(2.0, (m - 69.0) / 12.0); }
+  function midiToName(m) {
+    if (m == null || !isFinite(m)) return '—';
+    var r = Math.round(m);
+    return NOTE_NAMES[((r % 12) + 12) % 12] + (Math.floor(r / 12) - 1);
+  }
+
+  /* ── FFT (iterative radix-2، با کش جدول) ─────────────────────────────── */
+  var _twCache = {};
+  function twiddles(n) {
+    if (_twCache[n]) return _twCache[n];
+    var half = n >> 1, cos = new Float64Array(half), sin = new Float64Array(half);
+    for (var i = 0; i < half; i++) {
+      var ang = -2 * Math.PI * i / n;
+      cos[i] = Math.cos(ang);
+      sin[i] = Math.sin(ang);
+    }
+    _twCache[n] = { cos: cos, sin: sin };
+    return _twCache[n];
+  }
+
+  function fft(re, im) {
+    var n = re.length;
+    if (n <= 1) return;
+    // bit-reversal
+    for (var i = 1, j = 0; i < n; i++) {
+      var bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        var tr = re[i]; re[i] = re[j]; re[j] = tr;
+        var ti = im[i]; im[i] = im[j]; im[j] = ti;
+      }
+    }
+    var tw = twiddles(n);
+    for (var len = 2; len <= n; len <<= 1) {
+      var half = len >> 1, step = n / len;
+      for (var s = 0; s < n; s += len) {
+        for (var k = 0; k < half; k++) {
+          var wr = tw.cos[k * step], wi = tw.sin[k * step];
+          var a = s + k, b = a + half;
+          var vr = re[b] * wr - im[b] * wi;
+          var vi = re[b] * wi + im[b] * wr;
+          re[b] = re[a] - vr; im[b] = im[a] - vi;
+          re[a] += vr; im[a] += vi;
+        }
+      }
+    }
+  }
+
+  function ifft(re, im) {
+    var n = re.length, i;
+    for (i = 0; i < n; i++) im[i] = -im[i];
+    fft(re, im);
+    for (i = 0; i < n; i++) { re[i] /= n; im[i] = -im[i] / n; }
+  }
+
+  /** طیف دامنه برای یک پنجرهٔ حقیقی (nfft توان دو) */
+  function rfftMag(frame, nfft, windowFn) {
+    var re = new Float64Array(nfft), im = new Float64Array(nfft);
+    var n = Math.min(frame.length, nfft);
+    for (var i = 0; i < n; i++) re[i] = windowFn ? frame[i] * windowFn[i] : frame[i];
+    fft(re, im);
+    var half = (nfft >> 1) + 1, mag = new Float32Array(half);
+    for (var k = 0; k < half; k++) mag[k] = Math.hypot(re[k], im[k]);
+    return mag;
+  }
+
+  function hann(n) {
+    var w = new Float64Array(n);
+    for (var i = 0; i < n; i++) w[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / Math.max(1, n - 1));
+    return w;
+  }
+
+  /* ── بازنمونه‌برداری sinc پنجره‌ای (Kaiser) — نتیجهٔ قطعی و مستقل از مرورگر ── */
+  function besselI0(x) {
+    var sum = 1, term = 1, k = 1;
+    while (term > 1e-12 * sum) {
+      term *= (x / (2 * k)) * (x / (2 * k));
+      sum += term;
+      k++;
+      if (k > 60) break;
+    }
+    return sum;
+  }
+
+  function resample(y, srIn, srOut, taps) {
+    if (srIn === srOut) return y;
+    taps = taps || 32;
+    var ratio = srOut / srIn;
+    var nOut = Math.max(1, Math.round(y.length * ratio));
+    var out = new Float32Array(nOut);
+    var cutoff = Math.min(1.0, ratio);              // ضد-باندگذر هنگام کاهش نرخ
+    var beta = 5.0;
+    var i0beta = besselI0(beta);
+    var halfTaps = taps >> 1;
+
+    for (var i = 0; i < nOut; i++) {
+      var t = i / ratio;                            // موقعیت در ورودی
+      var i0 = Math.floor(t);
+      var acc = 0.0, norm = 0.0;
+      for (var k = -halfTaps + 1; k <= halfTaps; k++) {
+        var idx = i0 + k;
+        if (idx < 0) idx = 0;
+        if (idx >= y.length) idx = y.length - 1;
+        var x = t - (i0 + k);
+        var u = x / halfTaps;
+        if (u <= -1 || u >= 1) continue;
+        var w = besselI0(beta * Math.sqrt(1 - u * u)) / i0beta;
+        var arg = Math.PI * cutoff * x;
+        var sinc = (Math.abs(arg) < 1e-9) ? 1.0 : Math.sin(arg) / arg;
+        var h = cutoff * sinc * w;
+        acc += y[idx] * h;
+        norm += h;
+      }
+      out[i] = norm > 1e-9 ? acc / norm : 0.0;
+    }
+    return out;
+  }
+
+  /* ── فیلتر بالاگذر باترورث مرتبهٔ ۲ (هم‌ارز scipy butter(2) + sosfilt) ── */
+  function highpass(y, sr, fc) {
+    var w0 = 2 * Math.PI * fc / sr;
+    var cosw = Math.cos(w0), sinw = Math.sin(w0);
+    var alpha = sinw / (2 * Math.SQRT1_2);          // Q = 1/√2 → باترورث مرتبهٔ ۲
+    var a0 = 1 + alpha;
+    var b0 = (1 + cosw) / 2 / a0, b1 = -(1 + cosw) / a0, b2 = (1 + cosw) / 2 / a0;
+    var a1 = -2 * cosw / a0, a2 = (1 - alpha) / a0;
+    var out = new Float32Array(y.length);
+    var x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (var i = 0; i < y.length; i++) {
+      var x0 = y[i];
+      var y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+      out[i] = y0;
+      x2 = x1; x1 = x0; y2 = y1; y1 = y0;
+    }
+    return out;
+  }
+
+  /* ── کاهش نویز: گیت طیفی با تخمین نویز از فریم‌های ساکت ────────────────── */
+  function denoise(y, sr) {
+    var win = 1024, hop = 256, nfft = 1024;
+    if (y.length < win * 2) return y;
+    var w = hann(win);
+    var nFrames = Math.floor((y.length - win) / hop) + 1;
+    if (nFrames < 2) return y;
+
+    // ذخیرهٔ طیف دامنهٔ همهٔ فریم‌ها
+    var mags = new Array(nFrames);
+    var phases = new Array(nFrames);
+    var half = (nfft >> 1) + 1;
+    for (var f = 0; f < nFrames; f++) {
+      var re = new Float64Array(nfft), im = new Float64Array(nfft);
+      for (var i = 0; i < win; i++) re[i] = y[f * hop + i] * w[i];
+      fft(re, im);
+      var mag = new Float32Array(half), ph = new Float32Array(half);
+      for (var k = 0; k < half; k++) {
+        mag[k] = Math.hypot(re[k], im[k]);
+        ph[k] = Math.atan2(im[k], re[k]);
+      }
+      mags[f] = mag; phases[f] = ph;
+    }
+
+    // پروفایل نویز: صدک ۲۰٪ هر بین (نویز ایستا)
+    var noise = new Float32Array(half);
+    var col = new Float32Array(nFrames);
+    for (var k2 = 0; k2 < half; k2++) {
+      for (var f2 = 0; f2 < nFrames; f2++) col[f2] = mags[f2][k2];
+      noise[k2] = percentile(col, 20);
+    }
+
+    var out = new Float32Array(y.length);
+    var norm = new Float32Array(y.length);
+    var over = 1.6;            // ضریب فراکاهش
+    var floorGain = 0.06;      // کف (تا صدا کاملاً خشک نشود)
+    for (var fr = 0; fr < nFrames; fr++) {
+      var re2 = new Float64Array(nfft), im2 = new Float64Array(nfft);
+      var mag2 = mags[fr], ph2 = phases[fr];
+      for (var b = 0; b < half; b++) {
+        var m = mag2[b] - over * noise[b];
+        if (m < 0) m = 0;
+        var gain = mag2[b] > 1e-12 ? Math.max(floorGain, m / mag2[b]) : floorGain;
+        var val = mag2[b] * gain;
+        re2[b] = val * Math.cos(ph2[b]);
+        im2[b] = val * Math.sin(ph2[b]);
+        if (b > 0 && b < half - 1) {              // تقارن هرمیتی
+          re2[nfft - b] = re2[b];
+          im2[nfft - b] = -im2[b];
+        }
+      }
+      ifft(re2, im2);
+      for (var s = 0; s < win; s++) {
+        out[fr * hop + s] += re2[s] * w[s];
+        norm[fr * hop + s] += w[s] * w[s];
+      }
+    }
+    for (var i2 = 0; i2 < out.length; i2++) {
+      if (norm[i2] > 1e-8) out[i2] /= norm[i2];
+    }
+    return out;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     مرحلهٔ ۱ — استانداردسازی ورودی (هم‌ارز prepare_audio)
+     ══════════════════════════════════════════════════════════════════════ */
+  function safeDownmix(channels) {
+    if (channels.length === 1) return { mono: channels[0], mode: 'mono', corr: null };
+    var a = channels[0], b = channels[1];
+    var n = Math.min(a.length, b.length);
+    var ma = 0, mb = 0, i;
+    for (i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+    ma /= n; mb /= n;
+    var va = 0, vb = 0, cov = 0;
+    for (i = 0; i < n; i++) {
+      var da = a[i] - ma, db = b[i] - mb;
+      va += da * da; vb += db * db; cov += da * db;
+    }
+    var corr = cov / (Math.sqrt(va * vb) + 1e-12);
+    if (corr < -0.35) {
+      // فاز معکوس: میانگین صدا را حذف می‌کند ⇒ کانال قوی‌تر
+      var ra = 0, rb = 0;
+      for (i = 0; i < n; i++) { ra += a[i] * a[i]; rb += b[i] * b[i]; }
+      var best = ra >= rb ? 0 : 1;
+      return { mono: channels[best], mode: 'ch' + (best + 1), corr: corr };
+    }
+    var mono = new Float32Array(n);
+    for (i = 0; i < n; i++) mono[i] = 0.5 * (a[i] + b[i]);
+    return { mono: mono, mode: 'mean', corr: corr };
+  }
+
+  function prepareAudio(channels, srIn, opts) {
+    opts = opts || {};
+    var diag = { sample_rate_in: srIn, channels_in: channels.length, sample_rate_used: SR };
+
+    var dm = safeDownmix(channels);
+    diag.downmix = (dm.mode === 'mono') ? 'mono'
+      : (dm.mode === 'mean' ? 'mean' : 'channel' + dm.mode.slice(2) + '_phase_safe');
+    if (dm.corr != null) diag.channel_correlation = Math.round(dm.corr * 1000) / 1000;
+
+    var y = dm.mono;
+    // DC
+    var s = 0;
+    for (var i = 0; i < y.length; i++) s += y[i];
+    var dc = s / Math.max(1, y.length);
+
+    var peakRaw = 0, clipCount = 0;
+    for (i = 0; i < y.length; i++) {
+      var v = Math.abs(y[i]);
+      if (v > peakRaw) peakRaw = v;
+      if (v >= 0.999) clipCount++;
+    }
+
+    // نرخ نمونه
+    if (srIn !== SR) y = resample(y, srIn, SR, 32);
+    diag.decoder = 'builtin';
+
+    // بدون DC + بالاگذر
+    var hp = highpass(y, SR, HIGHPASS_HZ);
+
+    // کاهش نویز (اختیاری)
+    if (opts.denoise) {
+      hp = denoise(hp, SR);
+      diag.denoise = true;
+    } else {
+      diag.denoise = false;
+    }
+
+    // نرمال‌سازی پیک
+    var peakHp = 0;
+    for (i = 0; i < hp.length; i++) {
+      var av = Math.abs(hp[i]);
+      if (av > peakHp) peakHp = av;
+    }
+    var gain = peakHp > 1e-6 ? PEAK_TARGET / peakHp : 0;
+    var out = new Float32Array(hp.length);
+    for (i = 0; i < hp.length; i++) out[i] = (hp[i] - 0) * gain;
+
+    var duration = out.length / SR;
+    diag.dc_offset = Math.round((dc + 0) * 1e5) / 1e5;
+    diag.clipping_pct = Math.round(1000 * 100 * clipCount / Math.max(1, y.length)) / 1000;
+    diag.peak_dbfs = Math.round(20 * Math.log10(Math.max(peakRaw, 1e-9)) * 10) / 10;
+    diag.normalized_gain_db = gain > 0 ? Math.round(20 * Math.log10(gain) * 10) / 10 : 0;
+    diag.duration_sec = Math.round(duration * 100) / 100;
+    diag.snr_db = estimateSnr(out, SR);
+    diag.snr_method = 'frame-percentile';
+    diag.standard = { sample_rate: SR, channels: 1, highpass_hz: HIGHPASS_HZ, peak: PEAK_TARGET };
+
+    return { y: out, sr: SR, duration: duration, diag: diag };
+  }
+
+  function estimateSnr(y, sr, frame) {
+    frame = frame || 0.05;
+    var hop = Math.max(1, Math.round(sr * frame));
+    var n = Math.floor(y.length / hop);
+    if (n < 4) return null;
+    var rms = new Float64Array(n);
+    for (var f = 0; f < n; f++) {
+      var acc = 0;
+      for (var i = 0; i < hop; i++) {
+        var v = y[f * hop + i];
+        acc += v * v;
+      }
+      rms[f] = Math.sqrt(acc / hop) + 1e-12;
+    }
+    var loud = percentile(rms, 90), quiet = percentile(rms, 10);
+    if (!(quiet > 0) || !(loud > 0)) return null;
+    var snr = 20 * Math.log10(loud / quiet);
+    if (snr < 2.0) return null;
+    return Math.round(Math.min(snr, 45.0) * 10) / 10;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     مرحلهٔ ۲ — استخراج F0 (هم‌ارز Praat to_pitch_ac + very_accurate)
+     روش: خودهمبستگی نرمال‌شدهٔ پنجره‌ای (Boersma) + گام ۵ میلی‌ثانیه
+     ══════════════════════════════════════════════════════════════════════ */
+  function pitchFrame(x, sr, fmin, fmax) {
+    var L = x.length;
+    var tauMin = Math.max(2, Math.floor(sr / fmax));
+    var tauMax = Math.min(L - 2, Math.ceil(sr / fmin));
+    if (tauMax <= tauMin) return { f0: 0, strength: 0 };
+
+    var nfft = nextPow2(L + tauMax + 1);
+    var re = new Float64Array(nfft), im = new Float64Array(nfft);
+    var i;
+    for (i = 0; i < L; i++) re[i] = x[i];
+    fft(re, im);
+    for (i = 0; i < nfft; i++) {
+      var p = re[i] * re[i] + im[i] * im[i];
+      re[i] = p; im[i] = 0;
+    }
+    ifft(re, im);
+    var acf = re;                            // acf[τ] = Σ x[i] x[i+τ]
+
+    // انرژی تجمعی برای نرمال‌سازی دقیق (لبه‌های پنجره)
+    var cs = new Float64Array(L + 1);
+    for (i = 0; i < L; i++) cs[i + 1] = cs[i] + x[i] * x[i];
+    var etot = cs[L];
+
+    var best = -1, bestTau = 0;
+    var rs = new Float64Array(tauMax + 1);
+    for (var tau = tauMin; tau <= tauMax; tau++) {
+      var e0 = cs[L - tau];                 // انرژی بخش اول
+      var e1 = etot - cs[tau];              // انرژی بخش دوم
+      var den = Math.sqrt(Math.max(e0 * e1, 1e-20));
+      var r = den > 1e-12 ? acf[tau] / den : 0;
+      rs[tau] = r;
+      if (r > best) { best = r; bestTau = tau; }
+    }
+    if (bestTau === 0) return { f0: 0, strength: 0 };
+
+    // قاعدهٔ «پیک زودتر با کیفیت نزدیک» — مثل Praat، از خطای زیراکتاو جلوگیری می‌کند
+    var thr = best * 0.90;
+    for (var t2 = tauMin; t2 <= bestTau; t2++) {
+      if (rs[t2] >= thr) {
+        var isPeak = (t2 > tauMin && t2 < tauMax && rs[t2] >= rs[t2 - 1] && rs[t2] >= rs[t2 + 1]);
+        if (isPeak || Math.abs(rs[t2] - best) < 1e-6) { bestTau = t2; best = rs[t2]; break; }
+      }
+    }
+
+    // درون‌یابی سهمی برای دقت زیر-نمونه
+    var f0 = 0, strength = clamp(best, 0, 1);
+    if (bestTau > tauMin && bestTau < tauMax) {
+      var a = rs[bestTau - 1], b = rs[bestTau], c = rs[bestTau + 1];
+      var den2 = (a - 2 * b + c);
+      var delta = Math.abs(den2) > 1e-12 ? 0.5 * (a - c) / den2 : 0;
+      delta = clamp(delta, -0.5, 0.5);
+      f0 = sr / (bestTau + delta);
+    } else {
+      f0 = sr / bestTau;
+    }
+    if (strength < VOICING_THRESHOLD || f0 < fmin * 0.98 || f0 > fmax * 1.02) {
+      return { f0: 0, strength: strength };
+    }
+    return { f0: f0, strength: strength };
+  }
+
+  function pitchTrack(y, sr, fmin, fmax, onProgress) {
+    fmin = fmin || MIN_F0;
+    fmax = fmax || MAX_F0;
+    var winN = Math.max(256, Math.round(WIN_PERIODS / fmin * sr));
+    if (winN % 2) winN++;
+    var hopN = Math.round(TIME_STEP * sr);
+    var nFrames = Math.max(1, Math.floor((y.length - winN) / hopN) + 1);
+    var times = new Float32Array(nFrames);
+    var freqs = new Float32Array(nFrames);
+    var strength = new Float32Array(nFrames);
+    var win = hann(winN);
+    var buf = new Float64Array(winN);
+    var lastReport = 0;
+
+    for (var i = 0; i < nFrames; i++) {
+      var start = i * hopN;
+      var m = 0;
+      for (var k = 0; k < winN; k++) {
+        var v = y[start + k] || 0;
+        buf[k] = v * win[k];
+        m += buf[k];
+      }
+      m /= winN;
+      for (k = 0; k < winN; k++) buf[k] -= m;
+
+      var r = pitchFrame(buf, sr, fmin, fmax);
+      times[i] = i * TIME_STEP;
+      freqs[i] = r.f0;
+      strength[i] = r.strength;
+
+      if (onProgress && (i - lastReport) > Math.max(200, nFrames / 40)) {
+        lastReport = i;
+        onProgress(i / nFrames);
+      }
+    }
+    if (onProgress) onProgress(1.0);
+    return { times: times, freqs: freqs, strength: strength };
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     مرحلهٔ ۳ — اصلاح «نردبان هارمونیک» (اکتاو/پنجم/چهارم)
+     ══════════════════════════════════════════════════════════════════════ */
+  function frameScores(y, sr, tFrames, baseF, ratios, winSec, nfft, maxHz, maxH) {
+    winSec = winSec || 0.046; nfft = nfft || 4096; maxHz = maxHz || 3600.0; maxH = maxH || 12;
+    var winN = Math.max(256, Math.round(sr * winSec));
+    var n = tFrames.length;
+    var out = new Float64Array(n * ratios.length);
+    if (!n) return { scores: out, n: 0, nRatios: ratios.length };
+    var w = hann(winN);
+    var binHz = sr / nfft;
+    var nBins = (nfft >> 1) + 1;
+    var bandLo = Math.max(1, Math.floor(MIN_F0 * 0.9 / binHz));
+    var bandHi = Math.min(nBins - 1, Math.floor(4000.0 / binHz));
+    var wgt = new Float64Array(maxH);
+    for (var h = 0; h < maxH; h++) wgt[h] = 1.0 / (h + 1);
+    wgt[0] = 0.0;   // هارمونیک اول وزن ندارد (گم‌شدن f0 طبیعی است)
+
+    for (var f = 0; f < n; f++) {
+      var center = Math.round(tFrames[f] * sr);
+      var start = center - (winN >> 1);
+      var frame = new Float32Array(winN);
+      for (var i = 0; i < winN; i++) {
+        var idx = start + i;
+        frame[i] = (idx >= 0 && idx < y.length) ? y[idx] : 0;
+      }
+      var mag = rfftMag(frame, nfft, w);
+
+      // مرجع هر فریم: بیشینهٔ باند
+      var ref = 1e-12;
+      for (var b = bandLo; b <= bandHi; b++) if (mag[b] > ref) ref = mag[b];
+
+      for (var ri = 0; ri < ratios.length; ri++) {
+        var num = 0, den = 0;
+        for (var k = 1; k <= maxH; k++) {
+          var pos = (baseF[f] * ratios[ri] * k) / binHz;
+          if (pos < 1 || pos >= nBins - 2 || pos * binHz > maxHz) continue;
+          var ip = Math.round(pos);
+          var peak = 0;
+          for (var off = -2; off <= 2; off++) {
+            var j = ip + off;
+            if (j < 0 || j >= nBins) continue;
+            if (mag[j] > peak) peak = mag[j];
+          }
+          var db = 20.0 * Math.log10(Math.max(peak, 1e-12) / ref);
+          var sk = clamp(db / 25.0, -1.0, 0.0);
+          num += sk * wgt[k - 1];
+          den += wgt[k - 1];
+        }
+        out[f * ratios.length + ri] = den > 0.35 ? num / Math.max(den, 1e-9) : -1.0;
+      }
+    }
+    return { scores: out, n: n, nRatios: ratios.length };
+  }
+
+  function spectralOctaveFix(y, sr, times, freqs, fmin, fmax) {
+    var n = freqs.length;
+    var out = Float32Array.from(freqs);
+    var ratio = new Float32Array(n).fill(1);
+    var nUp = 0, nDown = 0;
+    if (!n) return { freqs: out, nUp: 0, nDown: 0, ratio: ratio };
+    fmin = fmin || MIN_F0; fmax = fmax || MAX_F0;
+
+    // ران‌های پیوستهٔ صدادار
+    var runs = [];
+    var i = 0;
+    while (i < n) {
+      if (!(freqs[i] > 0)) { i++; continue; }
+      var j = i + 1;
+      while (j < n && freqs[j] > 0 && (times[j] - times[j - 1]) < 0.08) j++;
+      if (j - i >= 3 && (times[j - 1] - times[i]) >= 0.10) runs.push([i, j]);
+      i = j;
+    }
+
+    for (var r = 0; r < runs.length; r++) {
+      var i0 = runs[r][0], i1 = runs[r][1];
+      var seg = freqs.subarray(i0, i1);
+      var med = percentile(seg, 50);
+      if (!(med > 0)) continue;
+      var stride = Math.max(1, Math.ceil((i1 - i0) / 48));
+      var tSel = [], fSel = [];
+      for (var k = i0; k < i1; k += stride) { tSel.push(times[k]); fSel.push(freqs[k]); }
+      if (tSel.length < 2) continue;
+
+      var sc = frameScores(y, sr, tSel, fSel, LADDER, 0.046, 4096, 3600.0, 12);
+      var pooled = new Float64Array(LADDER.length);
+      for (var ri = 0; ri < LADDER.length; ri++) {
+        var col = new Float64Array(sc.n);
+        for (var fI = 0; fI < sc.n; fI++) col[fI] = sc.scores[fI * LADDER.length + ri];
+        pooled[ri] = median(col);
+      }
+      var best = -Infinity;
+      for (var q = 0; q < pooled.length; q++) if (pooled[q] > best) best = pooled[q];
+      if (best < -0.5) continue;
+
+      // از میان فرض‌هایی که تقریباً هم‌امتیازند، «پایین‌ترین» درست است
+      var targetR = Infinity;
+      for (var q2 = 0; q2 < pooled.length; q2++) {
+        if (pooled[q2] >= best - 0.10) targetR = Math.min(targetR, LADDER[q2]);
+      }
+      if (!isFinite(targetR) || Math.abs(targetR - 1.0) < 1e-6) continue;
+      var target = med * targetR;
+      var scale = target / med;
+
+      for (var kk = i0; kk < i1; kk++) {
+        var fv = freqs[kk];
+        var qq = fv / med;
+        var rr = LADDER[0];
+        for (var L = 0; L < LADDER.length; L++) {
+          if (Math.abs(cents(qq, LADDER[L])) < Math.abs(cents(qq, rr))) rr = LADDER[L];
+        }
+        var nv = (Math.abs(cents(qq, rr)) <= 70.0) ? target * rr : fv * scale;
+        if (Math.abs(cents(nv, fv)) < 15.0) nv = fv;
+        if (nv < fmin * 0.95 || nv > fmax * 1.05) nv = fv;
+        ratio[kk] = fv > 0 ? nv / fv : 1.0;
+        if (nv < fv * 0.98) nDown++;
+        else if (nv > fv * 1.02) nUp++;
+        out[kk] = nv;
+      }
+    }
+    return { freqs: out, nUp: nUp, nDown: nDown, ratio: ratio };
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     مرحلهٔ ۴ — موتور دوم مستقل (YIN) فقط برای «هم‌رأیی/اطمینان»
+     ══════════════════════════════════════════════════════════════════════ */
+  function yinTrack(y, sr, fmin, fmax, duration, hopSec) {
+    if (duration > PYIN_MAX_SEC) return null;
+    hopSec = hopSec || 0.01;
+    var W = Math.round(0.025 * sr);
+    var hop = Math.round(hopSec * sr);
+    var tauMin = Math.max(2, Math.floor(sr / fmax));
+    var tauMax = Math.min(W - 2, Math.ceil(sr / fmin));
+    var nFrames = Math.max(1, Math.floor((y.length - W - tauMax) / hop) + 1);
+    var f0 = new Float32Array(nFrames);
+    var prob = new Float32Array(nFrames);
+
+    var nfft = nextPow2(W + tauMax + 1);
+    for (var f = 0; f < nFrames; f++) {
+      var start = f * hop;
+      var x = new Float64Array(W);
+      var i;
+      for (i = 0; i < W; i++) x[i] = y[start + i] || 0;
+
+      var re = new Float64Array(nfft), im = new Float64Array(nfft);
+      for (i = 0; i < W; i++) re[i] = x[i];
+      fft(re, im);
+      for (i = 0; i < nfft; i++) {
+        var p = re[i] * re[i] + im[i] * im[i];
+        re[i] = p; im[i] = 0;
+      }
+      ifft(re, im);
+      var acf = re;
+
+      var cs = new Float64Array(W + 1);
+      for (i = 0; i < W; i++) cs[i + 1] = cs[i] + x[i] * x[i];
+      var etot = cs[W];
+
+      // تابع تفاضل نرمال‌شدهٔ YIN
+      var d = new Float64Array(tauMax + 1);
+      for (var tau = 1; tau <= tauMax; tau++) {
+        var e1 = (tau < W) ? cs[tau] : etot;
+        d[tau] = Math.max(0, etot - e1 + (etot - e1) - 2 * acf[tau]);
+      }
+      var cum = 0, bestTau = -1, bestVal = Infinity;
+      var cmnd = new Float64Array(tauMax + 1);
+      for (var t = 1; t <= tauMax; t++) {
+        cum += d[t];
+        cmnd[t] = cum > 1e-12 ? d[t] * t / cum : 1.0;
+      }
+      for (var t2 = tauMin; t2 <= tauMax; t2++) {
+        if (cmnd[t2] < 0.15) { bestTau = t2; break; }
+        if (cmnd[t2] < bestVal) { bestVal = cmnd[t2]; bestTau = t2; }
+      }
+      if (bestTau > 0) {
+        // درون‌یابی سهمی
+        var tt = bestTau;
+        if (tt > 1 && tt < tauMax) {
+          var a2 = cmnd[tt - 1], b2 = cmnd[tt], c2 = cmnd[tt + 1];
+          var den2 = (a2 - 2 * b2 + c2);
+          var dl = Math.abs(den2) > 1e-12 ? 0.5 * (a2 - c2) / den2 : 0;
+          tt = tt + clamp(dl, -0.5, 0.5);
+        }
+        var hz = sr / tt;
+        f0[f] = (hz >= fmin && hz <= fmax) ? hz : 0;
+        prob[f] = clamp(1.0 - cmnd[bestTau], 0, 1);
+      }
+    }
+    return { f0: f0, prob: prob, hop: hopSec };
+  }
+
+  function fuseWithSecond(times, freqs, strength, second, hop) {
+    hop = hop || 0.01;
+    var n = times.length;
+    var conf = new Float32Array(n);
+    for (var i = 0; i < n; i++) conf[i] = clamp(strength[i], 0, 1);
+    if (!second || !second.f0.length) {
+      for (i = 0; i < n; i++) conf[i] = freqs[i] > 0 ? Math.max(conf[i], 0.55) : 0;
+      return { freqs: freqs, conf: conf, agreement: null };
+    }
+    var m = second.f0.length;
+    var pF0 = new Float32Array(n).fill(NaN);
+    var pProb = new Float32Array(n).fill(NaN);
+    for (i = 0; i < n; i++) {
+      var idx = Math.round(times[i] / hop);
+      if (idx >= 0 && idx < m) { pF0[i] = second.f0[idx]; pProb[i] = second.prob[idx]; }
+    }
+    var voiced = 0, agreeN = 0;
+    for (i = 0; i < n; i++) {
+      var hasMain = freqs[i] > 0;
+      var hasSecond = isFinite(pF0[i]) && pF0[i] > 0 && pProb[i] > 0.25;
+      if (hasMain) voiced++;
+      if (hasMain && hasSecond) {
+        var ok = Math.abs(cents(freqs[i], pF0[i])) <= 70.0;
+        if (ok) {
+          agreeN++;
+          conf[i] = Math.min(1.0, conf[i] + 0.25);
+          if (strength[i] < 0.45) conf[i] = Math.min(1.0, conf[i] + 0.1);
+        } else {
+          conf[i] *= 0.75;
+        }
+      }
+      if (hasMain) conf[i] = Math.max(conf[i], 0.25); else conf[i] = 0;
+    }
+    var agreement = voiced ? Math.round(1000 * 100 * agreeN / voiced) / 1000 : 0.0;
+    return { freqs: freqs, conf: conf, agreement: Math.round(agreement * 10) / 10 };
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     مرحلهٔ ۵ — پاک‌سازی، هموارسازی، تفکیک نت، پالایش
+     ══════════════════════════════════════════════════════════════════════ */
+  function smoothPitchContour(freqs, windowSize) {
+    windowSize = windowSize || 3;
+    var n = freqs.length;
+    var out = Float32Array.from(freqs);
+    var half = Math.floor(windowSize / 2);
+    var i = 0;
+    while (i < n) {
+      if (!(out[i] > 0)) { i++; continue; }
+      var j = i;
+      while (j < n && out[j] > 0) j++;
+      var seg = out.subarray(i, j);
+      if (seg.length >= windowSize) {
+        var copy = Float32Array.from(seg);
+        for (var k = 0; k < seg.length; k++) {
+          var lo = Math.max(0, k - half), hi = Math.min(seg.length - 1, k + half);
+          var tmp = [];
+          for (var q = lo; q <= hi; q++) tmp.push(copy[q]);
+          seg[k] = median(tmp);
+        }
+      }
+      i = j;
+    }
+    return out;
+  }
+
+  function removeOctaveSpecks(times, freqs, spanSec, tolCents) {
+    spanSec = spanSec || 0.25; tolCents = tolCents || 900;
+    var out = Float32Array.from(freqs);
+    var n = freqs.length;
+    if (n < 5) return out;
+    var dt = median(Array.from(times.subarray(1).map(function (v, i) { return v - times[i]; })));
+    var win = Math.max(3, Math.round(spanSec / Math.max(1e-3, dt || 0.005)));
+    var half = win >> 1;
+    for (var i = 0; i < n; i++) {
+      if (!(out[i] > 0)) continue;
+      var lo = Math.max(0, i - half), hi = Math.min(n, i + half + 1);
+      var neigh = [];
+      for (var j = lo; j < hi; j++) if (out[j] > 0) neigh.push(out[j]);
+      if (neigh.length < 3) continue;
+      var med = median(neigh);
+      var c = cents(out[i], med);
+      if (Math.abs(Math.abs(c) - 1200.0) < (1200.0 - tolCents)) out[i] = med;
+    }
+    return out;
+  }
+
+  function segmentNotes(times, freqs, conf, opts) {
+    opts = opts || {};
+    var minDuration = opts.min_duration || 0.08;
+    var stabilityCents = opts.stability_cents || 45;
+    var mergeGap = opts.merge_gap != null ? opts.merge_gap : 0.10;
+    var mergeCents = opts.merge_cents || 55;
+    var n = freqs.length;
+    if (!n) return [];
+    conf = conf || new Float32Array(n).fill(1);
+
+    var dt = n > 1 ? median(Array.from(times.subarray(1).map(function (v, i) { return v - times[i]; }))) : 0.01;
+    var contCents = stabilityCents * 1.6;
+
+    var raw = [];
+    var i = 0;
+    while (i < n) {
+      if (!(freqs[i] > 0) || conf[i] < 0.12) { i++; continue; }
+      var j = i;
+      var vals = [freqs[i]], weights = [Math.max(conf[i], 1e-3)];
+      while (j + 1 < n && freqs[j + 1] > 0 && conf[j + 1] >= 0.12) {
+        var lo = Math.max(0, vals.length - 25);
+        var num = 0, den = 0;
+        for (var q = lo; q < vals.length; q++) { num += vals[q] * weights[q]; den += weights[q]; }
+        var ref = den > 0 ? num / den : vals[vals.length - 1];
+        if (Math.abs(cents(freqs[j + 1], ref)) > contCents) break;
+        j++;
+        vals.push(freqs[j]);
+        weights.push(Math.max(conf[j], 1e-3));
+      }
+      raw.push({ i: i, j: j, t0: times[i], t1: times[j] });
+      i = j + 1;
+    }
+
+    var merged = [];
+    for (var r = 0; r < raw.length; r++) {
+      var seg = raw[r];
+      if (!merged.length) { merged.push(seg); continue; }
+      var prev = merged[merged.length - 1];
+      var gap = seg.t0 - prev.t1;
+      var a = freqs.subarray(prev.i, prev.j + 1);
+      var b = freqs.subarray(seg.i, seg.j + 1);
+      if (gap <= mergeGap && a.length && b.length) {
+        if (Math.abs(cents(median(b), median(a))) <= mergeCents) {
+          prev.j = seg.j; prev.t1 = seg.t1;
+          continue;
+        }
+      }
+      merged.push(seg);
+    }
+
+    var notes = [];
+    for (var m = 0; m < merged.length; m++) {
+      var s = merged[m];
+      var duration = s.t1 - s.t0 + dt;
+      if (duration < minDuration) continue;
+      var f = freqs.subarray(s.i, s.j + 1);
+      var c = conf.subarray(s.i, s.j + 1);
+      if (f.length < 2) continue;
+      var gf = [], gc = [];
+      for (var k = 0; k < f.length; k++) {
+        if (isFinite(f[k]) && f[k] > 0) { gf.push(f[k]); gc.push(Math.max(c[k], 1e-3)); }
+      }
+      if (!gf.length) continue;
+      var num2 = 0, den2 = 0;
+      for (k = 0; k < gf.length; k++) { num2 += gf[k] * gc[k]; den2 += gc[k]; }
+      var f0 = den2 > 0 ? num2 / den2 : 0;
+      if (!isFinite(f0) || !(f0 > 0)) continue;
+      var dev = gf.map(function (v) { return Math.abs(cents(v, f0)); });
+      var stability = percentile(dev, 75);
+      var trend = gf.length > 1 ? cents(gf[gf.length - 1], f0) - cents(gf[0], f0) : 0;
+      notes.push({
+        start: Math.round(s.t0 * 1000) / 1000,
+        end: Math.round(s.t1 * 1000) / 1000,
+        duration: Math.round(duration * 1000) / 1000,
+        f0_hz: Math.round(f0 * 100) / 100,
+        stability_cents: Math.round(stability * 10) / 10,
+        confidence: Math.round(mean(gc) * 100) / 100,
+        glide_cents: Math.round(trend * 10) / 10,
+        n_frames: gf.length
+      });
+    }
+    return notes;
+  }
+
+  function parabolicPeak(mag, i) {
+    if (i <= 0 || i >= mag.length - 1) return i;
+    var a = mag[i - 1], b = mag[i], c = mag[i + 1];
+    var den = (a - 2 * b + c);
+    if (Math.abs(den) < 1e-12) return i;
+    return i + 0.5 * (a - c) / den;
+  }
+
+  function noteSpectrum(y, sr, t0, t1, winSec, nfft) {
+    winSec = winSec || 0.06; nfft = nfft || 16384;
+    var dur = Math.max(0, t1 - t0);
+    var pad = Math.min(0.15 * dur, 0.08);
+    var a = t0 + pad, b = t1 - pad;
+    if (b - a < 0.04) { a = t0; b = t1; }
+    var winN = Math.round(sr * winSec);
+    var i0 = Math.max(0, Math.round(a * sr) - (winN >> 1));
+    var i1 = Math.min(y.length, Math.round(b * sr) + winN);
+    if (i1 - i0 < winN) return null;
+
+    var starts = [];
+    for (var s = Math.max(0, Math.round(a * sr) - i0); s < Math.max(0, Math.round(b * sr) - i0); s += Math.max(1, winN >> 1)) {
+      if (s + winN <= i1 - i0) starts.push(s);
+    }
+    if (!starts.length) starts = [Math.max(0, ((i1 - i0) >> 1) - (winN >> 1))];
+
+    var w = hann(winN);
+    var acc = new Float64Array((nfft >> 1) + 1);
+    for (var si = 0; si < starts.length; si++) {
+      var frame = new Float32Array(winN);
+      for (var k = 0; k < winN; k++) frame[k] = y[i0 + starts[si] + k] || 0;
+      var mag = rfftMag(frame, nfft, w);
+      for (var q = 0; q < acc.length; q++) acc[q] += mag[q];
+    }
+    for (q = 0; q < acc.length; q++) acc[q] /= starts.length;
+    return acc;
+  }
+
+  function refineNoteF0(y, sr, t0, t1, f0, nfft, maxK, maxHz) {
+    nfft = nfft || 16384; maxK = maxK || 10; maxHz = maxHz || 4000.0;
+    if (!(f0 > 0) || t1 - t0 < 0.08) return { f0: null, support: 0 };
+    var mag = noteSpectrum(y, sr, t0, t1, 0.06, nfft);
+    if (!mag || mag.length < 16) return { f0: null, support: 0 };
+    var binHz = sr / nfft;
+    var nBins = mag.length;
+    var support = 0;
+    var maxMag = 1e-12;
+    for (var i = 0; i < nBins; i++) if (mag[i] > maxMag) maxMag = mag[i];
+
+    for (var k = 1; k <= maxK; k++) {
+      var target = k * f0;
+      if (target > Math.min(maxHz, binHz * (nBins - 3))) break;
+      var span = target * (Math.pow(2, 45 / 1200.0) - 1);
+      var lo = Math.max(1, Math.floor((target - span) / binHz));
+      var hi = Math.min(nBins - 2, Math.ceil((target + span) / binHz));
+      if (hi <= lo) continue;
+      var pk = 0;
+      for (var j = lo; j <= hi; j++) if (mag[j] > pk) pk = mag[j];
+      if (20 * Math.log10(pk / maxMag) >= -30.0) support++;
+    }
+
+    var est = f0;
+    for (var it = 0; it < 3; it++) {
+      var num = 0, den = 0;
+      for (var k2 = 1; k2 <= maxK; k2++) {
+        var tgt = k2 * est;
+        if (tgt > Math.min(maxHz, binHz * (nBins - 3))) break;
+        var sp = tgt * (Math.pow(2, 45 / 1200.0) - 1);
+        var l2 = Math.max(1, Math.floor((tgt - sp) / binHz));
+        var h2 = Math.min(nBins - 2, Math.ceil((tgt + sp) / binHz));
+        if (h2 <= l2) continue;
+        var bi = l2, bv = -1;
+        for (var jj = l2; jj <= h2; jj++) if (mag[jj] > bv) { bv = mag[jj]; bi = jj; }
+        var peakHz = parabolicPeak(mag, bi) * binHz;
+        if (!(peakHz > 0)) continue;
+        if (Math.abs(cents(peakHz, tgt)) > 45.0) continue;
+        var w2 = mag[bi] / Math.sqrt(k2);
+        num += w2 * k2 * peakHz;
+        den += w2 * k2 * k2;
+      }
+      if (den <= 0) break;
+      var newEst = num / den;
+      if (!isFinite(newEst) || !(newEst > 0)) break;
+      if (Math.abs(cents(newEst, est)) < 0.05) { est = newEst; break; }
+      est = newEst;
+    }
+    if (!isFinite(est) || !(est > 0)) return { f0: null, support: support };
+    if (Math.abs(cents(est, f0)) > 70.0) return { f0: null, support: support };
+    return { f0: est, support: support };
+  }
+
+  function refineNotes(y, sr, notes) {
+    if (!notes || !notes.length) return { notes: notes, refined: 0 };
+    var refined = 0;
+    for (var i = 0; i < notes.length; i++) {
+      var nt = notes[i];
+      var r = refineNoteF0(y, sr, nt.start, nt.end, nt.f0_hz);
+      nt.harmonics = r.support;
+      if (r.f0 == null) continue;
+      nt.f0_hz_coarse = nt.f0_hz;
+      nt.f0_hz = Math.round(r.f0 * 1000) / 1000;
+      refined++;
+    }
+    return { notes: notes, refined: refined };
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     مرحلهٔ ۶ — کیفیت و خط لولهٔ کامل
+     ══════════════════════════════════════════════════════════════════════ */
+  function qualityStatus(diag) {
+    var warnings = [], score = 100.0;
+    var snr = diag.snr_db;
+    diag.snr_estimated = snr != null;
+    if (snr != null) {
+      if (snr < 8) { warnings.push('نویز پس‌زمینه زیاد است — «کاهش نویز» را روشن کن یا نزدیک‌تر/بلندتر ضبط کن.'); score -= 30; }
+      else if (snr < 15) { warnings.push('نسبت سیگنال به نویز متوسط است؛ چند نت ممکن است محافظه‌کارانه حذف شوند.'); score -= 12; }
+    }
+    var clip = diag.clipping_pct || 0;
+    if (clip > 0.5) { warnings.push('صدا کلیپ (اشباع) شده — هارمونیک‌های اضافه دقت نت را کم می‌کند.'); score -= 18; }
+    else if (clip > 0.05) score -= 5;
+
+    if ((diag.peak_dbfs || 0) < -32) { warnings.push('سطح ضبط خیلی کم است (نرمال‌سازی انجام شد، اما نویز نسبی بیشتر است).'); score -= 8; }
+
+    var vr = diag.voiced_ratio_pct || 0;
+    if (vr < 25) { warnings.push('بخش کمی از فایل صدادار است — تحلیل روی همان بخش انجام شد.'); score -= 10; }
+
+    var agree = diag.pyin_agreement_pct;
+    if (agree != null && agree < 70) { warnings.push('دو موتور مستقل در بخشی از فایل هم‌رأی نبودند (احتمال ویبراتوی شدید/نویز).'); score -= 10; }
+
+    var mc = diag.mean_note_confidence || 0;
+    if (mc && mc < 0.5) score -= 8;
+
+    score = Math.max(0, Math.min(100, score));
+    var status = score >= 88 ? 'excellent' : score >= 74 ? 'good' : score >= 55 ? 'fair' : 'poor';
+    return { status: status, warnings: warnings };
+  }
+
+  /**
+   * خط لولهٔ کامل روی نمونه‌های خام (بدون DOM) — قابل تست در Node.
+   * ورودی: channels (آرایهٔ Float32Array/Float64Array)، sr
+   */
+  function analyzeChannels(channels, srIn, opts) {
+    opts = opts || {};
+    var onProgress = opts.onProgress || function () {};
+    var t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+    onProgress('preparing', 0.02);
+    var prep = prepareAudio(channels, srIn, opts);
+    var y = prep.y, sr = prep.sr, duration = prep.duration, diag = prep.diag;
+
+    var fmin = MIN_F0, fmax = MAX_F0;
+    diag.f0_range_hz = [Math.round(fmin), Math.round(fmax)];
+    diag.f0_range_mode = 'fixed';
+    diag.time_step_sec = TIME_STEP;
+
+    onProgress('pitch', 0.10);
+    var tr = pitchTrack(y, sr, fmin, fmax, function (f) {
+      onProgress('pitch', 0.10 + 0.55 * f);
+    });
+
+    onProgress('octave', 0.68);
+    var oct = spectralOctaveFix(y, sr, tr.times, tr.freqs, fmin, fmax);
+    diag.octave_fixes = { halved: oct.nDown, doubled: oct.nUp };
+
+    onProgress('pyin', 0.74);
+    var second = yinTrack(y, sr, fmin, fmax, duration, 0.01);
+    var fused = fuseWithSecond(tr.times, oct.freqs, tr.strength, second, 0.01);
+    diag.pyin_agreement_pct = fused.agreement;
+    diag.pyin_used = fused.agreement != null;
+    diag.pyin_engine = 'yin';
+
+    onProgress('clean', 0.86);
+    var freqs = removeOctaveSpecks(tr.times, fused.freqs);
+    freqs = smoothPitchContour(freqs, 3);
+
+    onProgress('notes', 0.92);
+    var notes = segmentNotes(tr.times, freqs, fused.conf);
+
+    onProgress('refine', 0.95);
+    var ref = refineNotes(y, sr, notes);
+    notes = ref.notes;
+    diag.notes_refined = ref.refined;
+
+    var voicedCount = 0;
+    for (var i = 0; i < freqs.length; i++) if (freqs[i] > 0) voicedCount++;
+    diag.voiced_ratio_pct = freqs.length ? Math.round(1000 * 100 * voicedCount / freqs.length) / 1000 : 0;
+    diag.mean_note_confidence = notes.length
+      ? Math.round(mean(notes.map(function (n) { return n.confidence; })) * 100) / 100 : 0;
+    diag.n_notes = notes.length;
+    var q = qualityStatus(diag);
+    diag.status = q.status;
+    diag.warnings = q.warnings;
+    diag.engine_sec = Math.round(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0) / 100) / 10;
+
+    onProgress('done', 1.0);
+    return {
+      times: tr.times,
+      freqs: freqs,
+      conf: fused.conf,
+      notes: notes,
+      sr: sr,
+      duration: duration,
+      quality: diag,
+      wav: y
+    };
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     مرحلهٔ ۷ — گزارش (هم‌ساختار با range_analyzer.analyze_range)
+     ══════════════════════════════════════════════════════════════════════ */
+  function fmtNote(note) {
+    var f0 = (note && note.f0_hz) || 0;
+    if (!(f0 > 0)) return null;
+    var midiF = hzToMidi(f0);
+    var midiR = Math.round(midiF);
+    return {
+      note_name: midiToName(midiF),
+      midi: midiR,
+      midi_exact: Math.round(midiF * 1000) / 1000,
+      f0_hz: Math.round(f0 * 100) / 100,
+      cents_offset: Math.round((midiF - midiR) * 1000) / 10,
+      octave: Math.floor(midiR / 12) - 1,
+      start: Math.round((note.start || 0) * 100) / 100,
+      duration: Math.round((note.duration || 0) * 100) / 100,
+      stability_cents: Math.round((note.stability_cents || 0) * 10) / 10,
+      confidence: Math.round((note.confidence || 0) * 100) / 100,
+      glide_cents: Math.round((note.glide_cents || 0) * 10) / 10
+    };
+  }
+
+  function harmonicOk(n) {
+    var h = n.harmonics;
+    return (h == null) ? true : (h >= 1);
+  }
+
+  function pick(notes, chooseMax) {
+    var usable = notes.filter(function (n) {
+      return (n.duration || 0) >= MIN_NOTE_SEC &&
+        (n.stability_cents == null || n.stability_cents <= MAX_STABILITY_CENTS) &&
+        harmonicOk(n) && (n.f0_hz || 0) > 0;
+    });
+    if (!usable.length) usable = notes.filter(function (n) { return (n.f0_hz || 0) > 0; });
+    if (!usable.length) return null;
+    return usable.reduce(function (acc, n) {
+      if (!acc) return n;
+      return chooseMax ? (n.f0_hz > acc.f0_hz ? n : acc) : (n.f0_hz < acc.f0_hz ? n : acc);
+    }, null);
+  }
+
+  function robustExtremes(notes, sungTotal) {
+    var agg = {};
+    var keys = [];
+    for (var i = 0; i < notes.length; i++) {
+      var n = notes[i];
+      if (!((n.f0_hz || 0) > 0)) continue;
+      if (!harmonicOk(n)) continue;
+      var key = Math.round(nz(n.midi));
+      if (!agg[key]) { agg[key] = { sec: 0, count: 0, best: n }; keys.push(key); }
+      agg[key].sec += (n.duration || 0);
+      agg[key].count += 1;
+      if ((n.duration || 0) > (agg[key].best.duration || 0)) agg[key].best = n;
+    }
+    function nz(v) { return isFinite(v) ? v : 0; }
+    if (!keys.length) return { hi: null, lo: null, stats: { candidates: 0 } };
+
+    var thresh = Math.max(ROBUST_MIN_TOTAL_SEC, (ROBUST_MIN_TOTAL_PCT / 100.0) * sungTotal);
+    var stableKeys = keys.filter(function (k) { return agg[k].sec >= thresh && agg[k].count >= ROBUST_MIN_COUNT; });
+    if (!stableKeys.length) stableKeys = keys;
+
+    function pack(row) {
+      var o = {};
+      for (var p in row.best) if (Object.prototype.hasOwnProperty.call(row.best, p)) o[p] = row.best[p];
+      o.total_sung_sec = Math.round(row.sec * 100) / 100;
+      o.count = row.count;
+      return o;
+    }
+    var hiK = Math.max.apply(null, stableKeys);
+    var loK = Math.min.apply(null, stableKeys);
+    return {
+      hi: pack(agg[hiK]),
+      lo: pack(agg[loK]),
+      stats: {
+        candidates: stableKeys.length,
+        ignored_notes: keys.length - stableKeys.length,
+        threshold_sec: Math.round(thresh * 100) / 100
+      }
+    };
+  }
+
+  function downsampleContour(times, freqs, maxPoints) {
+    maxPoints = maxPoints || 1800;
+    if (!times.length) return { t: [], midi: [] };
+    var step = Math.max(1, Math.ceil(times.length / maxPoints));
+    var t = [], mi = [];
+    for (var i = 0; i < times.length; i += step) {
+      t.push(Math.round(times[i] * 100) / 100);
+      var v = freqs[i];
+      mi.push(v && v > 0 ? Math.round(hzToMidi(v) * 100) / 100 : null);
+    }
+    return { t: t, midi: mi };
+  }
+
+  function buildReport(res, meta) {
+    var times = res.times, freqs = res.freqs, quality = res.quality;
+    var notesRaw = res.notes;
+    var notes = notesRaw.map(fmtNote).filter(Boolean);
+    notes.sort(function (a, b) { return a.start - b.start; });
+
+    var highRaw = pick(notesRaw, true);
+    var lowRaw = pick(notesRaw, false);
+
+    var voiced = [];
+    for (var i = 0; i < freqs.length; i++) if (freqs[i] > 0) voiced.push(freqs[i]);
+    var voicedRatio = 100.0 * voiced.length / Math.max(1, freqs.length);
+    var sungAll = notes.reduce(function (a, n) { return a + n.duration; }, 0);
+
+    var robust = robustExtremes(notes, sungAll);
+    var hiNote = robust.hi ? fmtNoteAndKeep(robust.hi) : null;
+    var loNote = robust.lo ? fmtNoteAndKeep(robust.lo) : null;
+    var hiHz = 0, loHz = 0;
+    if (hiNote && loNote) {
+      hiHz = hiNote.f0_hz; loHz = loNote.f0_hz;
+    } else if (voiced.length) {
+      loHz = percentile(voiced, 2);
+      hiHz = percentile(voiced, 98);
+      hiNote = fmtNote({ f0_hz: hiHz });
+      loNote = fmtNote({ f0_hz: loHz });
+    }
+
+    function fmtNoteAndKeep(n) {
+      var o = fmtNote(n);
+      if (!o) return null;
+      if (n.total_sung_sec != null) o.total_sung_sec = n.total_sung_sec;
+      if (n.count != null) o.count = n.count;
+      return o;
+    }
+
+    var spanCents = (loHz && hiHz) ? cents(hiHz, loHz) : 0.0;
+    var spanSemis = spanCents / 100.0;
+    var fullOct = Math.floor(spanSemis / 12);
+    var restSemis = Math.round((spanSemis - fullOct * 12) * 100) / 100;
+    if (restSemis >= 11.995) { fullOct += 1; restSemis = 0; }
+    var centerHz = voiced.length ? median(voiced) : 0;
+    var centerNote = centerHz > 0 ? fmtNote({ f0_hz: centerHz }) : null;
+
+    // مکث‌ها / نفس‌ها
+    var pauses = [];
+    if (times.length > 1) {
+      var i2 = 0, n2 = freqs.length;
+      while (i2 < n2) {
+        if (freqs[i2] > 0) { i2++; continue; }
+        var j2 = i2;
+        while (j2 < n2 && !(freqs[j2] > 0)) j2++;
+        if (i2 > 0 && j2 < n2) {
+          var gap = times[Math.min(j2, n2 - 1)] - times[i2];
+          if (gap >= PAUSE_MIN_SEC) {
+            pauses.push({ start: Math.round(times[i2] * 100) / 100, duration: Math.round(gap * 100) / 100 });
+          }
+        }
+        i2 = j2;
+      }
+    }
+
+    // سهم نت‌ها
+    var counts = {};
+    notes.forEach(function (note) {
+      var key = note.midi;
+      if (!counts[key]) counts[key] = { note_name: note.note_name, midi: key, sung_sec: 0, count: 0 };
+      counts[key].sung_sec += note.duration;
+      counts[key].count += 1;
+    });
+    var noteCounts = Object.keys(counts).map(function (k) { return counts[k]; })
+      .sort(function (a, b) { return b.sung_sec - a.sung_sec; });
+    var sungTotal = noteCounts.reduce(function (a, r) { return a + r.sung_sec; }, 0) || 1.0;
+    noteCounts.forEach(function (row) {
+      row.sung_sec = Math.round(row.sung_sec * 100) / 100;
+      row.share_pct = Math.round(1000 * 100 * row.sung_sec / sungTotal) / 1000;
+    });
+
+    var nowIso = new Date().toISOString().replace(/\.\d+Z$/, '');
+
+    return {
+      meta: {
+        file: meta.file,
+        original_name: meta.original_name,
+        analyzed_at: nowIso,
+        engine: 'radde-seda offline — standardized input + AC pitch (Praat-style) ' +
+          '+ harmonic-ladder octave correction + YIN cross-check · 100% on-device',
+        sample_rate: res.sr,
+        denoise: !!meta.denoise,
+        offline: true,
+        audio_url: meta.audio_url || null,
+        visualization_url: meta.visualization_url || null,
+        downloads: meta.downloads || {}
+      },
+      quality: quality,
+      basic: {
+        duration_sec: Math.round(res.duration * 100) / 100,
+        voiced_ratio_pct: Math.round(voicedRatio * 10) / 10,
+        num_notes_detected: notes.length,
+        num_pauses_detected: pauses.length,
+        sung_sec: Math.round(sungTotal * 100) / 100,
+        longest_pause_sec: Math.round(Math.max.apply(null, pauses.map(function (p) { return p.duration; }).concat([0])) * 100) / 100
+      },
+      range: {
+        highest: hiNote,
+        lowest: loNote,
+        raw_highest: highRaw ? fmtNote(highRaw) : null,
+        raw_lowest: lowRaw ? fmtNote(lowRaw) : null,
+        robust: robust.stats,
+        span_semitones: Math.round(spanSemis * 100) / 100,
+        span_octaves: Math.round(spanSemis / 12.0 * 100) / 100,
+        span_cents: Math.round(spanCents * 10) / 10,
+        full_octaves: fullOct,
+        rest_semitones: restSemis,
+        quarter_tones: Math.round(spanSemis * 2 * 10) / 10,
+        of_octave_pct: Math.round(1000 * 100 * spanSemis / 12.0) / 1000,
+        center: centerNote
+      },
+      notes: notes,
+      note_counts: noteCounts,
+      pauses: pauses.slice(0, 50),
+      contour: downsampleContour(times, freqs)
+    };
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     مرحلهٔ ۸ — اجرای زنده (هم‌ارز extract_pitch_chunk روی سرور)
+     ══════════════════════════════════════════════════════════════════════ */
+  function extractPitchChunk(samples, sr, fmin, fmax) {
+    fmin = fmin || 60.0; fmax = fmax || 1000.0;
+    if (!samples || samples.length < sr * 0.03) return null;
+    // کاهش نرخ به ۱۶ کیلوهرتز برای سرعت (همان کاری که سرور با ۱۶k می‌کرد)
+    var target = 16000;
+    var y = (sr !== target) ? resample(samples, sr, target, 24) : samples;
+    var winN = Math.min(y.length, Math.round(3.0 / fmin * target));
+    if (winN % 2) winN++;
+    var seg = new Float64Array(winN);
+    var start = Math.max(0, y.length - winN);
+    for (var i = 0; i < winN; i++) seg[i] = y[start + i] || 0;
+    var m = mean(seg);
+    for (i = 0; i < winN; i++) seg[i] -= m;
+    var r = pitchFrame(seg, target, fmin, fmax);
+    return r.f0 > 0 ? r.f0 : null;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     خروجی
+     ══════════════════════════════════════════════════════════════════════ */
+  var api = {
+    // ثابت‌ها
+    SR: SR, MIN_F0: MIN_F0, MAX_F0: MAX_F0, TIME_STEP: TIME_STEP,
+    // ابزارهای عمومی (برای تست)
+    resample: resample, highpass: highpass, denoise: denoise,
+    prepareAudio: prepareAudio, safeDownmix: safeDownmix,
+    pitchTrack: pitchTrack, pitchFrame: pitchFrame,
+    spectralOctaveFix: spectralOctaveFix, frameScores: frameScores,
+    yinTrack: yinTrack, fuseWithSecond: fuseWithSecond,
+    smoothPitchContour: smoothPitchContour, removeOctaveSpecks: removeOctaveSpecks,
+    segmentNotes: segmentNotes, refineNotes: refineNotes, refineNoteF0: refineNoteF0,
+    analyzeChannels: analyzeChannels, buildReport: buildReport,
+    extractPitchChunk: extractPitchChunk,
+    qualityStatus: qualityStatus,
+    midiToName: midiToName, hzToMidi: hzToMidi, midiToHz: midiToHz, median: median, percentile: percentile
+  };
+
+  global.LocalEngineCore = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);

@@ -265,6 +265,12 @@
     .saveGrid{gap:6px}
     .saveGrid a.btn{font-size:.8rem}
   }
+  #offlineBadge{
+    display:none; align-items:center; gap:6px; margin-top:10px;
+    font-size:.78rem; color:#bfe6c8; background:rgba(46,160,90,.13);
+    border:1px solid rgba(46,160,90,.35); border-radius:999px; padding:6px 12px;
+    width:max-content; max-width:100%;
+  }
   @media (display-mode:standalone){
     .wrap{padding-top:calc(var(--safe-t) + 10px)}
   }
@@ -275,6 +281,9 @@
   <header>
     <h1>🎚 ردِّ صدا</h1>
     <p>بالاترین و پایین‌ترین نتی که خوانده می‌شود، گسترهٔ صدا، و حرکت نرم صدا روی خطوط نت.</p>
+    <div id="offlineBadge" style="display:none">
+      🔒 ۱۰۰٪ روی همین دستگاه — بدون اینترنت، بدون سرور
+    </div>
   </header>
 
   <nav class="tabbar" role="tablist" aria-label="بخش‌ها">
@@ -472,21 +481,27 @@
       <h2>⚡ حالت لحظه‌ای</h2>
       <div class="hint">
         در این حالت هیچ صدایی ذخیره نمی‌شود: صدا فقط همان لحظه تحلیل و دور ریخته می‌شود.
-        با بستن میکروفون، همه‌چیز پاک می‌شود و چیزی روی دستگاه یا سرور نمی‌ماند.
+        با بستن میکروفون، همه‌چیز پاک می‌شود و چیزی روی دستگاه ذخیره نمی‌ماند.
         اگر می‌خواهی خوانده‌هایت بماند، «⏺ با ضبط» را انتخاب کن.
       </div>
     </div>
   </section>
 </div>
 
+<!-- موتور آفلاین: همهٔ تحلیل روی همین دستگاه، بدون هیچ سروری -->
+<script src="engine.js"></script>
+<script src="offline.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════
    ابزارهای پایه
    ═══════════════════════════════════════════════════════════════════ */
-/* آدرس سرور: پیش‌فرض همان مبدأ (وب). در اپ اندروید آینده می‌توان با
-   ?api=https://server.example   یا  localStorage.api_base  سرور را جدا کرد. */
-const API = ((new URLSearchParams(location.search).get('api')
-  || localStorage.getItem('api_base') || '') + '').replace(/\/+$/, '');
+/* آدرس سرور: در حالت آفلاین (پیش‌فرض) خالی است و همهٔ کارها محلی انجام
+   می‌شود. برای اجرای نسخهٔ سروری می‌توان با ?engine=server و
+   ?api=https://server.example (یا localStorage.api_base) سرور را جدا کرد. */
+const API = (window.LocalOffline && window.LocalOffline.enabled)
+  ? ''      /* حالت آفلاین: هیچ سروری در کار نیست */
+  : (((new URLSearchParams(location.search).get('api')
+      || localStorage.getItem('api_base') || '') + '').replace(/\/+$/, ''));
 
 /** آدرس WebSocket بر اساس API (اگر API خالی باشد، همان مبدأ صفحه) */
 function wsUrl(path) {
@@ -519,14 +534,14 @@ const fmtClock = s => {
 async function apiRequest(url, options = {}) {
   let res;
   try { res = await fetch(url, options); }
-  catch (e) { throw new Error('اتصال به سرور برقرار نشد — سرور در حال اجراست؟'); }
+  catch (e) { throw new Error('پردازش محلی شروع نشد — صفحه را یک‌بار تازه کن.'); }
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('application/json')) {
     const txt = await res.text();
-    throw new Error('پاسخ نامعتبر از سرور: ' + txt.slice(0, 140));
+    throw new Error('پاسخ نامعتبر از موتور محلی: ' + txt.slice(0, 140));
   }
   const data = await res.json();
-  if (!res.ok || data.error) throw new Error(data.error || ('خطای سرور ' + res.status));
+  if (!res.ok || data.error) throw new Error(data.error || ('خطای موتور محلی ' + res.status));
   return data;
 }
 
@@ -861,7 +876,9 @@ async function saveVideoToGallery() {
   const base = (STATE.file && STATE.file.name) ? String(STATE.file.name).replace(/\.[^.]+$/, '')
              : ((STATE.report && STATE.report.meta && STATE.report.meta.original_name)
                 ? String(STATE.report.meta.original_name).replace(/\.[^.]+$/, '') : '');
-  const name = (base || 'radde-seda') + '-radde-seda.mp4';
+  const vname = STATE.videoName || 'radde-seda.mp4';
+  const ext = (vname.match(/\.[a-z0-9]+$/i) || ['.mp4'])[0];
+  const name = (base || 'radde-seda') + '-radde-seda' + ext;
 
   try {
     /* در اپ اندروید: ویدیو مستقیم در گالری (پوشهٔ Movies) ذخیره می‌شود */
@@ -890,7 +907,7 @@ async function saveVideoToGallery() {
       setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
       galleryMessage('فایل ویدیو ذخیره شد. اگر در گالری دیده نشد، از پوشهٔ «دانلودها» به گالری منتقلش کن.');
     } else {
-      // آخرین راه: لینک مستقیم سرور (فایل با نام گالری‌پسند ذخیره می‌شود)
+      // آخرین راه: لینک مستقیم فایل (در حالت آفلاین همان blob محلی است)
       triggerDownload(url, name);
       galleryMessage('در حال دانلود فایل ویدیو…');
     }
@@ -927,7 +944,8 @@ $('videoBtn').onclick = async () => {
 
     const dl = $('dlVideo');
     dl.href = `${API}/api/download/${STATE.jobId}/video`;
-    dl.setAttribute('download', 'radde-seda.mp4');
+    dl.setAttribute('download', res.video_name || 'radde-seda.mp4');
+    STATE.videoName = res.video_name || 'radde-seda.mp4';
     dl.style.display = 'inline-flex';
     $('galleryBox').style.display = 'block';
 
@@ -1665,7 +1683,7 @@ window.addEventListener('beforeunload', e => {
 });
 
 /* ثبت Service Worker (آفلاین + نصب‌پذیری) */
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && !window.NativeApp) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   });

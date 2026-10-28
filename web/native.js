@@ -83,22 +83,33 @@
   }
 
   /* ذخیره از یک آدرس: فایل سرور → دانلود مستقیم، blob/داده → تکه‌تکه */
+  function isSameOrigin(url) {
+    try { return new URL(url, location.href).origin === location.origin; }
+    catch (e) { return false; }
+  }
+
   function saveFromUrl(url, name) {
     if (!url) return;
+    // فایل‌های خود اپ (بلاب محلی، data:، یا مسیر /api محلی) — بدون اینترنت
+    if (/^(blob|data):/i.test(url) || isSameOrigin(url)) {
+      try {
+        fetch(url).then(function (r) { return r.blob(); })
+          .then(function (b) {
+            if (!b) { toast('فایل پیدا نشد'); return; }
+            saveBlob(b, safeName(name) || 'output');
+          })
+          .catch(function (e) { toast('ذخیره ناموفق بود: ' + (e && e.message || e)); });
+      } catch (e) {
+        toast('ذخیره ناموفق بود: ' + (e && e.message || e));
+      }
+      return;
+    }
     if (/^https?:/i.test(url)) {
       try {
         NA.saveUrl(String(url), safeName(name));
         toast('در حال دانلود…');
       } catch (e) { toast('دانلود ناموفق بود: ' + e); }
       return;
-    }
-    // data: و blob: — از حافظهٔ صفحه خوانده و روی گوشی نوشته می‌شود
-    try {
-      fetch(url).then(function (r) { return r.blob(); })
-        .then(function (b) { saveBlob(b, name); })
-        .catch(function (e) { toast('ذخیره ناموفق بود: ' + (e && e.message || e)); });
-    } catch (e) {
-      toast('ذخیره ناموفق بود: ' + (e && e.message || e));
     }
   }
 
@@ -109,8 +120,16 @@
     /** جایگزین triggerDownload در اپ */
     save: function (url, name) { saveFromUrl(url, name); },
 
-    /** جایگزین saveVideoToGallery در اپ: پوشهٔ Movies + ایندکس رسانه */
+    /**
+     * جایگزین saveVideoToGallery در اپ: پوشهٔ Movies + ایندکس رسانه.
+     * ویدیوی آفلاین یک blob محلی است؛ آن را می‌خوانیم و می‌نویسیم
+     * (نوع video/* ⇒ همان پوشهٔ Movies و در نتیجه در گالری دیده می‌شود).
+     */
     saveToGallery: function (url, name) {
+      if (/^(blob|data):/i.test(url) || isSameOrigin(url)) {
+        saveFromUrl(url, safeName(name));
+        return;
+      }
       try { NA.saveToGallery(String(url), safeName(name)); }
       catch (e) { toast('ذخیره در گالری ناموفق بود: ' + e); }
     }
@@ -232,6 +251,8 @@
   }
 
   function boot() {
+    // موتور آفلاین فعال است ⇒ هیچ سروری لازم نیست، پنجرهٔ تنظیم هم نه
+    if (window.LocalOffline && window.LocalOffline.enabled) return;
     if (document.getElementById('nativeCfgBtn')) return;   // یک‌بار
     injectSettings();
   }

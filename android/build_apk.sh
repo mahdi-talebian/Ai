@@ -60,6 +60,8 @@ echo "▸ کپی رابط وب به assets"
 rm -rf "$ANDROID_DIR/assets/web"
 mkdir -p "$ANDROID_DIR/assets/web"
 cp -R "$ROOT_DIR/web/." "$ANDROID_DIR/assets/web/"
+# تست‌ها لازم نیستند داخل بستهٔ اپ باشند
+rm -rf "$ANDROID_DIR/assets/web/tests"
 
 # ── ۲) منابع ──────────────────────────────────────────────────────────────
 echo "▸ aapt2 compile (res)"
@@ -73,6 +75,7 @@ echo "▸ aapt2 link"
   -A "$ANDROID_DIR/assets" \
   --min-sdk-version "$MIN_SDK" \
   --target-sdk-version "$TARGET_SDK" \
+  --replace-version \
   --version-code "$VERSION_CODE" \
   --version-name "$VERSION_NAME" \
   --auto-add-overlay \
