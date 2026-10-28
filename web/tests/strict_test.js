@@ -64,7 +64,10 @@ require('../engine.js');
 require('../offline.js');
 const CORE = global.LocalEngineCore;
 const { LocalOffline } = global;
-const LAYOUT = { W: 1280, H: 720, ML: 74, MR: 46, MT: 78, MB: 64 };
+const LAYOUT = (() => {
+  const L = global.LocalTraceStyle.layout(1280, 720);
+  return { W: 1280, H: 720, ML: L.ML, MR: L.MR, MT: L.MT, MB: L.MB };
+})();
 
 let pass = 0, fail = 0;
 function check(name, ok, extra) {

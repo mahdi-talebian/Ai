@@ -131,7 +131,8 @@ function tone(seconds, sr, notes) {
 
 (async () => {
   check('WebCodecs در دسترس تشخیص داده می‌شود', OFF.webCodecsReady() === true);
-  check('رزولوشن/نرخ فریم هدف ۱۲۸۰×۷۲۰ · ۶۰', OFF.VIDEO.W === 1280 && OFF.VIDEO.H === 720 && OFF.VIDEO.fps === 60,
+  check('نرخ فریم هدف ۶۰ و ابعاد پایه ۱۲۸۰×۷۲۰ (۱۰۸۰p پیش‌فرض)',
+    OFF.VIDEO.W === 1280 && OFF.VIDEO.H === 720 && OFF.VIDEO.fps === 60,
     OFF.VIDEO.W + '×' + OFF.VIDEO.H + ' @' + OFF.VIDEO.fps);
 
   const sr = 22050;
@@ -187,6 +188,37 @@ function tone(seconds, sr, notes) {
   const framesDrawn = drawn.length;
   check('فریم‌ها واقعاً رسم شدند', framesDrawn >= enc.videoChunks.length,
     framesDrawn + ' رسم');
+
+  /* ── اندازهٔ قاب: ۱۰۸۰p پیش‌فرض، ۷۲۰p با انتخاب کاربر ── */
+  check('پیش‌فرض = ۱۰۸۰p (قاب عریض‌تر)', out.width === 1920 && out.height === 1080,
+    out.width + '×' + out.height + ' @' + out.fps);
+  check('کدک ۱۰۸۰p@60 با سطح ۴٫۲ درخواست شد',
+    enc.configs.some(c => c.width === 1920 && c.framerate === 60 && /2A|33/.test(c.codec)),
+    enc.configs.map(c => c.codec).join(','));
+  check('کدگذاری سخت‌افزاری ترجیح داده می‌شود',
+    enc.configs.filter(c => c.width > 0).length > 0 &&
+    enc.configs.filter(c => c.width > 0).every(c => c.hardwareAcceleration === 'prefer-hardware'));
+
+  enc.videoChunks.length = 0; enc.added.length = 0; enc.finalized = 0;
+  const out720 = await OFF.renderVideo(res, res.notes, res.wav, res.sr, null,
+    { windowSec: 6, tightness: 1, fps: 60, quality: '720p' });
+  check('انتخاب ۷۲۰p رعایت می‌شود', out720.width === 1280 && out720.height === 720,
+    out720.width + '×' + out720.height);
+
+  /* دستگاه ضعیف: ۱۰۸۰p پشتیبانی نمی‌شود ⇒ خودکار ۷۲۰p */
+  const saveSup = global.VideoEncoder.isConfigSupported;
+  global.VideoEncoder.isConfigSupported = async (cfg) =>
+    ({ supported: /^avc1\./.test(cfg.codec) && cfg.width <= 1280, config: cfg });
+  enc.videoChunks.length = 0; enc.added.length = 0; enc.finalized = 0;
+  const outFall = await OFF.renderVideo(res, res.notes, res.wav, res.sr, null,
+    { windowSec: 6, tightness: 1, fps: 60 });
+  global.VideoEncoder.isConfigSupported = saveSup;
+  check('اگر ۱۰۸۰p پشتیبانی نشود، خودکار ۷۲۰p می‌شود',
+    outFall.width === 1280 && outFall.height === 720 && outFall.fast === true,
+    outFall.width + '×' + outFall.height);
+  check('در حالت بازگشتی هم فریم‌ها ۶۰fps و کامل‌اند',
+    Math.abs(enc.videoChunks.length - Math.round(renderDur * 60)) <= 2,
+    enc.videoChunks.length + ' فریم');
 
   /* ── پشتیبان: بدون WebCodecs باید مسیر زمان‌واقعی انتخاب شود ── */
   const saveVE = global.VideoEncoder, saveAE = global.AudioEncoder, saveMux = global.Mp4Muxer;

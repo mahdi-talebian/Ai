@@ -404,7 +404,8 @@
   /* ══════════════════════════════════════════════════════════════════════
      ۲) رندرر «ردِّ صدا» روی canvas (پورت trace_video.py)
      ══════════════════════════════════════════════════════════════════════ */
-  var LAYOUT = { W: 1280, H: 720, ML: 74, MR: 46, MT: 78, MB: 64 };
+  /* اندازهٔ بومِ خروجی (تصویر/ویدیو)؛ حاشیه‌ها از LocalTraceStyle.layout می‌آید */
+  var LAYOUT = { W: 1280, H: 720 };
   /* عرض پنجرهٔ نوار لغزان در ویدیو (ثانیه) */
   var VIDEO_WINDOW_SEC = 15;
 
@@ -452,9 +453,10 @@
   };
 
   TraceRenderer.prototype.xOfTimeIn = function (t, view) {
-    var usable = this.W - LAYOUT.ML - LAYOUT.MR;
+    var lay = LocalTraceStyle.layout(this.W, this.H);
+    var usable = this.W - lay.ML - lay.MR;
     var span = Math.max(1e-6, view.t1 - view.t0);
-    return LAYOUT.ML + ((t - view.t0) / span) * usable;
+    return lay.ML + ((t - view.t0) / span) * usable;
   };
 
   TraceRenderer.prototype.xOfTime = function (t) {
@@ -521,6 +523,18 @@
      دستگاه‌هایی که WebCodecs/AAC ندارند.
      ══════════════════════════════════════════════════════════════════════ */
   var VIDEO = { W: 1280, H: 720, fps: 60, bitrate: 5500000 };
+  var VIDEO_HD = { W: 1920, H: 1080, bitrate: 9000000 };
+
+  /* اندازهٔ قاب: پیش‌فرض «خودکار» = ۱۰۸۰p برای فایل‌های تا ۴ دقیقه (تصویر
+     پهن‌تر و واضح‌تر)، و ۷۲۰p برای فایل‌های خیلی بلند تا حافظه پر نشود.
+     اگر دستگاه کدگذاری ۱۰۸۰p ندهد، خودکار به ۷۲۰p برمی‌گردد. */
+  function videoSize(durationSec, quality) {
+    var q = quality || 'auto';
+    if (q === '720p') return { W: VIDEO.W, H: VIDEO.H, bitrate: VIDEO.bitrate };
+    if (q === '1080p') return { W: VIDEO_HD.W, H: VIDEO_HD.H, bitrate: VIDEO_HD.bitrate };
+    return (durationSec <= 240) ? { W: VIDEO_HD.W, H: VIDEO_HD.H, bitrate: VIDEO_HD.bitrate }
+      : { W: VIDEO.W, H: VIDEO.H, bitrate: VIDEO.bitrate };
+  }
 
   /* برای فایل‌های بلند: نرخ بیت و (اگر لازم شد) فریم را کم می‌کنیم تا
      حافظهٔ گوشی پر نشود؛ برای فایل کوتاه همان ۷۲۰p۶۰ و کیفیت بالا می‌ماند. */
@@ -555,11 +569,15 @@
 
   /* کدک H.264: از بهترین به سازگارترین */
   async function pickAvcConfig(w, h, fps, bitrate) {
-    var cands = ['avc1.640028', 'avc1.4D0028', 'avc1.42001F', 'avc1.42E01E'];
+    /* ۱۰۸۰p@60 به سطح ۴٫۲ نیاز دارد؛ ۷۲۰p@60 با ۴٫۰ هم کار می‌کند */
+    var cands = (w * h > 1280 * 720)
+      ? ['avc1.64002A', 'avc1.4D002A', 'avc1.640033', 'avc1.42002A', 'avc1.640028']
+      : ['avc1.640028', 'avc1.4D0028', 'avc1.42001F', 'avc1.42E01E'];
     for (var i = 0; i < cands.length; i++) {
       var cfg = {
         codec: cands[i], width: w, height: h, framerate: fps,
-        bitrate: bitrate || VIDEO.bitrate, latencyMode: 'quality', avc: { format: 'avc' }
+        bitrate: bitrate || VIDEO.bitrate, latencyMode: 'quality',
+        hardwareAcceleration: 'prefer-hardware', avc: { format: 'avc' }
       };
       try {
         if (!global.VideoEncoder.isConfigSupported) return cfg;
@@ -588,21 +606,32 @@
   }
 
   async function renderVideoFast(pitch, notes, wav, sr, onProgress, opts) {
-    var W = VIDEO.W, H = VIDEO.H;
-    var canvas = document.createElement('canvas');
-    canvas.width = W; canvas.height = H;
     var trace = pitch.trace_freqs || (CORE.strictTraceFreqs
       ? CORE.strictTraceFreqs(pitch.times, pitch.freqs, notes) : pitch.freqs);
-    var renderer = new TraceRenderer(canvas, pitch.times, trace, notes, {
-      windowSec: opts.windowSec || 0,
-      tightness: opts.tightness || 1
-    });
-    var duration = Math.max(renderer.duration, 0.2);
+    var duration = Math.max(
+      (pitch.times && pitch.times.length) ? pitch.times[pitch.times.length - 1] : 1, 0.2);
     var prof = videoProfile(duration, opts.fps);
     var fps = prof.fps;
+    var size = videoSize(duration, opts.quality);
+    var canvas = document.createElement('canvas');
+    function build(W, H) {
+      canvas.width = W; canvas.height = H;
+      return new TraceRenderer(canvas, pitch.times, trace, notes, {
+        windowSec: opts.windowSec || 0,
+        tightness: opts.tightness || 1
+      });
+    }
+    var W = size.W, H = size.H;
+    var renderer = build(W, H);
+    duration = Math.max(renderer.duration, 0.2);
     var totalFrames = Math.max(1, Math.round(duration * fps));
 
-    var vcfg = await pickAvcConfig(W, H, fps, prof.bitrate);
+    var vcfg = await pickAvcConfig(W, H, fps, Math.min(prof.bitrate, size.bitrate));
+    if (!vcfg && W !== VIDEO.W) {                 /* دستگاه ۱۰۸۰p نداد ⇒ ۷۲۰p */
+      W = VIDEO.W; H = VIDEO.H;
+      renderer = build(W, H);
+      vcfg = await pickAvcConfig(W, H, fps, VIDEO.bitrate);
+    }
     if (!vcfg) throw new Error('کدک H.264 در این دستگاه نیست');
     var acfg = await pickAacConfig(sr);
     if (!acfg) throw new Error('کدک AAC در این دستگاه نیست');
@@ -638,7 +667,7 @@
       });
       venc.encode(vf, { keyFrame: (i % (fps * 2) === 0) });
       vf.close();
-      if (venc.encodeQueueSize > 12) await yieldTick();
+      if (venc.encodeQueueSize > (W * H > 1280 * 720 ? 6 : 12)) await yieldTick();
       if ((i & 7) === 0) {
         if (onProgress) onProgress(0.04 + 0.76 * (i / totalFrames));
         await yieldTick();
@@ -686,6 +715,7 @@
       mime: 'video/mp4',
       name: 'radde-seda.mp4',
       fast: true,
+      width: W, height: H, fps: fps,
       frames: totalFrames,
       seconds: Math.round((Date.now() - t0) / 100) / 10
     };
@@ -703,7 +733,7 @@
       tightness: opts.tightness || 1
     });
 
-    var fps = opts.fps > 0 ? opts.fps : VIDEO.fps;
+    var fps = Math.min(opts.fps > 0 ? opts.fps : VIDEO.fps, 60);
     var duration = Math.max(renderer.duration, 0.2);
 
     var stream = canvas.captureStream(fps);
@@ -966,6 +996,8 @@
         if (isFinite(ws) && ws > 0) vopts.windowSec = ws;
         if (isFinite(tg) && tg > 0) vopts.tightness = tg;
         if (isFinite(fpr) && fpr > 0) vopts.fps = fpr;
+        var q = init.body.get('quality');
+        if (q === '1080p' || q === '720p') vopts.quality = q;
       }
       jv.videoOpts = vopts;
       runVideo(jv);

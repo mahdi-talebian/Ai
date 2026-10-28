@@ -396,6 +396,13 @@
         <audio id="audioPlayer" controls preload="metadata" playsinline></audio>
 
         <div class="stack">
+          <div class="field" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+            <span style="font-size:.8rem;color:var(--mut)">اندازهٔ ویدیو:</span>
+            <select id="videoQuality" class="zoomBtn" style="padding:8px 10px">
+              <option value="1080p" selected>۱۰۸۰p — عریض‌تر و واضح‌تر</option>
+              <option value="720p">۷۲۰p — سبک‌تر</option>
+            </select>
+          </div>
           <button class="primary block" id="videoBtn">🎬 ساخت ویدیوی ردِّ صدا</button>
         </div>
         <div class="progress" id="vProgWrap">
@@ -1060,7 +1067,8 @@ $('videoBtn').onclick = async () => {
   setProgress('vProg', 'video', 0.02);
   try {
     const fd = new FormData();
-    fd.append('fps', '60');                     // ۷۲۰p · ۶۰fps (هم‌اندازهٔ بوم)
+    fd.append('fps', '60');                     // ۶۰ فریم در ثانیه (بدون لگ)
+    fd.append('quality', ($('videoQuality') && $('videoQuality').value) || '1080p');
     fd.append('window_sec', String(TRACE_VIEW.timeSec || 0));   // همان زومِ نمودار
     fd.append('tightness', String(TRACE_VIEW.tight || 1));
     const r = await apiRequest(`${API}/api/video/${STATE.jobId}`, { method: 'POST', body: fd });
@@ -1204,17 +1212,47 @@ function buildTraceData(r) {
   drawTrace();
 }
 
-/* رسم با سبک مشترک: همان کدی که ویدیو و تصویر PNG استفاده می‌کنند */
+/* لایهٔ ثابت (پس‌زمینه + خطوط + منحنی محو آینده) یک‌بار در بومِ جدا کشیده
+   می‌شود و هر فریم فقط همان تصویر + لایهٔ متحرک رسم می‌شود. قبلاً هر فریم
+   کلِ نمودار از نو کشیده می‌شد و روی گوشی پخش را «لگ‌دار» می‌کرد. */
+const TRACE_BASE = { key: '', canvas: null, L: null, segs: null };
+
 function drawTrace() {
   if (!TRACE.ready) return;
   const cv = $('traceCanvas');
   const g = cv.getContext('2d');
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.clearRect(0, 0, cv.width, cv.height);
-  g.setTransform(TRACE.dpr, 0, 0, TRACE.dpr, 0, 0);
   const t = traceTime();
   const spec = traceSpec(t);
-  LocalTraceStyle.draw(g, spec);
+  /* با زوم ارتفاعی کادر دنبال نتِ لحظه می‌رود ⇒ لایهٔ ثابت هر فریم عوض می‌شود */
+  const cacheable = (TRACE_VIEW.tight || 1) <= 1.0001;
+  const key = cacheable
+    ? [cv.width, cv.height, spec.view.t0.toFixed(5), spec.view.t1.toFixed(5)].join('|')
+    : '';
+
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, cv.width, cv.height);
+
+  if (cacheable && TRACE_BASE.key === key && TRACE_BASE.canvas) {
+    g.drawImage(TRACE_BASE.canvas, 0, 0);
+    g.setTransform(TRACE.dpr, 0, 0, TRACE.dpr, 0, 0);
+    LocalTraceStyle.drawDynamic(g, spec, TRACE_BASE.L, TRACE_BASE.segs);
+  } else {
+    g.setTransform(TRACE.dpr, 0, 0, TRACE.dpr, 0, 0);
+    const L = LocalTraceStyle.prepare(spec);
+    LocalTraceStyle.drawBase(g, spec, L, L.segs);
+    LocalTraceStyle.drawDynamic(g, spec, L, L.segs);
+    if (cacheable) {
+      const off = document.createElement('canvas');
+      off.width = cv.width; off.height = cv.height;
+      const og = off.getContext('2d');
+      og.setTransform(TRACE.dpr, 0, 0, TRACE.dpr, 0, 0);
+      LocalTraceStyle.drawBase(og, spec, L, L.segs);
+      TRACE_BASE.canvas = off; TRACE_BASE.key = key;
+      TRACE_BASE.L = L; TRACE_BASE.segs = L.segs;
+    } else {
+      TRACE_BASE.key = ''; TRACE_BASE.canvas = null;
+    }
+  }
   TRACE.view = spec.view;
 }
 
@@ -1240,12 +1278,18 @@ if ($('zoomPitchOut')) $('zoomPitchOut').addEventListener('click', () => zoomPit
 if ($('zoomResetBtn')) $('zoomResetBtn').addEventListener('click', zoomReset);
 
 let traceRAF = null;
+/* وقتی ویدیوی ساخته‌شده در حال پخش است، نمودار را دوباره رسم نمی‌کنیم؛
+   رسم ۶۰fps هم‌زمان با رمزگشایی ویدیو روی گوشی باعث «لگ» می‌شد. */
+function videoIsPlaying() {
+  const v = $('videoPlayer');
+  return !!(v && !v.paused && !v.ended && v.currentTime > 0);
+}
 function loopTrace() {
   const a = $('audioPlayer');
   const running = a && !a.paused;
-  drawTrace();
+  if (!videoIsPlaying()) drawTrace();
   if (running) traceRAF = requestAnimationFrame(loopTrace);
-  else if (traceRAF) cancelAnimationFrame(traceRAF);
+  else if (traceRAF) { cancelAnimationFrame(traceRAF); traceRAF = null; }
 }
 
 /* لمس/کلیک روی نمودار = پخش از همان لحظه */

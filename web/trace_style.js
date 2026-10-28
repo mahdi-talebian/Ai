@@ -33,9 +33,9 @@
     dimCurve: 'rgba(96,132,175,.55)',
     dimShadow: 'rgba(96,132,175,.35)',
     noteDim: 'rgba(120,155,195,.38)',
-    goldLayers: [[6, 'rgba(255,212,120,.16)'],
-                 [3.4, 'rgba(255,212,120,.35)'],
-                 [2, '#f7d171']],
+    goldLayers: [[8.2, 'rgba(255,212,120,.15)'],
+                 [4.6, 'rgba(255,212,120,.34)'],
+                 [2.7, '#f7d171']],
     noteGold: '#ffe6a6',
     high: 'rgba(255,226,160,',
     low: 'rgba(169,214,255,',
@@ -84,8 +84,8 @@
   function layout(W, H) {
     return {
       W: W, H: H,
-      ML: Math.round(W * 0.0578),
-      MR: Math.round(W * 0.0359),
+      ML: Math.round(W * 0.0335),
+      MR: Math.round(W * 0.0215),
       MT: Math.round(H * 0.1083),
       MB: Math.round(H * 0.0889),
       /* ضریب اندازه برای متن/خطوط: در ۷۰۰px = ۱، در ۱۲۸۰px ≈ ۱٫۸ */
@@ -274,7 +274,7 @@
     }
 
     /* منحنی محو (آینده) */
-    g.lineWidth = 2 * k;
+    g.lineWidth = 2.7 * k;
     g.strokeStyle = THEME.dimCurve;
     if ('shadowColor' in g) { g.shadowColor = THEME.dimShadow; g.shadowBlur = 4 * k; }
     for (var s = 0; s < segs.length; s++) {
@@ -296,8 +296,8 @@
       var x = L.xOf(tc), y = L.yOf(mm);
       g.fillStyle = THEME.noteDim;
       g.beginPath();
-      if (g.ellipse) g.ellipse(x, y, 3.4 * k, 2 * k, 0, 0, Math.PI * 2);
-      else g.arc(x, y, 3 * k, 0, Math.PI * 2);
+      if (g.ellipse) g.ellipse(x, y, 4.1 * k, 2.4 * k, 0, 0, Math.PI * 2);
+      else g.arc(x, y, 3.6 * k, 0, Math.PI * 2);
       g.fill();
     });
 
@@ -374,7 +374,7 @@
       var x = L.xOf((n.start || 0) + (n.duration || 0) / 2);
       var y = L.yOf(mm);
       g.fillStyle = THEME.noteGold;
-      var r = ((n.duration || 0) < 0.35 ? 2.2 : 3) * k;
+      var r = ((n.duration || 0) < 0.35 ? 2.6 : 3.5) * k;
       g.beginPath();
       if (g.ellipse) g.ellipse(x, y, r * 1.5, r, 0, 0, Math.PI * 2);
       else g.arc(x, y, r, 0, Math.PI * 2);
@@ -389,17 +389,17 @@
     /* خط پخش */
     var xNow = L.xOf(endT);
     g.strokeStyle = THEME.playheadGlow;
-    g.lineWidth = 3.5 * k;
+    g.lineWidth = 4.2 * k;
     g.beginPath(); g.moveTo(xNow, 4); g.lineTo(xNow, H - 4); g.stroke();
     g.strokeStyle = THEME.playhead;
-    g.lineWidth = 1.3 * k;
+    g.lineWidth = 1.6 * k;
     g.beginPath(); g.moveTo(xNow, 4); g.lineTo(xNow, H - 4); g.stroke();
 
     /* نقطهٔ درخشان روی نت جاری */
     var mNow = currentMidiOf(spec, endT);
     if (mNow != null && isFinite(mNow)) {
       var yNow = L.yOf(mNow);
-      var R = 22 * k;
+      var R = 25 * k;
       var glow = g.createRadialGradient(xNow, yNow, 0, xNow, yNow, R);
       glow.addColorStop(0, THEME.dotGlowIn);
       glow.addColorStop(0.35, THEME.dotGlowMid);
@@ -407,7 +407,7 @@
       g.fillStyle = glow;
       g.beginPath(); g.arc(xNow, yNow, R, 0, Math.PI * 2); g.fill();
       g.fillStyle = THEME.dotCore;
-      g.beginPath(); g.arc(xNow, yNow, 4.8 * k, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(xNow, yNow, 5.6 * k, 0, Math.PI * 2); g.fill();
     }
 
     /* برچسب‌ها */

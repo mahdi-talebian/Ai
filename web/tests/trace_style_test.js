@@ -134,13 +134,15 @@ const notes = res.notes;
   check('پنجرهٔ ۴ ثانیه‌ای درست حساب می‌شود',
     Math.abs(view.t1 - view.t0 - 4) < 1e-9, '[' + view.t0 + ', ' + view.t1 + ']');
   const xMid = R.xOfTimeIn(6, view);
-  const usable = 1280 - 74 - 46;
-  check('خط پخش وسط بوم است', Math.abs(xMid - (74 + usable / 2)) < 0.01, xMid.toFixed(1));
+  const LY = S.layout(1280, 720);
+  const usable = 1280 - LY.ML - LY.MR;
+  check('خط پخش وسط بوم است',
+    Math.abs(xMid - (LY.ML + usable / 2)) < 0.01, xMid.toFixed(1));
 
   P = [];
   R.draw(6);
   const curve = P.filter(p => p.w >= 3);
-  const lo = 74 - 1.5, hi = 1280 - 46 + 1.5;
+  const lo = LY.ML - 1.5, hi = 1280 - LY.MR + 1.5;
   const outside = curve.filter(p => p.x < lo || p.x > hi).length;
   check('هیچ نقطه‌ای بیرون پنجرهٔ زوم رسم نمی‌شود', outside === 0,
     outside + ' از ' + curve.length);

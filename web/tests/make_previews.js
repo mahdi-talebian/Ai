@@ -77,8 +77,8 @@ const mid = Math.min(res.duration * 0.5, res.duration - 1);
 
 fs.mkdirSync(OUT, { recursive: true });
 
-function shot(name, opts, t) {
-  const canvas = makeCanvas(1280, 720);
+function shot(name, opts, t, W, H) {
+  const canvas = makeCanvas(W || 1280, H || 720);
   const R = new OFF.TraceRenderer(canvas, res.times, res.trace_freqs, res.notes, opts);
   R.draw(t);
   writePng(canvas._ctx, path.join(OUT, name + '.png'));
@@ -86,6 +86,8 @@ function shot(name, opts, t) {
 
 /* ۱) نمای کلی (تصویر تحلیل) */
 shot('overview', {}, res.duration);
+/* نمای ۱۰۸۰p (اندازهٔ پیش‌فرض ویدیو) */
+shot('overview-hd', {}, res.duration, 1920, 1080);
 /* ۲) ویدیو: نوار ۱۵ ثانیه‌ای */
 shot('video-t4', { windowSec: 15 }, Math.min(4, res.duration - 0.2));
 shot('video-t12', { windowSec: 15 }, Math.min(12, res.duration - 0.2));
