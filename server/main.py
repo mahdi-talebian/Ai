@@ -41,6 +41,8 @@ PYTHON_DIR = PROJECT_DIR / "python"
 WEB_DIR = PROJECT_DIR / "web"
 JOBS_DIR = SERVER_DIR / "jobs"
 JOBS_DIR.mkdir(exist_ok=True)
+CACHE_DIR = SERVER_DIR / "cache"     # منحنی‌های محاسبه‌شده (md5 → npz)
+CACHE_DIR.mkdir(exist_ok=True)
 
 sys.path.insert(0, str(PYTHON_DIR))
 
@@ -135,7 +137,7 @@ async def _on_startup():
 
 
 def _cleanup_old_jobs():
-    """پاک‌سازی jobهای قدیمی‌تر از ۲۴ ساعت."""
+    """پاک‌سازی jobهای قدیمی‌تر از ۲۴ ساعت (+ کش منحنی)."""
     try:
         now = time.time()
         removed = 0
@@ -143,6 +145,12 @@ def _cleanup_old_jobs():
             if d.is_dir() and now - d.stat().st_mtime > JOB_TTL_SEC:
                 shutil.rmtree(d, ignore_errors=True)
                 removed += 1
+        for f in CACHE_DIR.iterdir():
+            try:
+                if f.is_file() and now - f.stat().st_mtime > JOB_TTL_SEC:
+                    f.unlink()
+            except Exception:
+                continue
         if removed:
             print(f"🧹 {removed} job کهنه پاک شد")
     except Exception:
@@ -231,15 +239,23 @@ async def start_analyze(job_id: str, denoise: bool = Form(False)):
 
     def _worker():
         try:
-            cache_key = (_md5_of_file(input_path), bool(denoise))
+            md5 = _md5_of_file(input_path)
+            cache_key = (md5, bool(denoise))
             cached = ANALYSIS_CACHE.get(cache_key)
+            contour = job_dir / "contour.npz"
 
             if cached is not None:
                 job.update("plot", 0.9)
-                contour = job_dir / "contour.npz"
+                cached_npz = CACHE_DIR / f"{md5}_{int(bool(denoise))}.npz"
                 if not contour.exists():
-                    # منحنی برای ویدیو لازم است — یک‌بار سریع استخراج می‌شود
-                    _extract_contour_only(input_path, contour, bool(denoise))
+                    if cached_npz.exists():
+                        shutil.copyfile(cached_npz, contour)   # کش دیسکی
+                    else:
+                        _extract_contour_only(input_path, contour, bool(denoise))
+                        try:
+                            shutil.copyfile(contour, cached_npz)
+                        except Exception:
+                            pass
                 report = json.loads(json.dumps(cached))
                 _make_plot_from_contour(contour, report, job_dir)
             else:
@@ -247,13 +263,15 @@ async def start_analyze(job_id: str, denoise: bool = Form(False)):
                     input_path, denoise=bool(denoise),
                     make_plot=True, plot_dir=str(job_dir),
                     progress_callback=job.update, work_dir=str(job_dir),
+                    keep_work_wav=True,
                 )
-                # منحنی و صدا را برای مرحلهٔ ویدیو ذخیره کن (تحلیل دوباره لازم نیست)
-                contour = job_dir / "contour.npz"
+                # منحنی برای مرحلهٔ ویدیو ذخیره می‌شود (تحلیل دوباره لازم نیست).
+                # صدای mux همان صدای تحلیل‌شده است: audio_for_video.wav
+                # (اگر ورودی خودش WAV بود، همان فایل ورودی).
                 try:
                     np.savez_compressed(contour, times=report["_times"],
                                         freqs=report["_freqs"])
-                    shutil.copyfile(report["_wav"], job_dir / "audio_for_video.wav")
+                    shutil.copyfile(contour, CACHE_DIR / f"{md5}_{int(bool(denoise))}.npz")
                 except Exception:
                     pass
                 pub = public_report(report)
@@ -330,7 +348,6 @@ async def start_video(job_id: str, fps: int = Form(0)):
                     progress_callback=lambda st, fr: job.update(st, fr * 0.6))
                 times, freqs = rep["_times"], rep["_freqs"]
                 np.savez_compressed(contour, times=times, freqs=freqs)
-                shutil.copyfile(rep["_wav"], job_dir / "audio_for_video.wav")
 
             wav = job_dir / "audio_for_video.wav"
             audio = str(wav) if wav.exists() else str(input_files[0])

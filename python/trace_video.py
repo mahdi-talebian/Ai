@@ -480,8 +480,9 @@ class TraceRenderer:
                        fill=(color[0], color[1], color[2], 55), width=1)
                 x += step
             label = f"{tag} {midi_to_name(midi)}"
-            d.text((MARGIN_L, y - 19), label, font=fnt,
-                   fill=(color[0], color[1], color[2], 120))
+            lx = MARGIN_L if tag == "HIGH" else self.W - 320
+            d.text((lx, y - 19), label, font=fnt,
+                   fill=(color[0], color[1], color[2], 130))
 
     # ----------------------------------------------------------- برچسب‌ها
     def _draw_labels(self, img, t, m_now):

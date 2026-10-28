@@ -190,6 +190,7 @@
             <div class="sub" id="spanSub"></div>
           </div>
         </div>
+        <div class="hint" id="rawHint" style="display:none;margin-top:10px;font-size:.76rem"></div>
         <div class="miniGrid">
           <div class="mini"><div class="cap">🎯 مرکز صدا</div><div class="val" id="centerVal">—</div></div>
           <div class="mini"><div class="cap">🎼 نت‌های تشخیص‌داده‌شده</div><div class="val" id="notesVal">—</div></div>
@@ -437,13 +438,24 @@ function renderReport(r) {
   const rg = r.range || {};
   const hi = rg.highest, lo = rg.lowest;
 
+  const subOf = n => n
+    ? `${n.f0_hz} Hz · ${faN(n.total_sung_sec != null ? n.total_sung_sec : (n.duration || 0))} ثانیه` +
+      (n.count ? ` · ${faN(n.count)} بار` : '')
+    : '';
   $('hiNote').textContent = hi ? hi.note_name : '—';
-  $('hiSub').textContent = hi ? `${hi.f0_hz} Hz · ثانیهٔ ${faN(hi.start)}` : '';
+  $('hiSub').textContent = subOf(hi);
   $('loNote').textContent = lo ? lo.note_name : '—';
-  $('loSub').textContent = lo ? `${lo.f0_hz} Hz · ثانیهٔ ${faN(lo.start)}` : '';
+  $('loSub').textContent = subOf(lo);
   $('spanVal').textContent = rg.span_semitones != null ? faN(rg.span_semitones) + ' نیم‌پرده' : '—';
   $('spanSub').textContent = rg.span_octaves != null
     ? `${faN(rg.span_octaves)} اکتاو · ${faN(Math.round(rg.span_cents))} سنت` : '';
+
+  // لحظه‌ای‌ترین نت‌ها (بدون فیلتر پایداری) — برای شفافیت
+  const raw = (rg.raw_highest && rg.raw_lowest)
+    ? `شدیدترین نت‌های لحظه‌ای (بدون شمردن در گستره): ${rg.raw_highest.note_name} از بالا · ${rg.raw_lowest.note_name} از پایین`
+    : '';
+  $('rawHint').textContent = raw;
+  $('rawHint').style.display = raw ? 'block' : 'none';
 
   $('centerVal').textContent = rg.center ? rg.center.note_name : '—';
   $('notesVal').textContent = faN((r.basic || {}).num_notes_detected ?? '—');
@@ -729,7 +741,8 @@ function drawRangeGuide(g, note, tag, colorPrefix) {
   g.restore();
   g.fillStyle = colorPrefix + '.95)';
   g.font = '700 14px Segoe UI, Tahoma, sans-serif';
-  g.fillText(`${tag} ${note.note_name}`, TRACE.ML, y - 9);
+  const lx = tag === 'HIGH' ? TRACE.ML : TRACE.W - 300;
+  g.fillText(`${tag} ${note.note_name}`, lx, y - 9);
 }
 
 /* میدی جاری با درون‌یابی خطی (حرکت نرم بین نت‌ها) */

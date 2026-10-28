@@ -46,15 +46,30 @@ MIN_NOTE_SEC = 0.10
 MAX_STABILITY_CENTS = 70.0      # نت‌های بسیار ناپایدار (لرزش شدید) کنار گذاشته می‌شوند
 PAUSE_MIN_SEC = 0.30            # فاصلهٔ سکوت برای شمردن «نفس/مکث»
 
+# ---- آستانهٔ «نت واقعی» برای بالاترین/پایین‌ترین نت ----
+# تجربهٔ فایل‌های واقعی: جیغ/لغزش یک‌بارمصرف یا خطای اکتاوی Praat می‌تواند
+# یک نت خیلی بالا/پایین بسازد که فقط ۰٫۱ ثانیه دوام دارد و «دامنهٔ صدا» را
+# بی‌معنا بزرگ می‌کند. بنابراین بالاترین/پایین‌ترین نت از میان نت‌هایی
+# انتخاب می‌شود که دست‌کم چند بار و در مجموع به‌اندازهٔ کافی خوانده شده‌اند؛
+# نت‌های شدیدِ لحظه‌ای جداگانه (raw_highest/raw_lowest) گزارش می‌شوند.
+ROBUST_MIN_TOTAL_SEC = 0.35     # حداقل مجموع زمانِ خواندنِ یک نت
+ROBUST_MIN_TOTAL_PCT = 0.2      # یا حداقل این درصد از کل زمان خوانده‌شده
+ROBUST_MIN_COUNT = 2            # و حداقل این تعداد بار
+
 
 # ============================================================================
 # آماده‌سازی صدا
 # ============================================================================
 
-def _prepare_wav(path, denoise=False, work_dir=None):
+def _prepare_wav(path, denoise=False, work_dir=None, keep_work_wav=False):
     """
     ورودی را به یک WAV مونو تبدیل می‌کند (در صورت نیاز denoise).
+
     خروجی: (wav_path, temp_path_or_None)
+    فایل موقت با نام ثابت `audio_for_video.wav` ساخته می‌شود تا همان صدای
+    تحلیل‌شده (مثلاً نویزگرفته‌شده) برای mux ویدیو استفاده شود — بدون
+    کپی اضافه. با keep_work_wav=True دست‌نخورده می‌ماند (پاک‌سازی نهایی با
+    TTL پوشهٔ job انجام می‌شود).
     """
     if path.lower().endswith(".wav") and not denoise:
         return path, None
@@ -71,9 +86,9 @@ def _prepare_wav(path, denoise=False, work_dir=None):
             print("هشدار: noisereduce نصب نیست — کاهش نویز انجام نشد.")
 
     base = work_dir or os.path.dirname(os.path.abspath(path))
-    tmp = os.path.join(base, f"_work_{os.getpid()}_{abs(hash(path)) % 10**8}.wav")
+    tmp = os.path.join(base, "audio_for_video.wav")
     sf.write(tmp, y, sr)
-    return tmp, tmp
+    return tmp, (None if keep_work_wav else tmp)
 
 
 # ============================================================================
@@ -115,6 +130,50 @@ def _pick(notes, choose_max):
     return (max if choose_max else min)(usable, key=lambda n: n["f0_hz"])
 
 
+def _robust_extremes(notes, sung_total):
+    """
+    بالاترین/پایین‌ترین نتِ «واقعاً خوانده‌شده».
+
+    برای هر نتِ گردشده (MIDI) مجموع زمان و تعداد دفعات را جمع می‌زند و نت‌هایی
+    را که فقط یک لغزش/نویز لحظه‌ای‌اند کنار می‌گذارد. خروجی: (high, low, stats)
+    که هر کدام یک نتِ نمونه (بلندترین نمونهٔ همان نت) + مجموع زمان + تعداد است.
+    """
+    agg = {}
+    for n in notes:
+        if not (n.get("f0_hz") or 0) > 0:
+            continue
+        key = int(n["midi"])
+        row = agg.setdefault(key, {"sec": 0.0, "count": 0, "best": n})
+        row["sec"] += float(n.get("duration") or 0.0)
+        row["count"] += 1
+        if (n.get("duration") or 0.0) > (row["best"].get("duration") or 0.0):
+            row["best"] = n
+
+    if not agg:
+        return None, None, {"candidates": 0}
+
+    thresh = max(ROBUST_MIN_TOTAL_SEC, (ROBUST_MIN_TOTAL_PCT / 100.0) * sung_total)
+    stable = {m: r for m, r in agg.items()
+              if r["sec"] >= thresh and r["count"] >= ROBUST_MIN_COUNT}
+    if not stable:                       # فایل خیلی کوتاه/کم‌نت
+        stable = agg
+
+    def _pack(row):
+        n = dict(row["best"])
+        n["total_sung_sec"] = round(row["sec"], 2)
+        n["count"] = row["count"]
+        return n
+
+    hi = _pack(stable[max(stable)])
+    lo = _pack(stable[min(stable)])
+    stats = {
+        "candidates": len(stable),
+        "ignored_notes": len(agg) - len(stable),
+        "threshold_sec": round(thresh, 2),
+    }
+    return hi, lo, stats
+
+
 def _downsample_contour(times, freqs, max_points=1800):
     """منحنی را برای رسم سریع در مرورگر نازک می‌کند (فرکانس صفر = بی‌صدا)."""
     if len(times) == 0:
@@ -132,7 +191,8 @@ def _downsample_contour(times, freqs, max_points=1800):
 
 
 def analyze_range(path, denoise=False, make_plot=True, plot_dir=None,
-                  progress_callback=None, work_dir=None, keep_contour=True):
+                  progress_callback=None, work_dir=None, keep_contour=True,
+                  keep_work_wav=False):
     """
     تحلیل کامل دامنهٔ صدا.
 
@@ -147,7 +207,8 @@ def analyze_range(path, denoise=False, make_plot=True, plot_dir=None,
             progress_callback(stage, frac)
 
     _cb("loading", 0.02)
-    wav_path, tmp_path = _prepare_wav(path, denoise=denoise, work_dir=work_dir)
+    wav_path, tmp_path = _prepare_wav(path, denoise=denoise, work_dir=work_dir,
+                                      keep_work_wav=keep_work_wav)
 
     try:
         _cb("pitch", 0.05)
@@ -177,9 +238,10 @@ def analyze_range(path, denoise=False, make_plot=True, plot_dir=None,
 
         voiced = freqs[freqs > 0]
         voiced_ratio = 100.0 * len(voiced) / max(1, len(freqs))
+        sung_sec_all = sum(n["duration"] for n in notes)
 
-        if high_raw and low_raw:
-            hi_note, lo_note = _fmt_note(high_raw), _fmt_note(low_raw)
+        hi_note, lo_note, robust_stats = _robust_extremes(notes, sung_sec_all)
+        if hi_note and lo_note:
             hi_hz, lo_hz = hi_note["f0_hz"], lo_note["f0_hz"]
         elif len(voiced):
             # پشتیبان: صدک‌های مقاوم روی منحنی
@@ -190,6 +252,9 @@ def analyze_range(path, denoise=False, make_plot=True, plot_dir=None,
         else:
             hi_note = lo_note = None
             hi_hz = lo_hz = 0.0
+
+        raw_hi = _fmt_note(high_raw) if high_raw else None
+        raw_lo = _fmt_note(low_raw) if low_raw else None
 
         span_cents = 1200.0 * np.log2(hi_hz / lo_hz) if lo_hz and hi_hz else 0.0
         center_hz = float(np.median(voiced)) if len(voiced) else 0.0
@@ -254,6 +319,9 @@ def analyze_range(path, denoise=False, make_plot=True, plot_dir=None,
             "range": {
                 "highest": hi_note,
                 "lowest": lo_note,
+                "raw_highest": raw_hi,
+                "raw_lowest": raw_lo,
+                "robust": robust_stats,
                 "span_semitones": round(span_cents / 100.0, 2),
                 "span_octaves": round(span_cents / 1200.0, 2),
                 "span_cents": round(span_cents, 1),
