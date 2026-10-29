@@ -55,6 +55,74 @@
   };
 
   var FONT = 'Estedad, Vazirmatn, Tahoma, system-ui, sans-serif';
+
+  /* ══════════════════════════════════════════════════════════════════════
+     نامِ نت‌ها (سل‌فژ) و واحدِ «درجه»
+     ----------------------------------------------------------------------
+     کاربر می‌خواهد به‌جای «پرده»، «درجه» ببیند و هر اکتاو ۸ درجه باشد
+     (اکتاو = ۸ درجه = ۶ پرده = ۱۲ نیم‌پرده). پس:
+         ۱ درجه = ۱۲ ÷ ۸ = ۱٫۵ نیم‌پرده
+         درجه = نیم‌پرده × ۸⁄۱۲ = نیم‌پرده × ۲⁄۳
+     و اکتاوها از تقسیمِ درجه‌ها بر ۸ درمی‌آیند.
+     ══════════════════════════════════════════════════════════════════════ */
+  var SOLFEGE = { 0: 'دو', 2: 'ر', 4: 'می', 5: 'فا', 7: 'سل', 9: 'لا', 11: 'سی' };
+  var FA_DIGITS = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+  var DEG_PER_OCTAVE = 8;
+  var SEMI_PER_OCTAVE = 12;
+  var DEG_PER_SEMI = DEG_PER_OCTAVE / SEMI_PER_OCTAVE;   /* ۲⁄۳ */
+
+  function faNum(v) {
+    var str = String(v);
+    var out = '';
+    for (var i = 0; i < str.length; i++) {
+      var ch = str.charAt(i);
+      out += (ch >= '0' && ch <= '9') ? FA_DIGITS[+ch] : ch;
+    }
+    return out;
+  }
+
+  function pcOf(midi) { var r = Math.round(midi); return ((r % 12) + 12) % 12; }
+
+  /* نامِ سل‌فژ؛ نتِ نیم‌پرده‌ای به نزدیک‌ترین نام با «♯» می‌چسبد */
+  function solfegeOf(midi, withOctave) {
+    if (midi == null || !isFinite(midi)) return '—';
+    var pc = pcOf(midi);
+    var base = SOLFEGE[pc];
+    if (!base) {
+      var lower = (pc + 11) % 12;
+      base = (SOLFEGE[lower] || 'دو') + '♯';
+    }
+    if (!withOctave) return base;
+    var oct = Math.floor(Math.round(midi) / 12) - 1;
+    return base + faNum(oct);
+  }
+
+  /* نیم‌پرده → درجه (اکتاو = ۸ درجه) */
+  function degreesOfSemitones(semis) {
+    if (semis == null || !isFinite(semis)) return null;
+    return semis * DEG_PER_SEMI;
+  }
+
+  /* {total, octaves, degrees, text} — متنِ آماده مثل «۱ اکتاو و ۳ درجه» */
+  function spanInDegrees(semis) {
+    var total = degreesOfSemitones(semis);
+    if (total == null) return null;
+    var octaves = Math.floor(total / DEG_PER_OCTAVE + 1e-9);
+    var rest = Math.round((total - octaves * DEG_PER_OCTAVE) * 10) / 10;
+    if (rest >= DEG_PER_OCTAVE - 1e-9) { octaves += 1; rest = 0; }
+    var text;
+    if (octaves <= 0) text = faNum(rest) + ' درجه';
+    else if (rest < 0.05) text = faNum(octaves) + ' اکتاو';
+    else text = faNum(octaves) + ' اکتاو و ' + faNum(rest) + ' درجه';
+    return { total: total, octaves: octaves, degrees: rest, text: text };
+  }
+
+  /* شمارهٔ درجهٔ یک نت نسبت به پایین‌ترین نتِ اجرا (۱ = پایین‌ترین) */
+  function degreeFromLow(midi, lowMidi) {
+    if (midi == null || !isFinite(midi)) return null;
+    if (lowMidi == null || !isFinite(lowMidi)) return null;
+    return Math.round((midi - lowMidi) * DEG_PER_SEMI) + 1;
+  }
   var GAP_BRIDGE_SEC = 0.75;
   var MIN_SPAN_SEMI = 11.9;
 
@@ -843,14 +911,17 @@
       g.beginPath(); g.arc(xNow, yNow, 5.6 * k, 0, Math.PI * 2); g.fill();
     }
 
-    /* برچسب‌ها */
-    g.textAlign = 'left';
-    g.fillStyle = THEME.label;
-    g.font = '800 ' + Math.round(17 * k) + 'px ' + FONT;
-    var label = (mNow == null || !isFinite(mNow))
-      ? '—'
-      : nameOf(mNow) + '   ' + hzOf(mNow).toFixed(1) + ' Hz';
-    g.fillText(label, 10 * k, 24 * k);
+    /* ══ برچسبِ «نُتِ همین لحظه» ═══════════════════════════════════════
+       یک کپسولِ کوچک بالا-چپ: نامِ سل‌فژ (درشت) + درجه + فرکانس.
+       همان چیزی که در ویدیو هم دیده می‌شود (یک رندرر برای هر سه خروجی). */
+    var liveMidi = (mNow == null || !isFinite(mNow)) ? null : mNow;
+    var lowHz = (spec.range && spec.range.lowest) ? spec.range.lowest.f0_hz : null;
+    var lowMidi = (lowHz > 0) ? 69 + 12 * Math.log2(lowHz / 440) : null;
+    var degCur = (liveMidi != null && lowMidi != null) ? degreeFromLow(liveMidi, lowMidi) : null;
+    var nameTxt = (liveMidi == null) ? 'سکوت' : solfegeOf(liveMidi, true);
+    var degTxt = (liveMidi != null && degCur != null) ? 'درجهٔ ' + faNum(degCur) : '';
+    var hzTxt = (liveMidi != null) ? hzOf(liveMidi).toFixed(1) + ' Hz' : '';
+    drawNowPill(g, k, nameTxt, degTxt, hzTxt, liveMidi == null);
 
     g.font = '500 ' + Math.round(11 * k) + 'px ' + FONT;
     g.fillStyle = THEME.faint;
@@ -859,33 +930,107 @@
       W - 10 * k, 24 * k);
 
     if (rg.highest && rg.lowest) {
-      var spanTxt = (rg.span_semitones != null ? rg.span_semitones : '');
+      var span = (rg.span_semitones != null) ? spanInDegrees(rg.span_semitones) : null;
+      var hiM = rg.highest.f0_hz > 0 ? 69 + 12 * Math.log2(rg.highest.f0_hz / 440) : null;
+      var loM = rg.lowest.f0_hz > 0 ? 69 + 12 * Math.log2(rg.lowest.f0_hz / 440) : null;
       g.fillStyle = THEME.hint;
-      g.fillText(rg.highest.note_name + ' ↕ ' + rg.lowest.note_name +
-        (spanTxt !== '' ? '  ·  ' + spanTxt + ' st' : ''), W - 10 * k, H - 9 * k);
+      g.fillText((hiM != null ? solfegeOf(hiM, true) : '') + ' ↕ ' +
+        (loM != null ? solfegeOf(loM, true) : '') +
+        (span ? '  ·  ' + span.text : ''), W - 10 * k, H - 9 * k);
     }
     g.textAlign = 'left';
   }
 
+  /* کپسولِ نُتِ لحظه — گوشهٔ بالا-چپ، خوانا روی هر پس‌زمینه‌ای */
+  /* کپسولِ نُتِ لحظه: نام (بزرگ) + «درجهٔ n» + فرکانس، هر کدام یک قطعهٔ
+     تک‌جهته تا ترتیبِ راست‌به‌چپ و عددهای لاتین قاطی نشوند. */
+  function drawNowPill(g, k, nameTxt, degTxt, hzTxt, muted) {
+    var padX = 11 * k, padY = 7 * k;
+    var x = 9 * k, y = 8 * k;
+    var nameFont = '800 ' + Math.round(20 * k) + 'px ' + FONT;
+    var subFont = '600 ' + Math.round(10.5 * k) + 'px ' + FONT;
+    var wName = 0, wDeg = 0, wHz = 0;
+    g.font = nameFont; if (g.measureText) wName = g.measureText(nameTxt).width;
+    g.font = subFont;
+    if (g.measureText) { wDeg = g.measureText(degTxt || '').width; wHz = g.measureText(hzTxt || '').width; }
+    var wSub = wDeg + (degTxt && hzTxt ? 8 * k : 0) + wHz;
+    var innerW = Math.max(wName, wSub);
+    var boxW = innerW + padX * 2;
+    var boxH = 20 * k + 6 * k + 12 * k + padY * 2;
+    roundRect(g, x, y, boxW, boxH, 12 * k);
+    g.fillStyle = muted ? 'rgba(8,16,32,.62)' : 'rgba(8,16,32,.84)';
+    g.fill();
+    g.strokeStyle = muted ? 'rgba(150,170,200,.30)' : 'rgba(255,222,140,.38)';
+    g.lineWidth = 1;
+    g.stroke();
+
+    g.textAlign = 'left';
+    g.textBaseline = 'top';
+    g.fillStyle = muted ? 'rgba(170,190,220,.62)' : THEME.label;
+    g.font = nameFont;
+    g.fillText(nameTxt, x + padX, y + padY);
+
+    var subY = y + padY + 23 * k;
+    g.font = subFont;
+    if (degTxt) {
+      g.fillStyle = 'rgba(255,226,160,.95)';
+      g.fillText(degTxt, x + padX, subY);
+    }
+    if (hzTxt) {
+      g.fillStyle = 'rgba(170,190,220,.85)';
+      g.textAlign = 'right';
+      g.fillText(hzTxt, x + boxW - padX, subY);
+    }
+    g.textAlign = 'left';
+    g.textBaseline = 'alphabetic';
+  }
+
+  /* خطِ چینِ «بالاترین/پایین‌ترین نت» — تمامِ عرضِ نمودار، با برچسبِ سل‌فژ
+     و شمارهٔ درجه. (قبلاً فقط از شروعِ همان نت به راست کشیده می‌شد و کاربر
+     به‌سختی پیدایش می‌کرد.) */
   function drawRangeGuide(g, spec, L, note, tag, colorPrefix) {
     if (!note || !note.f0_hz) return;
     var mm = midiOf(note.f0_hz);
     if (mm == null) return;
     var k = L.k;
     var y = L.yOf(mm);
-    var t0 = note.start || 0;
-    if (spec.view && (t0 < spec.view.t0 || t0 > spec.view.t1)) return;
-    var x0 = L.xOf(t0);
+    if (!isFinite(y)) return;
+    var yTop = L.MT + 6 * k, yBot = spec.H - L.MB - 6 * k;
+    var edge = '';
+    if (y < yTop) { y = yTop; edge = ' ▲'; }
+    if (y > yBot) { y = yBot; edge = ' ▼'; }
+    var lowHz = (spec.range && spec.range.lowest) ? spec.range.lowest.f0_hz : null;
+    var lowMidi = (lowHz > 0) ? 69 + 12 * Math.log2(lowHz / 440) : null;
+    var deg = (lowMidi != null) ? degreeFromLow(mm, lowMidi) : null;
+
     g.save();
-    g.setLineDash([5, 5]);
-    g.strokeStyle = colorPrefix + '.40)';
-    g.lineWidth = 1;
-    g.beginPath(); g.moveTo(x0, y); g.lineTo(spec.W - 8, y); g.stroke();
+    g.setLineDash([7 * k, 6 * k]);
+    g.strokeStyle = colorPrefix + '.55)';
+    g.lineWidth = 1.4 * k;
+    g.beginPath();
+    g.moveTo(6 * k, y);
+    g.lineTo(spec.W - 6 * k, y);
+    g.stroke();
     g.restore();
-    g.fillStyle = colorPrefix + '.92)';
-    g.font = '700 ' + Math.round(9.5 * k) + 'px ' + FONT;
-    var lx = tag === 'HIGH' ? L.ML : L.W - 130 * k;
-    g.fillText(tag + ' ' + note.note_name, lx, y - 4 * k);
+
+    var txt = (tag === 'HIGH' ? 'بالاترین ' : 'پایین‌ترین ') + solfegeOf(mm, true) +
+      (deg != null ? ' · درجهٔ ' + faNum(deg) : '') + edge;
+    g.font = '700 ' + Math.round(10 * k) + 'px ' + FONT;
+    g.font = '700 ' + Math.round(10 * k) + 'px ' + FONT;
+    var tw = g.measureText ? g.measureText(txt).width : 120 * k;
+    var bx = tag === 'HIGH' ? (spec.W - tw - 18 * k) : (L.ML + 2 * k);
+    /* برچسب همیشه سمتِ «داخلِ کادر»ِ خط می‌نشیند تا با خط و لبه تلاقی نکند */
+    var by;
+    if (tag === 'HIGH') by = (y + 13 * k < spec.H - L.MB) ? y + 13 * k : y - 6 * k;
+    else by = (y - 8 * k > L.MT) ? y - 6 * k : y + 14 * k;
+    g.fillStyle = 'rgba(8,16,32,.86)';
+    roundRect(g, bx - 5 * k, by - 10 * k, tw + 10 * k, 14 * k, 6 * k);
+    g.fill();
+    g.strokeStyle = colorPrefix + '.35)';
+    g.lineWidth = 1;
+    g.stroke();
+    g.fillStyle = colorPrefix + '.98)';
+    g.fillText(txt, bx, by);
   }
 
   function hzOf(midi) { return 440 * Math.pow(2, (midi - 69) / 12); }
@@ -924,6 +1069,20 @@
     L.zoomEff = lim.zoomEff || 1;
     L.loLim = lim.loLim;
     L.hiLim = lim.hiLim;
+    /* در نمای کامل، گسترهٔ دید باید بالاترین و پایین‌ترین نت را هم بگیرد؛
+       وگرنه خطِ چینِ آن‌ها بیرونِ کادر می‌افتد و «مشخص‌شده» به‌حساب نمی‌آید. */
+    var tight = (spec.tightness && spec.tightness > 0) ? spec.tightness : 1;
+    if (tight <= 1.0001 && spec.range) {
+      var ends = [spec.range.highest, spec.range.lowest];
+      for (var ie = 0; ie < ends.length; ie++) {
+        var e = ends[ie];
+        if (!e || !(e.f0_hz > 0)) continue;
+        var em = midiOf(e.f0_hz);
+        if (em == null || !isFinite(em)) continue;
+        if (em > L.hiLim) L.hiLim = em + 0.6;
+        if (em < L.loLim) L.loLim = em - 0.6;
+      }
+    }
     L.view = view;
     var usableW = spec.W - L.ML - L.MR;
     var usableH = spec.H - L.MT - L.MB;
@@ -959,6 +1118,13 @@
     cleanMids: cleanMids,
     cleanedFor: cleanedFor,
     cleanNotes: cleanNotes,
+    /* واحدهای موسیقی مشترک (سل‌فژ و درجه) */
+    solfegeOf: solfegeOf,
+    degreesOfSemitones: degreesOfSemitones,
+    spanInDegrees: spanInDegrees,
+    degreeFromLow: degreeFromLow,
+    faNum: faNum,
+    DEG_PER_OCTAVE: DEG_PER_OCTAVE,
     setClean: function (on) { setClean(on); CLEAN_CACHE.src = null; CLEAN_CACHE.n = -1; },
     SPIKE_SEMI: SPIKE_SEMI,
     currentMidi: currentMidiOf,

@@ -439,15 +439,24 @@
     this.duration = this.times.length ? this.times[this.times.length - 1] : 1;
     if (!(this.duration > 0)) this.duration = 1;
 
-    /* بالاترین/پایین‌ترین نت برای راهنماها (از روی همان نت‌های سخت‌گیرانه) */
+    /* بالاترین/پایین‌ترین نت برای راهنماها.
+       مهم: از «نسخهٔ پاک‌شده» همان نت‌ها استفاده می‌شود تا نقطه‌های پرتِ
+       اکتاوی (که در نمودار هم رسم نمی‌شوند) خط‌چین را چند اکتاو جابه‌جا
+       نکنند و ویدیو دقیقاً مثل اپ باشد. اگر گزارش، گسترهٔ خودش را بدهد
+       (اپ همین کار را می‌کند) همان اولویت دارد. */
+    var list = this.notes;
+    if (LocalTraceStyle.cleanNotes) {
+      var cl = LocalTraceStyle.cleanNotes(list, this.times, this.midi);
+      if (cl && cl.length) list = cl;
+    }
     var best = null, worst = null;
-    this.notes.forEach(function (n) {
+    list.forEach(function (n) {
       if (!best || n.f0_hz > best.f0_hz) best = n;
       if (!worst || n.f0_hz < worst.f0_hz) worst = n;
     });
     this.highest = best;
     this.lowest = worst;
-    this.range = null;
+    this.range = opts.range || null;
   }
 
   TraceRenderer.prototype.viewAt = function (t) {

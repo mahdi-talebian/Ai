@@ -77,6 +77,50 @@
 
   function hzToMidi(f) { return 69.0 + 12.0 * Math.log2(f / 440.0); }
   function midiToHz(m) { return 440.0 * Math.pow(2.0, (m - 69.0) / 12.0); }
+  /* ══════════════════════════════════════════════════════════════════════
+     سل‌فژ و «درجه» (اکتاو = ۸ درجه = ۶ پرده = ۱۲ نیم‌پرده ⇒ ۱ درجه = ۱٫۵ نیم‌پرده)
+     ══════════════════════════════════════════════════════════════════════ */
+  var SOLFEGE_PC = { 0: 'دو', 2: 'ر', 4: 'می', 5: 'فا', 7: 'سل', 9: 'لا', 11: 'سی' };
+  var FA_DIG = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+  var DEG_PER_OCT = 8;
+  var SEMI_PER_OCT = 12;
+
+  function faDigits(v) {
+    var str = String(v), out = '';
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charAt(i);
+      out += (c >= '0' && c <= '9') ? FA_DIG[+c] : c;
+    }
+    return out;
+  }
+
+  function solfegeOf(m, withOctave) {
+    if (m == null || !isFinite(m)) return '—';
+    var r = Math.round(m), pc = ((r % 12) + 12) % 12;
+    var base = SOLFEGE_PC[pc];
+    if (!base) base = (SOLFEGE_PC[(pc + 11) % 12] || 'دو') + '♯';
+    if (!withOctave) return base;
+    return base + faDigits(Math.floor(r / 12) - 1);
+  }
+
+  function spanInDegrees(semis) {
+    if (semis == null || !isFinite(semis)) return null;
+    var total = semis * (DEG_PER_OCT / SEMI_PER_OCT);
+    var octaves = Math.floor(total / DEG_PER_OCT + 1e-9);
+    var rest = Math.round((total - octaves * DEG_PER_OCT) * 10) / 10;
+    if (rest >= DEG_PER_OCT - 1e-9) { octaves += 1; rest = 0; }
+    var text;
+    if (octaves <= 0) text = faDigits(rest) + ' درجه';
+    else if (rest < 0.05) text = faDigits(octaves) + ' اکتاو';
+    else text = faDigits(octaves) + ' اکتاو و ' + faDigits(rest) + ' درجه';
+    return { total: Math.round(total * 10) / 10, octaves: octaves, degrees: rest, text: text };
+  }
+
+  function degreeFromLow(m, lowM) {
+    if (m == null || !isFinite(m) || lowM == null || !isFinite(lowM)) return null;
+    return Math.round((m - lowM) * (DEG_PER_OCT / SEMI_PER_OCT)) + 1;
+  }
+
   function midiToName(m) {
     if (m == null || !isFinite(m)) return '—';
     var r = Math.round(m);
@@ -1569,6 +1613,7 @@
     var midiR = Math.round(midiF);
     return {
       note_name: midiToName(midiF),
+      solfege: solfegeOf(midiF, true),
       midi: midiR,
       midi_exact: Math.round(midiF * 1000) / 1000,
       f0_hz: Math.round(f0 * 100) / 100,
@@ -1835,6 +1880,7 @@
     }
 
     var spanCents = (loHz && hiHz) ? cents(hiHz, loHz) : 0.0;
+    var spanDegreesObj = spanInDegrees(spanCents / 100.0);
     var spanSemis = spanCents / 100.0;
     var fullOct = Math.floor(spanSemis / 12);
     var restSemis = Math.round((spanSemis - fullOct * 12) * 100) / 100;
@@ -1908,6 +1954,12 @@
         raw_lowest: lowRaw ? fmtNote(lowRaw) : null,
         robust: robust.stats,
         span_semitones: Math.round(spanSemis * 100) / 100,
+        span_degrees: spanDegreesObj ? spanDegreesObj.total : 0,
+        span_octaves: spanDegreesObj ? spanDegreesObj.octaves : 0,
+        span_degrees_rest: spanDegreesObj ? spanDegreesObj.degrees : 0,
+        span_text: spanDegreesObj ? spanDegreesObj.text : '',
+        highest_solfege: solfegeOf(hzToMidi(hiHz), true),
+        lowest_solfege: solfegeOf(hzToMidi(loHz), true),
         span_octaves: Math.round(spanSemis / 12.0 * 100) / 100,
         span_cents: Math.round(spanCents * 10) / 10,
         full_octaves: fullOct,
@@ -2086,6 +2138,8 @@
       this.shownAt = this.t;
       note = {
         note_name: midiToName(midiS),
+        solfege: solfegeOf(midiS, true),
+        degree: degreeFromLow(midiS, this.lo ? this.lo.midi : midiS),
         midi: midiR,
         midi_exact: Math.round(midiS * 1000) / 1000,
         f0_hz: Math.round(f0S * 100) / 100,
@@ -2109,6 +2163,8 @@
       if (this.shown) {
         note = {
           note_name: midiToName(this.shown.midi),
+          solfege: solfegeOf(this.shown.midi, true),
+          degree: degreeFromLow(this.shown.midi, this.lo ? this.lo.midi : this.shown.midi),
           midi: Math.round(this.shown.midi),
           midi_exact: Math.round(this.shown.midi * 1000) / 1000,
           f0_hz: Math.round(this.shown.f0 * 100) / 100,
@@ -2138,7 +2194,11 @@
           midi: Math.round(this.hi.midi * 100) / 100,
           f0_hz: Math.round(this.hi.f0 * 100) / 100
         } : null,
-        span_semitones: (this.lo && this.hi) ? Math.round((this.hi.midi - this.lo.midi) * 100) / 100 : 0
+        span_semitones: (this.lo && this.hi) ? Math.round((this.hi.midi - this.lo.midi) * 100) / 100 : 0,
+        span_degrees: (this.lo && this.hi)
+          ? Math.round((this.hi.midi - this.lo.midi) * (DEG_PER_OCT / SEMI_PER_OCT) * 10) / 10 : 0,
+        span_text: (this.lo && this.hi)
+          ? spanInDegrees(this.hi.midi - this.lo.midi).text : '۰ درجه'
       }
     };
   };
@@ -2170,7 +2230,9 @@
     extractPitchChunkInfo: extractPitchChunkInfo,
     LiveTracker: LiveTracker,
     qualityStatus: qualityStatus,
-    midiToName: midiToName, hzToMidi: hzToMidi, midiToHz: midiToHz, median: median, percentile: percentile
+    midiToName: midiToName, hzToMidi: hzToMidi, midiToHz: midiToHz,
+    solfegeOf: solfegeOf, spanInDegrees: spanInDegrees, degreeFromLow: degreeFromLow,
+    faDigits: faDigits, DEG_PER_OCT: DEG_PER_OCT, median: median, percentile: percentile
   };
 
   global.LocalEngineCore = api;
