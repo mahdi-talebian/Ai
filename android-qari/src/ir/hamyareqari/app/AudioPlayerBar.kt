@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.view.Gravity
@@ -43,6 +44,7 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
     var onSpeed: ((Float) -> Unit)? = null
     var onFollowToggle: ((Boolean) -> Unit)? = null
     var onSkip: ((Double) -> Unit)? = null
+    var onTraceSeek: ((Double) -> Unit)? = null
 
     private val playBtn = PlayButton(context)
     private val skipBackBtn = Theme.chip(context, "−۱۰ث", Theme.DIM)
@@ -50,6 +52,7 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
     private val timeNow = Theme.text(context, "۰:۰۰٫۰", 12f, Theme.GOLD, true, Gravity.START or Gravity.CENTER_VERTICAL)
     private val timeTotal = Theme.text(context, "۰:۰۰٫۰", 12f, Theme.DIM, false, Gravity.END or Gravity.CENTER_VERTICAL)
     private val bar = GoldSeekBar(context)
+    private val pitchTrace = MiniPitchTraceView(context)
 
     private val followBtn = Theme.chip(context, "⊙ دنبال‌کردن", Theme.TEAL)
     private val restartBtn = Theme.chip(context, "↺ از اول", Theme.DIM)
@@ -105,6 +108,13 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         mid.addView(bar)
         row1.addView(mid)
         addView(row1)
+
+        // ── ردّ زیر و بمی: نمودار فشرده و قابل لمس ────────────────────────
+        addView(Theme.space(context, 8f))
+        addView(Theme.text(context, "ردِّ صدا · برای رفتن به لحظهٔ دلخواه لمس کنید", 10.5f, Theme.DIM))
+        pitchTrace.layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(context, 72f))
+        addView(pitchTrace)
+        pitchTrace.onSeek = { onTraceSeek?.invoke(it) }
 
         // ── ردیف دوم: سرعت‌ها، دنبال‌کردن، از اول ────────────────────────
         addView(Theme.space(context, 8f))
@@ -187,12 +197,17 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
     }
 
     /** هر تیکِ پخش (≈۶۰ بار در ثانیه) */
+    fun setPitchTrace(spec: TraceSpec?) {
+        pitchTrace.setSpec(spec)
+    }
+
     fun setPosition(sec: Double) {
         if (dragging) return
         val frac = (sec / totalSec).coerceIn(0.0, 1.0)
         bar.setProgress(frac)
         playBtn.progress = frac
         timeNow.text = fmt(sec)
+        pitchTrace.setPlayhead(sec)
     }
 
     fun setPlaying(playing: Boolean) {
