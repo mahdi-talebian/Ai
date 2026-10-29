@@ -1181,7 +1181,22 @@ $('videoBtn').onclick = async () => {
       note = ` ⚠️ طولِ فایل ${faN(res.probed_duration.toFixed(1))}s گزارش شد ولی باید ` +
         `${faN(res.duration.toFixed(1))}s باشد — فایل با این حال تا آخر پخش می‌شود.`;
     }
-    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' + speed + note;
+    /* گیتِ خروجی: عددهایی که ثابت می‌کنند فایل سالم است (طول/فریم/گمشده/نرخِ بیت) */
+    const vf = res && res.verify;
+    const qParts = [];
+    if (res && res.width && res.height) qParts.push(`${faN(res.width)}×${faN(res.height)}`);
+    if (res && res.fps) qParts.push(`${faN(res.fps)} فریم/ثانیه`);
+    if (res && res.bitrate) qParts.push(`${faN((res.bitrate / 1e6).toFixed(1))} مگابیت/ثانیه`);
+    if (res && res.duration != null) qParts.push(`طول ${faN(Number(res.duration).toFixed(1))}s`);
+    if (vf && vf.frames != null) {
+      qParts.push(`${faN(vf.frames)} فریم · ${faN(vf.dropped_frames || 0)} گم‌شده`);
+    }
+    if (vf && vf.ok === false && vf.problems && vf.problems.length) {
+      note += ` ⚠️ بازبینیِ فایل: ${vf.problems.join(' · ')}`;
+    }
+    const quality = qParts.length ? `\n🎞 ${qParts.join(' · ')}` : '';
+    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' +
+      speed + note + quality;
     $('videoStatus').className = 'status ok';
   } catch (e) {
     hideProgress('vProg');

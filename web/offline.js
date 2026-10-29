@@ -546,26 +546,86 @@
   var VIDEO = { W: 1280, H: 720, fps: 60, bitrate: 5500000 };
   var VIDEO_HD = { W: 1920, H: 1080, bitrate: 9000000 };
 
-  /* اندازهٔ قاب: پیش‌فرض «خودکار» = ۱۰۸۰p برای فایل‌های تا ۴ دقیقه (تصویر
-     پهن‌تر و واضح‌تر)، و ۷۲۰p برای فایل‌های خیلی بلند تا حافظه پر نشود.
-     اگر دستگاه کدگذاری ۱۰۸۰p ندهد، خودکار به ۷۲۰p برمی‌گردد. */
-  function videoSize(durationSec, quality) {
-    var q = quality || 'auto';
-    if (q === '720p') return { W: VIDEO.W, H: VIDEO.H, bitrate: VIDEO.bitrate };
-    if (q === '1080p') return { W: VIDEO_HD.W, H: VIDEO_HD.H, bitrate: VIDEO_HD.bitrate };
-    return (durationSec <= 240) ? { W: VIDEO_HD.W, H: VIDEO_HD.H, bitrate: VIDEO_HD.bitrate }
-      : { W: VIDEO.W, H: VIDEO.H, bitrate: VIDEO.bitrate };
+  /* ══════════════════════════════════════════════════════════════════════
+     نرخِ بیت: تابعِ «پیکسل در ثانیه»، نه طولِ فایل
+     ----------------------------------------------------------------------
+     ریشهٔ لگِ خروجی همین‌جا بود: نرخِ بیت بر اساسِ *طولِ صدا* کم می‌شد ولی
+     رزولوشن ۱۰۸۰p می‌ماند. فایلِ ۸۸ثانیه‌ای با ۳٫۸ Mbps و ۱۰۸۰p۶۰ کدگذاری
+     می‌شد، یعنی ۰٫۰۳۱ بیت بر پیکسل در هر فریم — سه تا چهار برابر کمتر از
+     حدِ سالمِ H.264 (~۰٫۰۸). نتیجه: مکروبلوک و ایست‌های ریزِ کدگشا.
+     حالا نرخِ بیت فقط از رویِ W×H×fps می‌آید و هیچ‌وقت زیرِ BPP_MIN نمی‌رود.
+     ══════════════════════════════════════════════════════════════════════ */
+  var BPP_HD = 0.09;       /* هدف برای ۱۰۸۰p (۹٪ بیت بر پیکسل در هر فریم) */
+  var BPP_SD = 0.11;       /* هدف برای ۷۲۰p — ریزتر ولی کیفیتِ برابر */
+  var BPP_MIN = 0.075;     /* خطِ قرمز: هیچ خروجی زیرِ این نمی‌رود */
+  var BR_MIN = 1600000;    /* کفِ مطلق (۷۲۰p۲۴ با bpp=۰٫۰۷۵ هم بالاتر است) */
+  var BR_MAX = 20000000;   /* سقفِ مطلق تا حرارت/حافظهٔ گوشی اذیت نشود */
+  /* سقفِ حجم/حافظهٔ فایل: کلِ خروجی در حافظه ساخته می‌شود، پس بی‌نهایت
+     بزرگ‌شدن جایز نیست. اگر ترکیبِ «رزولوشن × فریم» از این سقف رد شود،
+     اول نرخِ فریم و بعد رزولوشن پایین می‌آید — نه کیفیتِ هر فریم. */
+  var VIDEO_MAX_BYTES = 180 * 1024 * 1024;      /* حالتِ خودکار */
+  var VIDEO_MAX_BYTES_EXPLICIT = 300 * 1024 * 1024;  /* انتخابِ صریحِ کاربر */
+
+  function bppTarget(W, H) {
+    return (W * H >= 1920 * 1080) ? BPP_HD : BPP_SD;
   }
 
-  /* برای فایل‌های بلند: نرخ بیت و (اگر لازم شد) فریم را کم می‌کنیم تا
-     حافظهٔ گوشی پر نشود؛ برای فایل کوتاه همان ۷۲۰p۶۰ و کیفیت بالا می‌ماند. */
-  function videoProfile(durationSec, askedFps) {
-    var fps = askedFps > 0 ? askedFps : VIDEO.fps;
-    var bitrate = VIDEO.bitrate;
-    if (durationSec > 300) { bitrate = 1800000; fps = Math.min(fps, 24); }
-    else if (durationSec > 150) { bitrate = 2800000; fps = Math.min(fps, 30); }
-    else if (durationSec > 75) { bitrate = 3800000; fps = Math.min(fps, 60); }
-    return { fps: Math.round(fps), bitrate: Math.round(bitrate) };
+  function bitrateFor(W, H, fps) {
+    var px = W * H * Math.max(1, fps);
+    return Math.round(Math.max(BR_MIN, Math.min(BR_MAX, px * bppTarget(W, H))));
+  }
+
+  /* ── نقشهٔ خروجی: (ابعاد، نرخِ فریم، نرخِ بیت) — همه هم‌خوان ─────────────
+     ورودی: طولِ صدا، انتخابِ کیفیتِ کاربر، نرخِ فریمِ درخواستی.
+     قاعده: نرخِ بیت = تابعِ پیکسل×فریم (نه طولِ فایل)؛ اگر ترکیب از سقفِ
+     حافظه رد شود، نرخِ فریم و بعد رزولوشن کم می‌شود ولی bpp هرگز زیرِ
+     BPP_MIN نمی‌رود. */
+  function videoPlan(durationSec, quality, askedFps) {
+    var q = quality || 'auto';
+    var dur = Math.max(0.2, durationSec || 0);
+    var maxFps = askedFps > 0 ? Math.min(60, askedFps) : 60;
+    var explicit = (q === '720p' || q === '1080p');
+    var resList;
+    if (q === '720p') resList = [VIDEO];
+    else if (q === '1080p') resList = [VIDEO_HD];
+    else resList = (dur <= 120) ? [VIDEO_HD, VIDEO] : [VIDEO];
+
+    var fpsList = [60, 30, 24].filter(function (f) { return f <= maxFps; });
+    if (!fpsList.length) fpsList = [Math.max(12, Math.round(maxFps))];
+
+    function out(W, H, fps, br) {
+      return { W: W, H: H, fps: fps, bitrate: Math.round(br), bpp: Math.round(1e4 * br / (W * H * fps)) / 1e4 };
+    }
+
+    for (var i = 0; i < resList.length; i++) {
+      for (var j = 0; j < fpsList.length; j++) {
+        var W = resList[i].W, H = resList[i].H, fps = fpsList[j];
+        var br = bitrateFor(W, H, fps);
+        /* انتخابِ صریحِ کاربر مقدم است، ولی حتی در آن حالت هم نرخِ فریم
+           پایین می‌آید تا فایل از سقفِ حافظهٔ گوشی رد نشود. */
+        var cap = explicit ? VIDEO_MAX_BYTES_EXPLICIT : VIDEO_MAX_BYTES;
+        if (br * dur / 8 <= cap) return out(W, H, fps, br);
+      }
+    }
+    /* خیلی بلند: پایین‌ترین ترکیب با نرخِ بیتی که در سقفِ حجم جا شود
+       (bpp همچنان بالای کفِ کیفیت می‌ماند) */
+    var W2 = VIDEO.W, H2 = VIDEO.H, fps2 = fpsList[fpsList.length - 1];
+    var capBits = VIDEO_MAX_BYTES * 8;
+    var br2 = Math.max(BR_MIN, Math.min(bitrateFor(W2, H2, fps2), Math.floor(capBits / dur)));
+    return out(W2, H2, fps2, br2);
+  }
+
+  /* اندازهٔ قاب: پیش‌فرض «خودکار» = ۱۰۸۰p برای فایل‌های تا ۲ دقیقه، و ۷۲۰p
+     برای بلندتر‌ها. اگر دستگاه کدگذاری ۱۰۸۰p ندهد، خودکار به ۷۲۰p برمی‌گردد. */
+  function videoSize(durationSec, quality) {
+    var p = videoPlan(durationSec, quality, VIDEO.fps);
+    return { W: p.W, H: p.H, bitrate: p.bitrate };
+  }
+
+  /* سازگاری با کدِ قدیمی: پروفایل = نرخِ فریم + نرخِ بیتِ همان پیکسل‌ها */
+  function videoProfile(durationSec, askedFps, quality) {
+    var plan = videoPlan(durationSec, quality, askedFps);
+    return { fps: plan.fps, bitrate: plan.bitrate, bpp: plan.bpp };
   }
 
   function pickVideoMime() {
@@ -602,6 +662,9 @@
            فایل MP4 می‌شکند؛ همان چیزی که باعث «قفل‌کردن» و طولِ غلط در
            پخش‌کننده‌های گوشی می‌شد. */
         latencyMode: 'realtime',
+        /* نرخِ بیت «هدف» است نه سقفِ سفت: صحنهٔ ثابت (نمودار) بیتِ کمتری
+           مصرف می‌کند و صحنهٔ شلوغ کیفیتش را نگه می‌دارد. */
+        bitrateMode: 'variable',
         hardwareAcceleration: 'prefer-hardware', avc: { format: 'avc' }
       };
       try {
@@ -663,51 +726,341 @@
     }
   }
 
+  function toDataView(buf) {
+    if (!buf) return null;
+    if (typeof ArrayBuffer !== 'undefined' && buf instanceof ArrayBuffer) return new DataView(buf);
+    if (buf.buffer) return new DataView(buf.buffer, buf.byteOffset || 0, buf.byteLength);
+    return null;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     خواندنِ «هندسهٔ زمانی» فایلِ MP4
+     ----------------------------------------------------------------------
+     نکتهٔ کلیدی که باعثِ «۵ ثانیه در گالری» می‌شد:
+       • mvhd.timescale  = تایم‌اسکیلِ فیلم
+       • tkhd.duration   با *همان* تایم‌اسکیلِ فیلم سنجیده می‌شود؛
+                         tkhd اصلاً فیلدِ timescale ندارد
+       • mdhd.timescale/duration مالِ خودِ تراک است
+     کدِ قبلی برای tkhd هم «تایم‌اسکیل» را از offset ۱۲ می‌خواند که در
+     tkhd همان track_ID است ⇒ طول در هدر به چند صدمِ ثانیه تبدیل می‌شد.
+     ══════════════════════════════════════════════════════════════════════ */
+  function mp4Timeline(buf) {
+    var dv = toDataView(buf);
+    var info = {
+      ok: false, byteLength: dv ? dv.byteLength : 0,
+      movieTimescale: 0, movieDuration: 0,
+      fragmented: false, moofCount: 0, mehdDuration: null,
+      tracks: []
+    };
+    if (!dv) return info;
+    walkBoxes(dv, 0, dv.byteLength, function (type, off, size, hdr) {
+      if (type === 'moof') { info.moofCount++; info.fragmented = true; return; }
+      if (type !== 'moov') return;
+      walkBoxes(dv, off + hdr, off + size, function (t2, o2, s2, h2) {
+        var b = o2 + h2, v = dv.getUint8(b);
+        if (t2 === 'mvhd') {
+          info.movieTimescale = dv.getUint32(b + (v === 1 ? 20 : 12));
+          info.movieDuration = v === 1
+            ? Number(dv.getBigUint64(b + 24)) : dv.getUint32(b + 16);
+        } else if (t2 === 'mvex') {
+          walkBoxes(dv, b, o2 + s2, function (t3, o3, s3, h3) {
+            if (t3 !== 'mehd') return;
+            var b3 = o3 + h3, v3 = dv.getUint8(b3);
+            info.mehdDuration = v3 === 1
+              ? Number(dv.getBigUint64(b3 + 4)) : dv.getUint32(b3 + 4);
+          });
+        } else if (t2 === 'trak') {
+          var trk = {
+            handler: '', tkhdDuration: 0, mdhdTimescale: 0, mdhdDuration: 0,
+            samples: 0, totalTicks: 0, ctts: false, keyframes: [], sttsCount: 0
+          };
+          walkBoxes(dv, b, o2 + s2, function (t3, o3, s3, h3) {
+            var b3 = o3 + h3, v3 = dv.getUint8(b3);
+            if (t3 === 'tkhd') {
+              trk.tkhdDuration = v3 === 1
+                ? Number(dv.getBigUint64(b3 + 28)) : dv.getUint32(b3 + 20);
+            } else if (t3 === 'mdia') {
+              walkBoxes(dv, b3, o3 + s3, function (t4, o4, s4, h4) {
+                var b4 = o4 + h4, v4 = dv.getUint8(b4);
+                if (t4 === 'mdhd') {
+                  trk.mdhdTimescale = dv.getUint32(b4 + (v4 === 1 ? 20 : 12));
+                  trk.mdhdDuration = v4 === 1
+                    ? Number(dv.getBigUint64(b4 + 24)) : dv.getUint32(b4 + 16);
+                } else if (t4 === 'hdlr') {
+                  trk.handler = fourcc(dv, b4 + 8);
+                } else if (t4 === 'minf') {
+                  walkBoxes(dv, b4, o4 + s4, function (t5, o5, s5, h5) {
+                    if (t5 !== 'stbl') return;
+                    walkBoxes(dv, o5 + h5, o5 + s5, function (t6, o6, s6, h6) {
+                      var b6 = o6 + h6;
+                      if (t6 === 'stts') {
+                        var n = dv.getUint32(b6 + 4);
+                        trk.sttsCount = n;
+                        for (var i = 0; i < n; i++) {
+                          var cnt = dv.getUint32(b6 + 8 + i * 8);
+                          var delta = dv.getUint32(b6 + 12 + i * 8);
+                          trk.samples += cnt;
+                          trk.totalTicks += cnt * delta;
+                        }
+                      } else if (t6 === 'ctts') {
+                        trk.ctts = true;
+                      } else if (t6 === 'stss') {
+                        var k = dv.getUint32(b6 + 4);
+                        for (var j = 0; j < k; j++) trk.keyframes.push(dv.getUint32(b6 + 8 + j * 4));
+                      }
+                    });
+                  });
+                }
+              });
+            }
+          });
+          if (trk.mdhdTimescale || trk.samples) info.tracks.push(trk);
+        }
+      });
+    });
+    info.ok = info.movieTimescale > 0 && info.tracks.length > 0;
+    return info;
+  }
+
+  /* ── نوشتنِ طول در هدر، با تایم‌اسکیلِ درستِ هر جعبه ──────────────────── */
   function patchMp4Duration(buffer, seconds) {
-    if (!(seconds > 0) || !buffer || !buffer.byteLength) return buffer;
-    var copy = buffer.slice(0);                    /* دست‌نخوردنی بماند */
-    var dv = new DataView(copy);
+    if (!(seconds > 0) || !buffer) return buffer;
+    var copy = buffer.slice(0);
+    var dv = toDataView(copy);
+    var tl = mp4Timeline(copy);
+    if (!dv || !tl.ok || !tl.movieTimescale) return buffer;
+    var tsMovie = tl.movieTimescale;
     var patched = 0;
-    function writeDur(bodyOff, ver, tsOff, durOff, w64) {
-      var ts = dv.getUint32(bodyOff + tsOff);
+    function put(boxBodyOff, ver, tsOffset, durOffset, fixedTs) {
+      var ts = fixedTs || dv.getUint32(boxBodyOff + tsOffset);
       if (!ts) return;
       var units = Math.round(seconds * ts);
-      if (w64) {
-        if (units > 0xFFFFFFFF) dv.setBigUint64(bodyOff + durOff, BigInt(units));
-        else dv.setUint32(bodyOff + durOff, units);
-        if (dv.getUint32(bodyOff + durOff) === units) return;
+      if (ver === 1) {
+        if (units > 0xFFFFFFFF) dv.setBigUint64(boxBodyOff + durOffset, BigInt(units));
+        else dv.setUint32(boxBodyOff + durOffset, units);
+      } else {
+        dv.setUint32(boxBodyOff + durOffset, Math.min(0xFFFFFFFF, units));
       }
-      dv.setUint32(bodyOff + durOff, Math.min(0xFFFFFFFF, units));
       patched++;
     }
-    walkBoxes(dv, 0, copy.byteLength, function (type, off, size, hdr) {
-      if (type === 'moov') {
-        walkBoxes(dv, off + hdr, off + size, function (t2, o2, s2, h2) {
-          var body = o2 + h2;
-          var ver = dv.getUint8(body);
-          if (t2 === 'mvhd') {
-            if (ver === 0) writeDur(body, 0, 12, 16, false);
-            else writeDur(body, 1, 20, 24, true);
-          } else if (t2 === 'trak') {
-            walkBoxes(dv, o2 + h2, o2 + s2, function (t3, o3, s3, h3) {
-              var b3 = o3 + h3, v3 = dv.getUint8(b3);
-              if (t3 === 'tkhd') {
-                if (v3 === 0) writeDur(b3, 0, 12, 20, false);
-                else writeDur(b3, 1, 20, 28, true);
-              } else if (t3 === 'mdia') {
-                walkBoxes(dv, o3 + h3, o3 + s3, function (t4, o4, s4, h4) {
-                  if (t4 !== 'mdhd') return;
-                  var b4 = o4 + h4, v4 = dv.getUint8(b4);
-                  if (v4 === 0) writeDur(b4, 0, 12, 16, false);
-                  else writeDur(b4, 1, 20, 24, true);
-                });
+    walkBoxes(dv, 0, dv.byteLength, function (type, off, size, hdr) {
+      if (type !== 'moov') return;
+      walkBoxes(dv, off + hdr, off + size, function (t2, o2, s2, h2) {
+        var b = o2 + h2, v = dv.getUint8(b);
+        if (t2 === 'mvhd') {
+          put(b, v, v === 1 ? 20 : 12, v === 1 ? 24 : 16, 0);
+        } else if (t2 === 'mvex') {
+          walkBoxes(dv, b, o2 + s2, function (t3, o3, s3, h3) {
+            if (t3 !== 'mehd') return;
+            var b3 = o3 + h3, v3 = dv.getUint8(b3);
+            put(b3, v3, 0, v3 === 1 ? 8 : 4, tsMovie);   /* mehd: بدونِ ts */
+          });
+        } else if (t2 === 'trak') {
+          walkBoxes(dv, b, o2 + s2, function (t3, o3, s3, h3) {
+            var b3 = o3 + h3, v3 = dv.getUint8(b3);
+            if (t3 === 'tkhd') {
+              /* tkhd: طول با تایم‌اسکیلِ فیلم — هیچ فیلدِ ts در خودش نیست */
+              put(b3, v3, 0, v3 === 1 ? 28 : 20, tsMovie);
+            } else if (t3 === 'mdia') {
+              walkBoxes(dv, b3, o3 + s3, function (t4, o4, s4, h4) {
+                if (t4 !== 'mdhd') return;
+                var b4 = o4 + h4, v4 = dv.getUint8(b4);
+                put(b4, v4, v4 === 1 ? 20 : 12, v4 === 1 ? 24 : 16, 0);
+              });
+            }
+          });
+        }
+      });
+    });
+    return patched ? copy : buffer;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     MP4 تکه‌ای (fragmented) — همان چیزی که MediaRecorder می‌سازد
+     ----------------------------------------------------------------------
+     در فایلِ تکه‌ای، `mvhd` و `mdhd` داخلِ moov طولِ **صفر** دارند و طولِ
+     واقعی در جدولِ قطعه‌ها (moof) است. اندروید (MediaScanner و
+     MediaMetadataRetriever) قطعه‌ها را جمع نمی‌زند و فقط mvhd/mdhd را
+     می‌خواند ⇒ گالری عددِ بی‌معنی نشان می‌دهد (همان «۵ ثانیه»).
+     راه‌حل: نوشتنِ طول در mvhd/tkhd/mdhd و افزودنِ جعبهٔ `mehd`
+     (fragment_duration) به `mvex` اگر نبود.
+     امنیت: اگر فایل از آفستِ مطلق استفاده کند (base_data_offset در tfhd یا
+     stco/co64 غیرخالی)، درجِ بایت‌ها آفست‌ها را خراب می‌کند ⇒ دست نمی‌زنیم.
+     ══════════════════════════════════════════════════════════════════════ */
+  function mp4HasAbsoluteOffsets(dv, start, end) {
+    var risky = false;
+    walkBoxes(dv, start, end, function (t, off, size, hdr) {
+      var b = off + hdr;
+      if (t === 'tfhd') {
+        var flags = dv.getUint32(b) & 0xFFFFFF;
+        if (flags & 0x000001) risky = true;         /* base-data-offset-present */
+      } else if (t === 'stco' || t === 'co64') {
+        if (dv.getUint32(b + 4) > 0) risky = true;  /* آفستِ مطلقِ واقعی */
+      } else if (t === 'moof' || t === 'traf' || t === 'moov' || t === 'trak') {
+        if (t !== 'moof' && t !== 'traf') return;
+        walkBoxes(dv, b, off + size, function (t2, o2, s2, h2) {
+          var b2 = o2 + h2;
+          if (t2 === 'tfhd') {
+            var f2 = dv.getUint32(b2) & 0xFFFFFF;
+            if (f2 & 0x000001) risky = true;
+          } else if (t2 === 'trun' || t2 === 'traf') {
+            walkBoxes(dv, b2, o2 + s2, function (t3, o3, s3, h3) {
+              if (t3 === 'tfhd') {
+                var f3 = dv.getUint32(o3 + h3) & 0xFFFFFF;
+                if (f3 & 0x000001) risky = true;
               }
             });
           }
         });
       }
     });
-    return patched ? copy : buffer;
+    return risky;
+  }
+
+  /* درجِ `mehd` در mvex و اصلاحِ طول‌ها؛ فقط برای فایلِ تکه‌ایِ بی‌خطر */
+  function ensureMp4FragmentDuration(buffer, seconds) {
+    var src = buffer;
+    var dv = toDataView(src);
+    var tl = mp4Timeline(src);
+    if (!dv || !tl.ok || !tl.fragmented || !(seconds > 0)) return src;
+
+    /* ۱) طول‌ها را در mvhd/tkhd/mdhd بنویس (اندروید همین را می‌خواند) */
+    var out = patchMp4Duration(src, seconds);
+
+    /* ۲) اگر mehd هست، همان‌جا نوشته شد؛ اگر نیست، درجش کن */
+    var tl2 = mp4Timeline(out);
+    if (tl2.mehdDuration != null && tl2.mehdDuration > 0) return out;
+    if (mp4HasAbsoluteOffsets(toDataView(out), 0, out.byteLength)) return out;
+
+    var dv2 = toDataView(out);
+    var pos = null;
+    walkBoxes(dv2, 0, dv2.byteLength, function (type, off, size, hdr) {
+      if (type !== 'moov' || pos) return;
+      walkBoxes(dv2, off + hdr, off + size, function (t2, o2, s2, h2) {
+        if (t2 === 'mvex' && !pos) {
+          pos = { moovOff: off, moovHdr: hdr, moovSize: size, mvexOff: o2, mvexHdr: h2, mvexSize: s2 };
+        }
+      });
+    });
+    if (!pos) return out;
+    if (pos.moovSize === 1 || pos.mvexSize === 1) return out;   /* largesize: دست نزن */
+
+    var ts = tl2.movieTimescale || tl.movieTimescale;
+    var mehd = new Uint8Array(16);
+    var mdv = new DataView(mehd.buffer);
+    mdv.setUint32(0, 16);                 /* size */
+    mehd[4] = 0x6D; mehd[5] = 0x65; mehd[6] = 0x68; mehd[7] = 0x64;  /* 'mehd' */
+    mdv.setUint8(8, 0);                   /* version 0 */
+    mdv.setUint32(9, 0);                  /* flags */
+    mdv.setUint32(12, Math.min(0xFFFFFFFF, Math.round(seconds * ts)));
+
+    var insertAt = pos.mvexOff + pos.mvexHdr;
+    var res = new Uint8Array(out.byteLength + mehd.length);
+    res.set(new Uint8Array(out, 0, insertAt), 0);
+    res.set(mehd, insertAt);
+    res.set(new Uint8Array(out, insertAt), insertAt + mehd.length);
+
+    var rdv = new DataView(res.buffer);
+    /* اندازهٔ mvex و moov هر دو ۱۶ بایت بزرگ‌تر می‌شوند */
+    rdv.setUint32(pos.mvexOff, pos.mvexSize + mehd.length);
+    rdv.setUint32(pos.moovOff, pos.moovSize + mehd.length);
+    return res.buffer;
+  }
+
+  /* تعمیرِ یکپارچه: تکه‌ای ⇒ mehd + هدرها، معمولی ⇒ هدرها */
+  function repairMp4Duration(buffer, seconds) {
+    var tl = mp4Timeline(buffer);
+    if (tl.fragmented) return ensureMp4FragmentDuration(buffer, seconds);
+    return patchMp4Duration(buffer, seconds);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     بازبینیِ خودکارِ فایلِ ساخته‌شده — «درِ خروجی» ویدیو
+     ----------------------------------------------------------------------
+     هر خروجی قبل از تحویل از این گیت می‌گذرد؛ اگر حتی یک شرط نقض شود،
+     مشکل به‌صورتِ فهرست برمی‌گردد (و در تست/اپ دیده می‌شود) به‌جای اینکه
+     کاربر در گالری کشفش کند.
+       • طولِ mvhd / tkhd / mdhd == طولِ واقعی
+       • تعدادِ نمونه‌های تصویر == تعدادِ فریمِ رسم‌شده (فریمِ گم‌شده = لگ)
+       • نبودِ ctts (B-frame) ⇒ ترتیبِ زمانی سالم در پخش‌کننده‌های گوشی
+       • فاصلهٔ فریم‌های کلیدی ≤ سقف (پرشِ نرم، بدونِ وقفهٔ ۲ثانیه‌ای)
+     ══════════════════════════════════════════════════════════════════════ */
+  function verifyMp4(buffer, expect) {
+    expect = expect || {};
+    var tl = mp4Timeline(buffer);
+    var problems = [];
+    var res = {
+      ok: false, problems: problems, parsed: tl.ok,
+      movie_duration_sec: null, tracks: [], frames: null, dropped_frames: null,
+      max_key_gap_sec: null, has_b_frames: null, bpp: expect.bpp == null ? null : expect.bpp
+    };
+    if (!tl.ok) {
+      problems.push('هدرِ MP4 خوانده نشد');
+      return res;
+    }
+    var fps = expect.fps > 0 ? expect.fps : 0;
+    var tol = expect.toleranceSec != null ? expect.toleranceSec : (fps ? (1.5 / fps + 0.02) : 0.25);
+    /* در فایلِ تکه‌ای، نمونه‌ها داخلِ moof هستند و moov صفر می‌دهد ⇒
+       شمارشِ فریم از moov معنا ندارد؛ مرجع، mehd است. */
+    res.fragmented = !!tl.fragmented;
+    function sec(d, ts) { return ts ? d / ts : 0; }
+
+    res.movie_duration_sec = Math.round(sec(tl.movieDuration, tl.movieTimescale) * 1000) / 1000;
+    res.mehd_duration_sec = tl.mehdDuration == null ? null
+      : Math.round(sec(tl.mehdDuration, tl.movieTimescale) * 1000) / 1000;
+    var want = expect.durationSec;
+    if (want > 0) {
+      if (Math.abs(res.movie_duration_sec - want) > tol)
+        problems.push('طولِ mvhd=' + res.movie_duration_sec + 's ≠ ' + Math.round(want * 1000) / 1000 + 's');
+      if (res.mehd_duration_sec != null && Math.abs(res.mehd_duration_sec - want) > tol)
+        problems.push('طولِ mehd=' + res.mehd_duration_sec + 's');
+    }
+    tl.tracks.forEach(function (t) {
+      var row = {
+        handler: t.handler,
+        tkhd_sec: Math.round(sec(t.tkhdDuration, tl.movieTimescale) * 1000) / 1000,
+        mdhd_sec: Math.round(sec(t.mdhdDuration, t.mdhdTimescale) * 1000) / 1000,
+        samples: t.samples, b_frames: t.ctts, keyframes: t.keyframes.length
+      };
+      res.tracks.push(row);
+      if (want > 0) {
+        if (Math.abs(row.mdhd_sec - want) > tol)
+          problems.push('طولِ mdhd(' + t.handler + ')=' + row.mdhd_sec + 's');
+        /* tkhd در پخش‌کننده‌های گوشی مرجع است ⇒ باید درست باشد */
+        if (Math.abs(row.tkhd_sec - want) > tol)
+          problems.push('طولِ tkhd(' + t.handler + ')=' + row.tkhd_sec + 's');
+      }
+      if (t.ctts) problems.push('ctts/B-frame در تراکِ ' + t.handler);
+      if (t.handler === 'vide' && !tl.fragmented) {
+        res.frames = t.samples;
+        if (expect.frames > 0) {
+          res.dropped_frames = Math.max(0, expect.frames - t.samples);
+          if (t.samples < expect.frames)
+            problems.push('فریمِ گم‌شده: ' + t.samples + ' از ' + expect.frames);
+        }
+        /* فاصلهٔ فریم‌های کلیدی از جدولِ stss */
+        if (t.keyframes.length > 1 && t.samples > 0) {
+          var avgTicks = t.totalTicks / t.samples;
+          var maxGap = 0;
+          for (var i = 1; i < t.keyframes.length; i++)
+            maxGap = Math.max(maxGap, t.keyframes[i] - t.keyframes[i - 1]);
+          res.max_key_gap_sec = Math.round((maxGap * avgTicks / t.mdhdTimescale) * 1000) / 1000;
+          var cap = expect.maxKeyGapSec > 0 ? expect.maxKeyGapSec : 2.0;
+          if (res.max_key_gap_sec > cap)
+            problems.push('فاصلهٔ فریمِ کلیدی ' + res.max_key_gap_sec + 's > ' + cap + 's');
+        }
+      }
+    });
+    res.has_b_frames = res.tracks.some(function (r) { return r.b_frames; });
+    if (tl.fragmented) {
+      if (res.mehd_duration_sec == null) problems.push('فایلِ تکه‌ای بدونِ mehd (گالری طول را نمی‌خواند)');
+      else if (want > 0 && Math.abs(res.mehd_duration_sec - want) > tol)
+        problems.push('طولِ mehd=' + res.mehd_duration_sec + 's');
+      if (!(res.movie_duration_sec > 0) && want > 0)
+        problems.push('mvhd طول ندارد (گالری طول را نمی‌خواند)');
+    }
+    res.ok = problems.length === 0;
+    return res;
   }
 
   /* ── WebM (خروجی MediaRecorder): نوشتن Duration در Segment/Info ──
@@ -842,14 +1195,28 @@
     });
   }
 
+  /* تخلیهٔ صفِ کدگذار: هیچ‌وقت نگذاریم صف شلوغ شود.
+     چرا؟ کدگذارِ H.264 در حالتِ realtime وقتی صف پُر شود برای «عقب نماندن»
+     فریم می‌اندازد؛ همان چیزی که در خروجی به‌شکلِ «لگ» دیده می‌شد.
+     با نگه‌داشتنِ صف روی ۱ فریم، هیچ فریمی قابلِ‌انداختن نیست. */
+  function drainEncoder(enc, maxQ) {
+    return new Promise(function (resolve) {
+      if (!enc || !(enc.encodeQueueSize > maxQ)) { resolve(true); return; }
+      var done = false;
+      function tick() {
+        if (done) return;
+        if (!enc || !(enc.encodeQueueSize > maxQ)) { done = true; resolve(true); return; }
+        setTimeout(tick, 0);
+      }
+      tick();
+    });
+  }
+
   async function renderVideoFast(pitch, notes, wav, sr, onProgress, opts) {
     var trace = pitch.trace_freqs || (CORE.strictTraceFreqs
       ? CORE.strictTraceFreqs(pitch.times, pitch.freqs, notes) : pitch.freqs);
     var duration = Math.max(
       (pitch.times && pitch.times.length) ? pitch.times[pitch.times.length - 1] : 1, 0.2);
-    var prof = videoProfile(duration, opts.fps);
-    var fps = prof.fps;
-    var size = videoSize(duration, opts.quality);
     var canvas = document.createElement('canvas');
     function build(W, H) {
       canvas.width = W; canvas.height = H;
@@ -858,29 +1225,26 @@
         tightness: opts.tightness || 1
       });
     }
-    var W = size.W, H = size.H;
+    var plan = videoPlan(duration, opts.quality, opts.fps);
+    var W = plan.W, H = plan.H, fps = plan.fps, bitrate = plan.bitrate;
     var renderer = build(W, H);
     duration = Math.max(renderer.duration, 0.2);
     var totalFrames = Math.max(1, Math.round(duration * fps));
+    var frameUs = Math.round(1e6 / fps);
+    var keyEvery = Math.max(1, Math.round(fps));        /* فریمِ کلیدی هر ۱ ثانیه */
 
-    var vcfg = await pickAvcConfig(W, H, fps, Math.min(prof.bitrate, size.bitrate));
+    var vcfg = await pickAvcConfig(W, H, fps, bitrate);
     if (!vcfg && W !== VIDEO.W) {                 /* دستگاه ۱۰۸۰p نداد ⇒ ۷۲۰p */
       W = VIDEO.W; H = VIDEO.H;
+      plan = videoPlan(duration, '720p', fps);
+      bitrate = plan.bitrate;
       renderer = build(W, H);
-      vcfg = await pickAvcConfig(W, H, fps, VIDEO.bitrate);
+      vcfg = await pickAvcConfig(W, H, fps, bitrate);
     }
     if (!vcfg) throw new Error('کدک H.264 در این دستگاه نیست');
     var acfg = await pickAacConfig(sr);
     if (!acfg) throw new Error('کدک AAC در این دستگاه نیست');
 
-    var muxer = new global.Mp4Muxer.Muxer({
-      target: new global.Mp4Muxer.ArrayBufferTarget(),
-      video: { codec: 'avc', width: W, height: H, frameRate: fps },
-      audio: { codec: 'aac', sampleRate: sr, numberOfChannels: 1 },
-      fastStart: 'in-memory'
-    });
-
-    var frameUs = Math.round(1e6 / fps);
     var vChunks = [], aChunks = [], encError = null;
     function takeChunk(list, chunk, meta, fallbackDur) {
       var data = new Uint8Array(chunk.byteLength);
@@ -893,41 +1257,68 @@
         ts: chunk.timestamp || 0, dur: dur, meta: meta || null
       });
     }
-    var venc = new global.VideoEncoder({
-      output: function (chunk, meta) { takeChunk(vChunks, chunk, meta, frameUs); },
-      error: function (e) { encError = e; }
-    });
-    venc.configure(vcfg);
+
+    /* ── مرحلهٔ ۱: تصویر ─────────────────────────────────────────────────
+       هر فریم یک‌بار رسم و با برچسبِ زمانیِ دقیقِ i/fps کدگذاری می‌شود.
+       بعد از هر فریم صبر می‌کنیم تا صف به ≤۱ برسد ⇒ صفر فریمِ گم‌شده. */
+    async function encodeVideo(cfg) {
+      vChunks = []; encError = null;
+      var venc = new global.VideoEncoder({
+        output: function (chunk, meta) { takeChunk(vChunks, chunk, meta, frameUs); },
+        error: function (e) { encError = e; }
+      });
+      venc.configure(cfg);
+      for (var i = 0; i < totalFrames; i++) {
+        if (encError) throw encError;
+        renderer.draw(Math.min(i / fps, duration));
+        var vf = new global.VideoFrame(canvas, {
+          timestamp: Math.round((i / fps) * 1e6),
+          duration: frameUs
+        });
+        venc.encode(vf, { keyFrame: (i % keyEvery === 0) });
+        vf.close();
+        if (venc.encodeQueueSize > 1) await drainEncoder(venc, 1);
+        if ((i & 7) === 0) {
+          if (onProgress) onProgress(0.04 + 0.74 * (i / totalFrames));
+          await yieldTick();
+        }
+      }
+      await venc.flush();
+      if (encError) throw encError;
+      try { venc.close(); } catch (e) { }
+      return vChunks.length;
+    }
+
+    /* اولین تلاش با تنظیمِ ترجیحی؛ اگر کدگذار حتی یک فریم انداخت،
+       یک‌بار با کدگذاریِ نرم‌افزاری (که فریم نمی‌اندازد) دوباره می‌سازیم. */
+    var made = await encodeVideo(vcfg);
+    if (made < totalFrames) {
+      var swCfg = {};
+      for (var key in vcfg) if (Object.prototype.hasOwnProperty.call(vcfg, key)) swCfg[key] = vcfg[key];
+      swCfg.hardwareAcceleration = 'prefer-software';
+      made = await encodeVideo(swCfg);
+    }
+    if (made < totalFrames)
+      throw new Error('کدگذار فریم انداخت: ' + made + ' از ' + totalFrames);
+    /* ترتیبِ زمانی: چانک‌ها باید به همان ترتیبِ *رمزگشایی* بمانند؛ اگر
+       timestampها صعودی نباشند یعنی کدگذار B-frame ساخته. در آن حالت
+       مرتب‌سازی ممنوع است (ترتیبِ رمزگشایی به‌هم می‌ریزد)؛ فقط پرچم می‌زنیم
+       تا گیتِ خروجی (ستونِ ctts) هشدار بدهد. با latencyMode:'realtime'
+       این حالت نباید پیش بیاید. */
+    var reordered = false;
+    for (var ci = 1; ci < vChunks.length; ci++) {
+      if (vChunks[ci].ts < vChunks[ci - 1].ts) { reordered = true; break; }
+    }
+
+    /* ── مرحلهٔ ۲: صدا (همان طول، بی‌درز) ───────────────────────────── */
+    var CHUNK = 1024;
     var aenc = new global.AudioEncoder({
       output: function (chunk, meta) { takeChunk(aChunks, chunk, meta, Math.round(1024 / sr * 1e6)); },
       error: function (e) { encError = e; }
     });
     aenc.configure(acfg);
-
-    /* ── فریم‌ها: رسم + کدگذاری با برچسب زمانی دقیق i/fps ── */
-    var t0 = Date.now();
-    for (var i = 0; i < totalFrames; i++) {
-      if (encError) throw encError;
-      var t = Math.min(i / fps, duration);
-      renderer.draw(t);
-      var vf = new global.VideoFrame(canvas, {
-        timestamp: Math.round((i / fps) * 1e6),
-        duration: Math.round(1e6 / fps)
-      });
-      venc.encode(vf, { keyFrame: (i % (fps * 2) === 0) });
-      vf.close();
-      if (venc.encodeQueueSize > (W * H > 1280 * 720 ? 6 : 12)) await yieldTick();
-      if ((i & 7) === 0) {
-        if (onProgress) onProgress(0.04 + 0.76 * (i / totalFrames));
-        await yieldTick();
-      }
-    }
-    await venc.flush();
-    if (encError) throw encError;
-
-    /* ── صدا: همان طول، بدون درز ── */
-    var CHUNK = 1024;
     for (var off = 0; off < wav.length; off += CHUNK) {
+      if (encError) throw encError;
       var n = Math.min(CHUNK, wav.length - off);
       var data = new Float32Array(CHUNK);              /* صفر-پُر کردن آخرین تکه */
       data.set(wav.subarray(off, off + n));
@@ -937,19 +1328,23 @@
       });
       aenc.encode(ad);
       ad.close();
-      if (aenc.encodeQueueSize > 24) await yieldTick();
+      if (aenc.encodeQueueSize > 2) await drainEncoder(aenc, 2);
       if ((off % (CHUNK * 96)) === 0) {
-        if (onProgress) onProgress(0.80 + 0.16 * (off / wav.length));
+        if (onProgress) onProgress(0.80 + 0.15 * (off / wav.length));
         await yieldTick();
       }
     }
     await aenc.flush();
     if (encError) throw encError;
+    try { aenc.close(); } catch (e) { }
 
-    /* ── نوشتن در MP4 به ترتیب زمان، با طولِ صریح ──────────────────────
-       طولِ هر چانک را خودمان می‌دهیم (نه از سازندهٔ کدک) تا نمونه‌های آخر هم
-       طول داشته باشند؛ همین دو چیز است که طولِ فایل و پایانِ پخش را در
-       پخش‌کننده‌های گوشی درست می‌کند. */
+    /* ── مرحلهٔ ۳: نوشتن در MP4 با طولِ صریحِ هر نمونه ── */
+    var muxer = new global.Mp4Muxer.Muxer({
+      target: new global.Mp4Muxer.ArrayBufferTarget(),
+      video: { codec: 'avc', width: W, height: H, frameRate: fps },
+      audio: { codec: 'aac', sampleRate: sr, numberOfChannels: 1 },
+      fastStart: 'in-memory'
+    });
     var endUs = Math.round((totalFrames / fps) * 1e6);
     if (vChunks.length) {
       var lastV = vChunks[vChunks.length - 1];
@@ -972,15 +1367,28 @@
       else muxer.addAudioChunkRaw(ch.data, ch.type, ch.ts, ch.dur, ch.meta || undefined);
     }
     muxer.finalize();
-    try { venc.close(); aenc.close(); } catch (e) { }
-    if (onProgress) onProgress(0.97);
+    if (onProgress) onProgress(0.96);
 
-    /* ── اصلاح هدر: طولِ فایل باید همان طولِ واقعی باشد ── */
+    /* ── مرحلهٔ ۴: گیتِ خروجی ────────────────────────────────────────────
+       خودِ مالتی‌پلکسر طول را از رویِ همین نمونه‌ها درست می‌نویسد؛ پس اول
+       فقط *بازبینی* می‌کنیم و تنها اگر چیزی نادرست بود، هدر را با
+       تایم‌اسکیلِ درست اصلاح می‌کنیم. (قبلاً بی‌قیدوشرط بازنویسی می‌شد و
+       همین باعثِ «۵ ثانیه در گالری» بود: tkhd با track_ID سنجیده می‌شد.) */
     var exactSec = totalFrames / fps;
-    var outBuf = patchMp4Duration(muxer.target.buffer, exactSec);
+    var expect = { durationSec: exactSec, fps: fps, frames: totalFrames, maxKeyGapSec: 1.6, bpp: plan.bpp };
+    var outBuf = muxer.target.buffer;
+    var vfy = verifyMp4(outBuf, expect);
+    if (vfy.parsed && !vfy.ok) {
+      var fixedBuf = repairMp4Duration(outBuf, exactSec);
+      var vfy2 = verifyMp4(fixedBuf, expect);
+      if (vfy2.parsed) { outBuf = fixedBuf; vfy = vfy2; }
+    }
+    if (vfy.parsed && Math.abs((vfy.movie_duration_sec || 0) - exactSec) > 0.5)
+      throw new Error('طولِ فایل در هدر درست نشد (' + vfy.movie_duration_sec + 's)');
+
     var blob = new Blob([outBuf], { type: 'video/mp4' });
 
-    /* ── سنجشِ نتیجه با خودِ پخش‌کننده (اگر ممکن باشد) ── */
+    /* ── سنجشِ نهایی با خودِ پخش‌کننده (اگر ممکن باشد) ── */
     var probed = await probeDuration(blob, 4000);
     var durOk = (probed == null) ? null : Math.abs(probed - exactSec) <= 0.35;
     if (onProgress) onProgress(0.99);
@@ -992,18 +1400,27 @@
       fast: true,
       width: W, height: H, fps: fps,
       frames: totalFrames,
+      bitrate: bitrate,
+      bpp: plan.bpp,
+      keyframe_sec: keyEvery / fps,
+      reordered: reordered,
       duration: exactSec,
       probed_duration: probed,
       duration_ok: durOk,
-      seconds: Math.round((Date.now() - t0) / 100) / 10
+      verify: vfy
     };
   }
 
   /* ── مسیر پشتیبان: ضبط هم‌زمان با پخش (همان روش قبلی، با کیفیت بالاتر) ── */
   async function renderVideoRealtime(pitch, notes, wav, sr, onProgress, opts) {
     var canvas = document.createElement('canvas');
-    canvas.width = VIDEO.W;
-    canvas.height = VIDEO.H;
+    /* همان نقشهٔ مسیرِ سریع (ابعاد/نرخِ فریم/نرخِ بیت) تا مسیرِ پشتیبان هم
+       کیفیتِ درست بگیرد و نرخِ بیت برای رزولوشن کافی باشد. */
+    var planR = videoPlan(
+      Math.max((pitch.times && pitch.times.length) ? pitch.times[pitch.times.length - 1] : 1, 0.2),
+      opts.quality, opts.fps);
+    canvas.width = planR.W;
+    canvas.height = planR.H;
     var trace = pitch.trace_freqs || (CORE.strictTraceFreqs
       ? CORE.strictTraceFreqs(pitch.times, pitch.freqs, notes) : pitch.freqs);
     var renderer = new TraceRenderer(canvas, pitch.times, trace, notes, {
@@ -1011,7 +1428,7 @@
       tightness: opts.tightness || 1
     });
 
-    var fps = Math.min(opts.fps > 0 ? opts.fps : VIDEO.fps, 60);
+    var fps = planR.fps;
     var duration = Math.max(renderer.duration, 0.2);
 
     /* فریم‌ها را خودمان با ساعتِ صدا می‌فرستیم (captureStream(0) +
@@ -1040,8 +1457,8 @@
 
     var mime = pickVideoMime();
     var rec = new MediaRecorder(stream, mime ? {
-      mimeType: mime, videoBitsPerSecond: VIDEO.bitrate, audioBitsPerSecond: 160000
-    } : { videoBitsPerSecond: VIDEO.bitrate, audioBitsPerSecond: 160000 });
+      mimeType: mime, videoBitsPerSecond: planR.bitrate, audioBitsPerSecond: 160000
+    } : { videoBitsPerSecond: planR.bitrate, audioBitsPerSecond: 160000 });
 
     var chunks = [];
     rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
@@ -1085,11 +1502,24 @@
        MediaRecorder طول را در هدر نمی‌نویسد (یا صفر می‌گذارد)؛ نتیجه‌اش
        «۴ ثانیه» در گالری و پخشِ نیمه‌کاره بود. این‌جا خودمان می‌نویسیم. */
     var outBlob = blob;
+    var vfyR = null;
     try {
       var raw = await blob.arrayBuffer();
-      var fixed = (mime.indexOf('webm') >= 0)
-        ? patchWebmDuration(raw, duration)
-        : patchMp4Duration(raw, duration);
+      var fixed;
+      if (mime.indexOf('webm') >= 0) {
+        fixed = patchWebmDuration(raw, duration);
+      } else {
+        /* اول بازبینی، بعد (فقط در صورتِ نیاز) اصلاح — با تایم‌اسکیلِ درست.
+           اگر MediaRecorder فایلِ تکه‌ای (fMP4) داده باشد، mehd هم درج می‌شود
+           تا گالریِ اندروید طول را از moov بخواند. */
+        var expR = { durationSec: duration, fps: fps, maxKeyGapSec: 2.5 };
+        vfyR = verifyMp4(raw, expR);
+        fixed = (vfyR.parsed && vfyR.ok) ? raw : repairMp4Duration(raw, duration);
+        if (vfyR.parsed && !vfyR.ok) {
+          var vfyR2 = verifyMp4(fixed, expR);
+          if (vfyR2.parsed) vfyR = vfyR2;
+        }
+      }
       outBlob = new Blob([fixed], { type: mime || 'video/webm' });
     } catch (e) { outBlob = blob; }
 
@@ -1101,10 +1531,13 @@
       mime: mime || 'video/webm',
       name: (mime.indexOf('mp4') >= 0 ? 'radde-seda.mp4' : 'radde-seda.webm'),
       fast: false,
-      width: VIDEO.W, height: VIDEO.H, fps: fps,
+      width: planR.W, height: planR.H, fps: fps,
+      bitrate: planR.bitrate,
+      bpp: planR.bpp,
       duration: duration,
       probed_duration: probed,
-      duration_ok: durOk
+      duration_ok: durOk,
+      verify: vfyR
     };
   }
 
@@ -1231,6 +1664,10 @@
       job.report.meta.video_probed_duration_sec = out.probed_duration != null ? out.probed_duration : null;
       job.report.meta.video_duration_ok = out.duration_ok;
       job.report.meta.video_size = (out.width || 0) + 'x' + (out.height || 0);
+      job.report.meta.video_bitrate = out.bitrate || null;
+      job.report.meta.video_bpp = out.bpp != null ? out.bpp : null;
+      job.report.meta.video_keyframe_sec = out.keyframe_sec != null ? out.keyframe_sec : null;
+      job.report.meta.video_verify = out.verify || null;
       job.result = {
         video_url: job.videoUrl,
         video_name: out.name,
@@ -1243,7 +1680,12 @@
         duration_ok: out.duration_ok,
         width: out.width || null,
         height: out.height || null,
-        fps: out.fps || null
+        fps: out.fps || null,
+        bitrate: out.bitrate || null,
+        bpp: out.bpp != null ? out.bpp : null,
+        keyframe_sec: out.keyframe_sec != null ? out.keyframe_sec : null,
+        seconds: out.seconds != null ? out.seconds : null,
+        verify: out.verify || null
       };
       if (job.report.meta.downloads) job.report.meta.downloads.video = job.videoUrl;
       job.status = 'done'; job.stage = 'done'; job.progress = 1; jobUpdate(job);
@@ -1572,6 +2014,12 @@
     /* ابزارهای هدر/طول فایل (برای تست و استفاده در گزارش) */
     patchMp4Duration: patchMp4Duration,
     patchWebmDuration: patchWebmDuration,
+    mp4Timeline: mp4Timeline,
+    verifyMp4: verifyMp4,
+    ensureMp4FragmentDuration: ensureMp4FragmentDuration,
+    repairMp4Duration: repairMp4Duration,
+    bitrateFor: bitrateFor,
+    videoPlan: videoPlan,
     probeDuration: probeDuration,
     videoProfile: videoProfile,
     videoSize: videoSize,

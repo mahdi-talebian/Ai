@@ -97,6 +97,7 @@
       return;
     }
     var fit = fitName(name, blob.type);
+    if (target === 'gallery') fit.name = galleryName(fit.name, fit.mime);
     try {
       token = (target === 'gallery' && typeof NA.beginSaveTo === 'function')
         ? NA.beginSaveTo(fit.name, fit.mime, 'gallery')
@@ -148,6 +149,27 @@
     step();
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     نامِ یکتا برای گالری
+     ----------------------------------------------------------------------
+     اگر ویدیوی تازه دقیقاً همان نامِ قبلی را داشته باشد، بعضی گالری‌ها ردیفِ
+     قدیمیِ MediaStore را نشان می‌دهند (با طولِ ویدیوی قبلی) — یعنی فایلِ
+     درست، عددِ کهنه. با مُهرِ زمان در نام، همیشه ردیفِ تازه ساخته می‌شود.
+     ══════════════════════════════════════════════════════════════════════ */
+  function stamp() {
+    var d = new Date();
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' +
+      p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  }
+  function galleryName(name, mime) {
+    if (!/^video\//i.test(mime || '')) return name;
+    var m = String(name).match(/^(.*?)(\.[^.]+)$/);
+    var base = m ? m[1] : String(name);
+    var ext = m ? m[2] : '';
+    return base + '-' + stamp() + ext;
+  }
+
   /* ذخیره از یک آدرس: فایل سرور → دانلود مستقیم، blob/داده → تکه‌تکه */
   function isSameOrigin(url) {
     try { return new URL(url, location.href).origin === location.origin; }
@@ -182,7 +204,7 @@
     }
     if (/^https?:/i.test(url)) {
       try {
-        if (isGallery && typeof NA.saveToGallery === 'function') NA.saveToGallery(String(url), safeName(name));
+        if (isGallery && typeof NA.saveToGallery === 'function') NA.saveToGallery(String(url), galleryName(safeName(name), 'video/mp4'));
         else NA.saveUrl(String(url), safeName(name));
         toast('در حال دانلود…');
         if (typeof done === 'function') done(true, 'در حال دانلود…');
