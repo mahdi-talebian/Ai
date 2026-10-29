@@ -1195,29 +1195,8 @@ $('videoBtn').onclick = async () => {
       note += ` ⚠️ بازبینیِ فایل: ${vf.problems.join(' · ')}`;
     }
     const quality = qParts.length ? `\n🎞 ${qParts.join(' · ')}` : '';
-    /* مسیرِ ساخت (سریع/ضبط زنده) + سنجشِ پخش روی همین دستگاه */
-    const pr = res && res.probe;
-    const prTxt = (pr && pr.ok != null)
-      ? (pr.ok ? ' · 🟢 پخشِ آزمایشی روان' :
-        ` · 🔴 پخشِ آزمایشی لگ داشت${pr.max_gap_ms ? ' (بیشترین فاصله ' + faN(pr.max_gap_ms) + 'ms)' : ''}`)
-      : '';
-    const down = (res && res.auto_downgraded)
-      ? `\n🔧 این دستگاه ${res.downgraded_from || ''} را روان پخش نکرد؛ نسخهٔ سبک‌تر (${faN(res.width)}×${faN(res.height)}@${faN(res.fps)}) ساخته شد.`
-      : '';
-    const why = (res && res.path === 'realtime' && res.fallback_reason)
-      ? `\nℹ️ دلیلِ مسیرِ ضبط: ${res.fallback_reason}` : '';
-    /* زمان‌بندیِ واقعیِ فریم‌ها در فایلِ ساخته‌شده: باید یکنواخت باشد */
-    const tm = res && res.timing;
-    const tmTxt = (tm && tm.ok)
-      ? (tm.constant
-        ? `\n⏱ زمان‌بندیِ فریم‌ها: ${faN(tm.meanMs)}ms ثابت (بدونِ پرش)`
-        : `\n⏱ زمان‌بندیِ فریم‌ها نامنظم است: ${faN(tm.minMs)}–${faN(tm.maxMs)}ms`)
-      : '';
-    const rmTxt = (res && res.path === 'realtime')
-      ? (res.remuxed ? '\n📦 ظرفِ فایل بازسازی شد (MP4ِ معمولی با طولِ درست)' : '')
-      : '';
     $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' +
-      speed + note + quality + prTxt + tmTxt + rmTxt + down + why;
+      speed + note + quality;
     $('videoStatus').className = 'status ok';
   } catch (e) {
     hideProgress('vProg');
