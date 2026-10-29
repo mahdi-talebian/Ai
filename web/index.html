@@ -1206,8 +1206,18 @@ $('videoBtn').onclick = async () => {
       : '';
     const why = (res && res.path === 'realtime' && res.fallback_reason)
       ? `\nℹ️ دلیلِ مسیرِ ضبط: ${res.fallback_reason}` : '';
+    /* زمان‌بندیِ واقعیِ فریم‌ها در فایلِ ساخته‌شده: باید یکنواخت باشد */
+    const tm = res && res.timing;
+    const tmTxt = (tm && tm.ok)
+      ? (tm.constant
+        ? `\n⏱ زمان‌بندیِ فریم‌ها: ${faN(tm.meanMs)}ms ثابت (بدونِ پرش)`
+        : `\n⏱ زمان‌بندیِ فریم‌ها نامنظم است: ${faN(tm.minMs)}–${faN(tm.maxMs)}ms`)
+      : '';
+    const rmTxt = (res && res.path === 'realtime')
+      ? (res.remuxed ? '\n📦 ظرفِ فایل بازسازی شد (MP4ِ معمولی با طولِ درست)' : '')
+      : '';
     $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' +
-      speed + note + quality + prTxt + down + why;
+      speed + note + quality + prTxt + tmTxt + rmTxt + down + why;
     $('videoStatus').className = 'status ok';
   } catch (e) {
     hideProgress('vProg');
