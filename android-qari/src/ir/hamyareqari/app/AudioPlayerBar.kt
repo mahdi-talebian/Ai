@@ -254,6 +254,140 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         return "${PitchMath.faDigits(m)}:$restTxt"
     }
 
+
+    /** Compact F0 contour embedded in the player. */
+    internal class MiniPitchTraceView(ctx: Context) : View(ctx) {
+        var onSeek: ((Double) -> Unit)? = null
+        private var spec: TraceSpec? = null
+        private var playhead = 0.0
+        private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        private val grid = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val cursor = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val path = Path()
+
+        init { isClickable = true }
+
+        fun setSpec(value: TraceSpec?) {
+            spec = value
+            invalidate()
+        }
+
+        fun setPlayhead(sec: Double) {
+            playhead = sec.coerceAtLeast(0.0)
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val sp = spec ?: return
+            if (sp.times.isEmpty() || sp.mids.isEmpty()) return
+            val left = Theme.dp(context, 5f).toFloat()
+            val right = width - left
+            val top = Theme.dp(context, 5f).toFloat()
+            val bottom = height - Theme.dp(context, 6f).toFloat()
+            if (right <= left || bottom <= top) return
+            val duration = sp.duration.coerceAtLeast(0.01)
+            var minMidi = Double.POSITIVE_INFINITY
+            var maxMidi = Double.NEGATIVE_INFINITY
+            for (m in sp.mids) if (m.isFinite()) {
+                minMidi = kotlin.math.min(minMidi, m)
+                maxMidi = kotlin.math.max(maxMidi, m)
+            }
+            if (!minMidi.isFinite() || !maxMidi.isFinite()) return
+            minMidi = (minMidi - 2.0).coerceAtLeast(0.0)
+            maxMidi = kotlin.math.max(minMidi + 4.0, maxMidi + 2.0)
+            val xAt: (Double) -> Float = { sec ->
+                left + (sec / duration).coerceIn(0.0, 1.0).toFloat() * (right - left)
+            }
+            val yAt: (Double) -> Float = { midi ->
+                bottom - ((midi - minMidi) / (maxMidi - minMidi)).coerceIn(0.0, 1.0).toFloat() * (bottom - top)
+            }
+
+            grid.color = Theme.withAlpha(Theme.DIM, 0.18f)
+            grid.strokeWidth = Theme.dpF(context, 1f)
+            for (i in 1..3) {
+                val y = top + (bottom - top) * i / 4f
+                canvas.drawLine(left, y, right, y, grid)
+            }
+
+            // Full contour in blue; the played portion is overlaid in gold.
+            path.reset()
+            var started = false
+            for (i in sp.times.indices) {
+                val tm = sp.times[i]
+                val midi = sp.mids.getOrNull(i) ?: Double.NaN
+                if (!tm.isFinite() || !midi.isFinite() || tm < 0.0 || tm > duration) {
+                    started = false
+                    continue
+                }
+                val x = xAt(tm)
+                val y = yAt(midi)
+                if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
+            }
+            line.color = 0xD98CA8D8.toInt()
+            line.strokeWidth = Theme.dpF(context, 1.8f)
+            canvas.drawPath(path, line)
+
+            path.reset()
+            started = false
+            for (i in sp.times.indices) {
+                val tm = sp.times[i]
+                val midi = sp.mids.getOrNull(i) ?: Double.NaN
+                if (!tm.isFinite() || !midi.isFinite() || tm < 0.0 || tm > duration || tm > playhead) {
+                    started = false
+                    continue
+                }
+                val x = xAt(tm)
+                val y = yAt(midi)
+                if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
+            }
+            line.color = Theme.GOLD
+            line.strokeWidth = Theme.dpF(context, 2.3f)
+            canvas.drawPath(path, line)
+
+            val cx = xAt(playhead)
+            cursor.color = Theme.GOLD2
+            cursor.strokeWidth = Theme.dpF(context, 1.2f)
+            canvas.drawLine(cx, top, cx, bottom, cursor)
+            cursor.style = Paint.Style.FILL
+            canvas.drawCircle(cx, top + Theme.dp(context, 3f), Theme.dp(context, 2.5f).toFloat(), cursor)
+            cursor.style = Paint.Style.STROKE
+        }
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            val sp = spec ?: return false
+            if (sp.duration <= 0.0 || width <= 0) return false
+            when (event.action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    val sec = (event.x.coerceIn(0f, width.toFloat()) / width) * sp.duration
+                    playhead = sec
+                    invalidate()
+                    if (event.action == MotionEvent.ACTION_MOVE) onSeek?.invoke(sec)
+                    return true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val sec = (event.x.coerceIn(0f, width.toFloat()) / width) * sp.duration
+                    playhead = sec
+                    invalidate()
+                    onSeek?.invoke(sec)
+                    performClick()
+                    return true
+                }
+                MotionEvent.ACTION_CANCEL -> return true
+            }
+            return true
+        }
+
+        override fun performClick(): Boolean {
+            super.performClick()
+            return true
+        }
+    }
+
     // ── دکمهٔ گرد پخش/توقف ────────────────────────────────────────────────
 
     internal class PlayButton(ctx: Context) : View(ctx) {
