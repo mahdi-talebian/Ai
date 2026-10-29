@@ -242,6 +242,52 @@ function printResults() {
   check('گزارش JSON لینک دارد',
     String(d.getElementById('dlReport').getAttribute('href')).indexOf('blob:') === 0);
 
+  /* ── زوم ردِّ صدا (زمان + ارتفاع) ── */
+  const dur0 = w.eval('TRACE.dur');
+  const tight0 = w.eval('TRACE_VIEW.tight');
+  d.getElementById('zoomPitchIn').click();
+  await new Promise(r => setTimeout(r, 60));
+  check('زوم ارتفاع بعد از یک کلیک بیشتر شد',
+    w.eval('TRACE_VIEW.tight') > tight0,
+    '×' + tight0 + ' → ×' + w.eval('TRACE_VIEW.tight'));
+  d.getElementById('zoomTimeIn').click();
+  d.getElementById('zoomTimeIn').click();
+  await new Promise(r => setTimeout(r, 60));
+  const wsec = w.eval('TRACE_VIEW.timeSec');
+  check('زوم زمانی پنجرهٔ دید را باریک کرد',
+    wsec > 0 && wsec < dur0, wsec + 's از ' + dur0.toFixed(1) + 's');
+  check('برچسب زوم وضعیت را نشان می‌دهد',
+    /قاب/.test(d.getElementById('zoomLabel').textContent || ''),
+    d.getElementById('zoomLabel').textContent);
+  check('پنجرهٔ زوم در رسم اعمال شد',
+    (() => { const v = w.eval('TRACE.view'); return v && (v.t1 - v.t0) <= wsec + 1e-6; })(),
+    JSON.stringify(w.eval('TRACE.view')));
+  d.getElementById('zoomResetBtn').click();
+  await new Promise(r => setTimeout(r, 60));
+  check('بازنشانی زوم: نمای کامل برگشت',
+    w.eval('TRACE_VIEW.timeSec') === 0 && w.eval('TRACE_VIEW.tight') === 1);
+  check('در نمای کامل، پنجره کل اجرا است',
+    Math.abs(w.eval('TRACE.view.t1') - dur0) < 1e-6);
+
+  /* ── کارایی رسم: لایهٔ ثابت یک‌بار ساخته می‌شود ── */
+  check('لایهٔ ثابت نمودار ساخته شد', !!w.eval('TRACE_BASE.canvas'),
+    'key=' + w.eval('TRACE_BASE.key').slice(0, 28));
+  const key1 = w.eval('TRACE_BASE.key');
+  w.eval('drawTrace()');
+  check('رسم دوم همان لایهٔ ثابت را دوباره استفاده می‌کند',
+    w.eval('TRACE_BASE.key') === key1 && !!w.eval('TRACE_BASE.canvas'));
+  check('با زوم ارتفاعی، لایهٔ ثابت غیرفعال می‌شود (کادر حرکت می‌کند)',
+    (() => {
+      w.eval('TRACE_VIEW.tight = 2.4; drawTrace();');
+      const ok = w.eval('TRACE_BASE.canvas') === null;
+      w.eval('TRACE_VIEW.tight = 1; drawTrace();');
+      return ok;
+    })());
+
+  /* ── اندازهٔ ویدیو ── */
+  check('گزینهٔ اندازهٔ ویدیو هست و پیش‌فرضش ۱۰۸۰p است',
+    (() => { const e = d.getElementById('videoQuality'); return e && e.value === '1080p'; })());
+
   // دانلود گزارش از مسیر محلی
   const repRes = await w.fetch('/api/download/' + w.eval('STATE.jobId') + '/report');
   const repJson = await repRes.json();

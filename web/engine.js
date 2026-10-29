@@ -77,6 +77,50 @@
 
   function hzToMidi(f) { return 69.0 + 12.0 * Math.log2(f / 440.0); }
   function midiToHz(m) { return 440.0 * Math.pow(2.0, (m - 69.0) / 12.0); }
+  /* ══════════════════════════════════════════════════════════════════════
+     سل‌فژ و «درجه» (اکتاو = ۸ درجه = ۶ پرده = ۱۲ نیم‌پرده ⇒ ۱ درجه = ۱٫۵ نیم‌پرده)
+     ══════════════════════════════════════════════════════════════════════ */
+  var SOLFEGE_PC = { 0: 'دو', 2: 'ر', 4: 'می', 5: 'فا', 7: 'سل', 9: 'لا', 11: 'سی' };
+  var FA_DIG = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+  var DEG_PER_OCT = 8;
+  var SEMI_PER_OCT = 12;
+
+  function faDigits(v) {
+    var str = String(v), out = '';
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charAt(i);
+      out += (c >= '0' && c <= '9') ? FA_DIG[+c] : c;
+    }
+    return out;
+  }
+
+  function solfegeOf(m, withOctave) {
+    if (m == null || !isFinite(m)) return '—';
+    var r = Math.round(m), pc = ((r % 12) + 12) % 12;
+    var base = SOLFEGE_PC[pc];
+    if (!base) base = (SOLFEGE_PC[(pc + 11) % 12] || 'دو') + '♯';
+    if (!withOctave) return base;
+    return base + faDigits(Math.floor(r / 12) - 1);
+  }
+
+  function spanInDegrees(semis) {
+    if (semis == null || !isFinite(semis)) return null;
+    var total = semis * (DEG_PER_OCT / SEMI_PER_OCT);
+    var octaves = Math.floor(total / DEG_PER_OCT + 1e-9);
+    var rest = Math.round((total - octaves * DEG_PER_OCT) * 10) / 10;
+    if (rest >= DEG_PER_OCT - 1e-9) { octaves += 1; rest = 0; }
+    var text;
+    if (octaves <= 0) text = faDigits(rest) + ' درجه';
+    else if (rest < 0.05) text = faDigits(octaves) + ' اکتاو';
+    else text = faDigits(octaves) + ' اکتاو و ' + faDigits(rest) + ' درجه';
+    return { total: Math.round(total * 10) / 10, octaves: octaves, degrees: rest, text: text };
+  }
+
+  function degreeFromLow(m, lowM) {
+    if (m == null || !isFinite(m) || lowM == null || !isFinite(lowM)) return null;
+    return Math.round((m - lowM) * (DEG_PER_OCT / SEMI_PER_OCT)) + 1;
+  }
+
   function midiToName(m) {
     if (m == null || !isFinite(m)) return '—';
     var r = Math.round(m);
@@ -575,6 +619,21 @@
     return pitchFrameInto(x, sr, fmin, fmax, pitchScratch(L, tauMax, nfft), strict);
   }
 
+  /* زمانِ هر فریم = مرکزِ پنجرهٔ تحلیل (نه آغازش) — تنها منبعِ حقیقت؛
+     هم مسیر سریال و هم موازی از همین استفاده می‌کنند تا نتیجه یکی باشد و
+     نمودار با صدا هم‌زمان بماند. */
+  function frameTimes(nFrames, winN, sr, totalSamples) {
+    var shift = (winN / 2) / sr;
+    var totalSec = (totalSamples != null && totalSamples > 0)
+      ? totalSamples / sr : Infinity;
+    var times = new Float32Array(nFrames);
+    for (var i = 0; i < nFrames; i++) {
+      var tt = i * TIME_STEP + shift;
+      times[i] = tt > totalSec ? totalSec : tt;
+    }
+    return times;
+  }
+
   /* پارامترهای پنجره/گام — یک بار محاسبه، در همهٔ تکه‌ها یکسان */
   function pitchWindow(y, sr, fmin) {
     var winN = Math.max(256, Math.round(WIN_PERIODS / fmin * sr));
@@ -624,8 +683,13 @@
     fmax = fmax || MAX_F0;
     var w = pitchWindow(y, sr, fmin);
     var nFrames = w.nFrames;
-    var times = new Float32Array(nFrames);
-    for (var i = 0; i < nFrames; i++) times[i] = i * TIME_STEP;
+    /* ── هم‌زمانی دقیق: زمانِ هر فریم = مرکزِ پنجرهٔ تحلیل ──────────────
+       پنجرهٔ تحلیل از i*hop شروع می‌شود و winN نمونه طول دارد؛ تخمینِ f0 به
+       کلِ همین پنجره مربوط است، پس زمانش مرکز پنجره است، نه آغازش. قبلاً
+       زمانِ آغاز نوشته می‌شد و همهٔ نمودارها (اپ، تصویر، ویدیو) به‌اندازهٔ
+       نصفِ پنجره «زودتر» از صدا بودند — همان اختلافِ شنیده‌شده. */
+    var centerShift = (w.winN / 2) / sr;
+    var times = frameTimes(nFrames, w.winN, sr, y.length);
 
     var freqs = new Float32Array(nFrames);
     var strength = new Float32Array(nFrames);
@@ -641,7 +705,10 @@
       if (onProgress) onProgress(b / nFrames);
     }
     if (onProgress) onProgress(1.0);
-    return { times: times, freqs: freqs, strength: strength, winN: w.winN, hopN: w.hopN, nFrames: nFrames };
+    return {
+      times: times, freqs: freqs, strength: strength,
+      winN: w.winN, hopN: w.hopN, nFrames: nFrames, centerShift: centerShift
+    };
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -937,6 +1004,70 @@
     return out;
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     رَدِّ نمایشیِ «تیونرمانند»
+     ----------------------------------------------------------------------
+     منحنیِ فریم‌به‌فریم نویزی است: پرش‌های ۱–۳ نیم‌پرده‌ای بین دو فریمِ
+     ۲۵ms‌ای، در نمای زوم به‌شکلِ «کپسولِ عمودی» دیده می‌شد. این‌جا هر فریمِ
+     داخلِ یک نُت حول گامِ همان نُت بازسازی می‌شود: فقط انحرافِ نرم‌شده
+     (ویبراتو/گلیساندوی داخلِ نت) نگه داشته می‌شود و پرش‌های بزرگ حذف
+     می‌شوند. نتیجه: خطِ پیوستهٔ خوانا که با فهرستِ نت‌ها هم‌خوان است.
+     ══════════════════════════════════════════════════════════════════════ */
+  function lowerBound(times, t) {
+    var lo = 0, hi = times.length;
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1;
+      if (times[mid] < t) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+
+  function noteGuidedTrace(times, freqs, notes) {
+    var n = freqs.length;
+    var out = new Float32Array(n);
+    if (!notes || !notes.length) return out;
+    var CENTS_LIMIT = 130;          /* بیشتر از این، دیگر «داخلِ نت» نیست */
+    for (var k = 0; k < notes.length; k++) {
+      var nt = notes[k];
+      if (!(nt.f0_hz > 0)) continue;
+      /* پنجرهٔ هر فریم مرکز-زمان است؛ نیم‌فریم حاشیه لازم است تا شروع/پایانِ
+         رَد با لبهٔ نُت هم‌زمان بماند (تستِ هم‌زمانی این را می‌سنجد). */
+      var dtF = n > 1 ? (times[1] - times[0]) : 0.01;
+      var i0 = lowerBound(times, nt.start - dtF * 0.5);
+      var i1 = Math.min(n - 1, lowerBound(times, nt.end + dtF * 0.5) - 1);
+      if (i1 < i0) i1 = i0;
+      if (i1 <= i0) continue;
+      /* انحرافِ خام نسبت به گامِ نت */
+      var dev = [];
+      for (var i = i0; i <= i1; i++) {
+        var f = freqs[i];
+        var c = (f > 0) ? 1200 * Math.log2(f / nt.f0_hz) : NaN;
+        if (!isFinite(c)) c = NaN;
+        dev.push(c);
+      }
+      /* میانه به‌عنوان مرکز، سپس میانهٔ ۳ برای خواباندنِ لرزش */
+      var valid = dev.filter(function (v) { return isFinite(v); });
+      if (!valid.length) continue;
+      var center = median(valid);
+      var smoothed = dev.map(function (v) { return isFinite(v) ? v : center; });
+      var pass = smoothed.slice();
+      for (i = 1; i < smoothed.length - 1; i++) {
+        var tri = [pass[i - 1], pass[i], pass[i + 1]].sort(function (a, b) { return a - b; });
+        smoothed[i] = tri[1];
+      }
+      for (i = 0; i < dev.length; i++) {
+        /* فقط جایی که رَدِّ سخت‌گیرانه خودش مقدار دارد نوشته می‌شود؛
+           لبه‌های زمانی (شروع/پایانِ نت) دست‌نخورده می‌مانند. */
+        if (!(freqs[i0 + i] > 0)) continue;
+        var d = smoothed[i] - center;
+        if (d > CENTS_LIMIT) d = CENTS_LIMIT;
+        if (d < -CENTS_LIMIT) d = -CENTS_LIMIT;
+        out[i0 + i] = nt.f0_hz * Math.pow(2, d / 1200);
+      }
+    }
+    return out;
+  }
+
   function segmentNotes(times, freqs, conf, opts) {
     opts = opts || {};
     var minDuration = opts.min_duration || 0.08;
@@ -1153,6 +1284,131 @@
     return refined;
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     اصلاحِ «خطای اکتاو» در سطحِ نت (نه فقط در منحنی)
+     ----------------------------------------------------------------------
+     تخمینِ گام گاهی برای چند دهمِ ثانیه روی هارمونیکِ دوم/سوم قفل می‌کند؛
+     نتیجه نُتی است با گامِ یک اکتاو (یا دوازدهم) بالاتر از آنچه خوانده شده.
+     این‌جا برای هر نُتِ کوتاه، امتیازِ الگویِ هارمونیک در چند نسبت آزمون
+     می‌شود (همان frameScores که برای منحنی استفاده می‌شد) و اگر فرضِ
+     «پایین‌تر» تقریباً هم‌امتیاز باشد، گامِ نت به همان برگردانده می‌شود.
+     ══════════════════════════════════════════════════════════════════════ */
+  function fixNoteOctaves(y, sr, notes) {
+    if (!notes || !notes.length) return 0;
+    var changed = 0;
+    for (var i = 0; i < notes.length; i++) {
+      var nt = notes[i];
+      if (!nt || !(nt.f0_hz > 0)) continue;
+      var dur = nt.duration || (nt.end - nt.start) || 0;
+      if (dur < MIN_NOTE_SEC || dur > 0.7) continue;      /* نتِ کشیده = واقعی */
+      var nf = Math.max(2, Math.min(8, Math.round(dur / 0.02)));
+      var tSel = [], fSel = [];
+      for (var k = 0; k < nf; k++) {
+        var tt = nt.start + dur * (k + 0.5) / nf;
+        tSel.push(tt); fSel.push(nt.f0_hz);
+      }
+      var sc = frameScores(y, sr, tSel, fSel, LADDER, 0.046, 4096, 3600.0, 12);
+      if (!sc || !sc.n) continue;
+      var pooled = new Float64Array(LADDER.length);
+      var best = -Infinity;
+      for (var ri = 0; ri < LADDER.length; ri++) {
+        var col = new Float64Array(sc.n);
+        for (var fI = 0; fI < sc.n; fI++) col[fI] = sc.scores[fI * LADDER.length + ri];
+        pooled[ri] = median(col);
+        if (pooled[ri] > best) best = pooled[ri];
+      }
+      if (best < -0.5) continue;                          /* شواهد کافی نیست */
+      var target = Infinity;
+      for (var q = 0; q < LADDER.length; q++) {
+        if (pooled[q] >= best - 0.10) target = Math.min(target, LADDER[q]);
+      }
+      if (!isFinite(target) || target >= 0.95) continue;  /* اکتاوِ درست است */
+      var nf2 = nt.f0_hz * target;
+      if (!isFinite(nf2) || nf2 < MIN_F0 * 0.95 || nf2 > MAX_F0) continue;
+      if (Math.abs(cents(nf2, nt.f0_hz)) < 100) continue;
+      nt.f0_hz_coarse = nt.f0_hz;
+      nt.f0_hz = Math.round(nf2 * 1000) / 1000;
+      nt.octave_corrected = true;
+      changed++;
+    }
+    return changed;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     اصلاحِ اکتاو با «زمینهٔ ملودی»
+     ----------------------------------------------------------------------
+     صدای خواننده تک‌خطی است: نُتِ کوتاهی که یک اکتاو (یا دوازدهم) بالاتر/پایین‌تر
+     از میانهٔ نُت‌های هم‌سایه‌اش باشد، تقریباً همیشه قفلِ هارمونیک است، نه
+     پرشِ واقعی. اگر ÷۲ یا ×۲ آن را روی میانهٔ همسایه‌ها بنشاند، اصلاح می‌شود.
+     فقط نُت‌های کوتاه (≤۰٫۴۵s) دست‌کاری می‌شوند تا نُت‌های کشیدهٔ واقعی سالم بمانند.
+     ══════════════════════════════════════════════════════════════════════ */
+  function noteSpectrumScores(y, sr, nt) {
+    var dur = nt.duration || (nt.end - nt.start) || 0;
+    if (!(dur > 0) || dur > 0.7) return null;
+    var nf = Math.max(2, Math.min(6, Math.round(dur / 0.03)));
+    var tSel = [], fSel = [];
+    for (var k = 0; k < nf; k++) {
+      tSel.push(nt.start + dur * (k + 0.5) / nf);
+      fSel.push(nt.f0_hz);
+    }
+    var sc = frameScores(y, sr, tSel, fSel, LADDER, 0.046, 4096, 3600.0, 12);
+    if (!sc || !sc.n) return null;
+    var pooled = new Float64Array(LADDER.length);
+    for (var ri = 0; ri < LADDER.length; ri++) {
+      var col = new Float64Array(sc.n);
+      for (var fI = 0; fI < sc.n; fI++) col[fI] = sc.scores[fI * LADDER.length + ri];
+      pooled[ri] = median(col);
+    }
+    return pooled;
+  }
+
+  function fixNoteOctavesByContext(y, sr, notes) {
+    if (!notes || notes.length < 3) return 0;
+    var mids = notes.map(function (n) { return n && n.f0_hz > 0 ? 69 + 12 * Math.log2(n.f0_hz / 440) : null; });
+    var fixed = 0;
+    for (var i = 0; i < notes.length; i++) {
+      var nt = notes[i], m = mids[i];
+      if (m == null) continue;
+      var dur = nt.duration || (nt.end - nt.start) || 0;
+      if (dur < MIN_NOTE_SEC || dur > 0.45) continue;
+      var nb = [];
+      for (var j = 0; j < notes.length; j++) {
+        if (j === i || mids[j] == null) continue;
+        var gap = Math.abs((notes[j].start || 0) - (nt.start || 0));
+        if (gap > 1.6) continue;
+        var reps = Math.min(8, Math.max(1, Math.round((notes[j].duration || 0.1) / 0.1)));
+        for (var w = 0; w < reps; w++) nb.push(mids[j]);
+      }
+      if (nb.length < 4) continue;
+      nb.sort(function (a, b) { return a - b; });
+      var ref = nb[nb.length >> 1];
+      var dev = m - ref;
+      if (Math.abs(dev) < 6) continue;
+      var k = Math.round(dev / 12);
+      if (k === 0) continue;
+      var folded = m - 12 * k;
+      if (Math.abs(folded - ref) > 2) continue;
+      var nf = nt.f0_hz / Math.pow(2, k);
+      if (!isFinite(nf) || nf < MIN_F0 * 0.95 || nf > MAX_F0) continue;
+      /* وتوی طیفی: اگر هارمونیک‌ها آشکارا گامِ فعلی را تأیید کنند، دست نزن */
+      var pooled = noteSpectrumScores(y, sr, nt);
+      if (pooled) {
+        var idxFold = -1, idxKeep = -1, ratio = Math.pow(2, -k);
+        for (var L = 0; L < LADDER.length; L++) {
+          if (Math.abs(cents(LADDER[L], ratio)) <= 60) idxFold = L;
+          if (Math.abs(cents(LADDER[L], 1.0)) <= 60) idxKeep = L;
+        }
+        if (idxFold >= 0 && idxKeep >= 0 && pooled[idxFold] < pooled[idxKeep] - 0.25) continue;
+      }
+      nt.f0_hz_coarse = nt.f0_hz;
+      nt.f0_hz = Math.round(nf * 1000) / 1000;
+      nt.octave_corrected = true;
+      mids[i] = folded;
+      fixed++;
+    }
+    return fixed;
+  }
+
   function refineNotes(y, sr, notes) {
     if (!notes || !notes.length) return { notes: notes, refined: 0 };
     var refined = applyRefinements(notes, refineNotesRange(y, sr, notes, 0, notes.length), 0);
@@ -1229,8 +1485,11 @@
     diag.pyin_engine = 'yin';
 
     ctx.onProgress('clean', 0.86);
+    /* گشت‌های کوتاهِ اکتاوی با زمینهٔ اطراف جای‌گزین می‌شوند (بدونِ حدسِ طیفی) */
+
     var freqs = removeOctaveSpecks(tr.times, fused.freqs);
     freqs = smoothPitchContour(freqs, 3);
+
 
     ctx.onProgress('notes', 0.92);
     var notes = segmentNotes(tr.times, freqs, fused.conf);
@@ -1255,10 +1514,21 @@
     diag.engine_sec = Math.round((nowMs() - ctx.t0) / 100) / 10;
     diag.parallel = !!ctx.parallel;
 
+    /* ردِّ نمایشی: فقط نمونه‌های داخل نت‌های واقعی (بدون میله‌های الکی) */
+    var traceStats = {};
+    var traceFreqs = strictTraceFreqs(tr.times, freqs, notes, { stats: traceStats });
+    /* بازسازیِ تیونرمانند: پرش‌های ریزِ فریم‌به‌فریم حذف، ویبراتو حفظ */
+    traceFreqs = noteGuidedTrace(tr.times, traceFreqs, notes);
+    diag.trace_kept_pct = traceStats.total
+      ? Math.round(1000 * traceStats.kept / traceStats.total) / 10 : 0;
+    diag.trace_notes_used = traceStats.notes_used || 0;
+    diag.strict_trace = true;
+
     ctx.onProgress('done', 1.0);
     return {
       times: tr.times,
       freqs: freqs,
+      trace_freqs: traceFreqs,
       conf: mid.conf,
       notes: notes,
       sr: ctx.sr,
@@ -1286,6 +1556,8 @@
 
     ctx.onProgress('refine', 0.95);
     var ref = refineNotes(ctx.y, ctx.sr, mid.notes);
+    ctx.diag.notes_octave_corrected = fixNoteOctaves(ctx.y, ctx.sr, ref.notes) +
+      fixNoteOctavesByContext(ctx.y, ctx.sr, ref.notes);
     return analyzeEnd(ctx, tr, mid, ref.notes, ref.refined);
   }
 
@@ -1318,6 +1590,8 @@
       ctx.onProgress('refine', 0.95);
       var results = await P.refineNotes(ctx.y, ctx.sr, mid.notes);
       var refined = applyRefinements(mid.notes, results, 0);
+      ctx.diag.notes_octave_corrected = fixNoteOctaves(ctx.y, ctx.sr, mid.notes) +
+        fixNoteOctavesByContext(ctx.y, ctx.sr, mid.notes);
 
       return analyzeEnd(ctx, tr, mid, mid.notes, refined);
     } catch (e) {
@@ -1339,6 +1613,7 @@
     var midiR = Math.round(midiF);
     return {
       note_name: midiToName(midiF),
+      solfege: solfegeOf(midiF, true),
       midi: midiR,
       midi_exact: Math.round(midiF * 1000) / 1000,
       f0_hz: Math.round(f0 * 100) / 100,
@@ -1411,15 +1686,160 @@
     };
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     ردِّ سخت‌گیرانه: فقط نمونه‌های فرکانسی که واقعاً بخشی از یک «نتِ خوانده‌شده»
+     هستند نگه داشته می‌شوند. هر چیزی که بیرون از بازهٔ نت‌ها باشد (سکوت، نویز،
+     پرش‌های بی‌دوام، جهش‌های اکتاوی) صفر می‌شود تا در تصویر و ویدیو خط/میلهٔ
+     الکی کشیده نشود.
+     ══════════════════════════════════════════════════════════════════════ */
+  var TRACE_MIN_NOTE_SEC = 0.10;      // نتِ کوتاه‌تر از این «اجرا» حساب نمی‌شود
+  var TRACE_MIN_NOTE_FRAMES = 3;      // دست‌کم چند فریم پیوسته
+  var TRACE_MIN_CONF = 0.35;          // اتکاپذیری حداقلی
+  var TRACE_EDGE_PAD_SEC = 0.02;      // لبه‌های نت (گذار بین دو نت) کنار گذاشته می‌شوند
+  var TRACE_CENTS_BASE = 90;          // فاصلهٔ مجاز از f0 نت (سنت) — سخت‌گیرانه
+  var TRACE_CENTS_MAX = 220;          // سقف انحراف مجاز (بیش از دو نیم‌پرده = الکی)
+  var TRACE_OUTLIER_CENTS = 170;      // انحراف از میانهٔ محلی ⇒ پرش/میلهٔ الکی
+  var TRACE_OUTLIER_WIN = 9;          // پنجرهٔ میانهٔ محلی (فریم) ≈ ۹۰ms
+
+  /** آیا این نت به‌قدر کافی «اجرا شده» که در نمودار دیده شود؟ */
+  function isSungNote(n) {
+    if (!n || !(n.f0_hz > 0)) return false;
+    if ((n.duration || 0) < TRACE_MIN_NOTE_SEC) return false;
+    if (n.n_frames != null && n.n_frames < TRACE_MIN_NOTE_FRAMES) return false;
+    if (n.confidence != null && n.confidence < TRACE_MIN_CONF) return false;
+    return true;
+  }
+
+  /**
+   * حذف پرش‌های لحظه‌ای: هر نمونه‌ای که از «میانهٔ محلی» خودش بیش از
+   * TRACE_OUTLIER_CENTS سنت فاصله داشته باشد صفر می‌شود. میله‌های بلندِ
+   * بی‌نت (جهش اکتاوی، نویز، لرزش لحظه‌ای) همین‌جا از بین می‌روند، ولی
+   * مسیر واقعی صدا (ویبراتو، لغزش، گذر بین دو نت) دست‌نخورده می‌ماند.
+   */
+  function dropTraceOutliers(freqs, win) {
+    var n = freqs.length;
+    var out = new Float32Array(n);
+    win = Math.max(3, win || TRACE_OUTLIER_WIN);
+    var half = win >> 1;
+    var buf = new Float64Array(win);
+    var dropped = 0;
+    for (var i = 0; i < n; i++) {
+      if (!(freqs[i] > 0)) continue;
+      /* میانهٔ محلی روی نمونه‌های معتبرِ همسایه (به سنت نسبت به نمونهٔ مرکزی) */
+      var c = 0;
+      for (var q = i - half; q <= i + half; q++) {
+        if (q < 0 || q >= n) continue;
+        if (!(freqs[q] > 0)) continue;
+        buf[c++] = 1200 * Math.log2(freqs[q] / freqs[i]);
+      }
+      if (c < 3) { out[i] = freqs[i]; continue; }
+      var arr = Array.prototype.slice.call(buf.subarray(0, c)).sort(function (a, b) { return a - b; });
+      var med = arr[arr.length >> 1];
+      if (Math.abs(med) <= TRACE_OUTLIER_CENTS) out[i] = freqs[i];
+      else dropped++;
+    }
+    out._dropped = dropped;
+    return out;
+  }
+
+  /**
+   * فرکانس‌ها را به بازهٔ نت‌های معتبر محدود می‌کند.
+   * خروجی هم‌طول ورودی است؛ جاهایی که نت نیست (یا مقدار از نت خیلی دور است) صفر.
+   * سه دروازه: ۱) پرش لحظه‌ای ۲) بیرونِ بازهٔ نت ۳) دور از f0 نت
+   */
+  function strictTraceFreqs(times, freqs, notes, opts) {
+    opts = opts || {};
+    var out = new Float32Array(freqs.length);
+    var list = (notes || []).filter(isSungNote);
+    if (!list.length || !times.length) return out;
+
+    var cleaned = dropTraceOutliers(freqs);
+    var dropped = cleaned._dropped || 0;
+
+    var spans = list.map(function (n) {
+      var pad = Math.min(TRACE_EDGE_PAD_SEC, 0.25 * (n.duration || 0));
+      var tol = Math.max(TRACE_CENTS_BASE, 2.0 * (n.stability_cents || 0) + 60);
+      return {
+        t0: (n.start || 0) + pad,
+        t1: (n.start || 0) + (n.duration || 0) - pad,
+        f0: n.f0_hz,
+        tol: Math.min(tol, TRACE_CENTS_MAX)
+      };
+    }).sort(function (a, b) { return a.t0 - b.t0; });
+
+    var kept = 0, k = 0;
+    var voiced = 0;
+    for (var v = 0; v < cleaned.length; v++) if (cleaned[v] > 0) voiced++;
+
+    function pass(tolScale) {
+      var outBuf = new Float32Array(freqs.length);
+      var keptN = 0, kk = 0;
+      for (var i = 0; i < times.length; i++) {
+        var t = times[i], f = cleaned[i];
+        if (!(f > 0)) continue;
+        /* بازه‌ها ممکن است هم‌پوشانی داشته باشند؛ اولین بازهٔ شامل را می‌گیریم */
+        while (kk < spans.length && spans[kk].t1 < t) kk++;
+        var hit = null;
+        for (var q = kk; q < spans.length && spans[q].t0 <= t; q++) {
+          if (t >= spans[q].t0 && t <= spans[q].t1) { hit = spans[q]; break; }
+        }
+        if (!hit) continue;
+        if (Math.abs(cents(f, hit.f0)) > hit.tol * tolScale) continue;
+        outBuf[i] = f;
+        keptN++;
+      }
+      return { buf: outBuf, kept: keptN };
+    }
+
+    var first = pass(1);
+    out = first.buf;
+    kept = first.kept;
+
+    /* ── شبکهٔ ایمنی: هرگز نمودار خالی ────────────────────────────────────
+       اگر فیلتر سخت‌گیرانه تقریباً همه‌چیز را انداخت (ولی صدا خوانده شده)،
+       همان فیلتر با تحمل بازتر تکرار می‌شود — همچنان «فقط داخل نت‌ها»، پس
+       میلهٔ نویز/سکوت برنمی‌گردد، ولی صفحهٔ خالی هم نمی‌مانیم. */
+    if (voiced > 20 && kept < Math.max(8, voiced * 0.02)) {
+      var second = pass(2.6);
+      if (second.kept > kept) { out = second.buf; kept = second.kept; }
+    }
+    if (opts.stats) {
+      opts.stats.kept = kept;
+      opts.stats.total = times.length;
+      opts.stats.notes_used = spans.length;
+      opts.stats.outliers = dropped;
+    }
+    return out;
+  }
+
+  /* نمونه‌برداری نزولی «میانه‌محور» (نه یک‌درمیان):
+     قبلاً هر step-اُمین فریم برداشته می‌شد و بقیه دور ریخته می‌شدند؛ در
+     فایل‌های بلند (step بزرگ) همین کار باعث می‌شد یک فریمِ پرت، تنها نمایندهٔ
+     کلِ آن بازه شود و روی نمودار «پرش عمودی» ساخته شود. حالا از هر بازه
+     میانهٔ مقادیر گرفته می‌شود؛ گذارِ واقعی می‌ماند، پرتِ تک‌فریمی حذف. */
   function downsampleContour(times, freqs, maxPoints) {
     maxPoints = maxPoints || 1800;
-    if (!times.length) return { t: [], midi: [] };
-    var step = Math.max(1, Math.ceil(times.length / maxPoints));
+    var n = times.length;
+    if (!n) return { t: [], midi: [] };
+    var step = Math.max(1, Math.ceil(n / maxPoints));
     var t = [], mi = [];
-    for (var i = 0; i < times.length; i += step) {
-      t.push(Math.round(times[i] * 100) / 100);
-      var v = freqs[i];
-      mi.push(v && v > 0 ? Math.round(hzToMidi(v) * 100) / 100 : null);
+    function r2(x) { return Math.round(x * 100) / 100; }
+    for (var i0 = 0; i0 < n; i0 += step) {
+      var i1 = Math.min(n, i0 + step);
+      var vals = [], tsum = 0, cnt = 0;
+      for (var i = i0; i < i1; i++) {
+        tsum += times[i]; cnt++;
+        var v = freqs[i];
+        if (v && v > 0) vals.push(hzToMidi(v));
+      }
+      var tm = cnt ? tsum / cnt : times[i0];
+      if (!vals.length) { t.push(r2(tm)); mi.push(null); continue; }
+      vals.sort(function (a, b) { return a - b; });
+      var mid = vals.length % 2
+        ? vals[vals.length >> 1]
+        : (vals[(vals.length >> 1) - 1] + vals[vals.length >> 1]) / 2;
+      t.push(r2(tm));
+      mi.push(r2(mid));
     }
     return { t: t, midi: mi };
   }
@@ -1460,6 +1880,7 @@
     }
 
     var spanCents = (loHz && hiHz) ? cents(hiHz, loHz) : 0.0;
+    var spanDegreesObj = spanInDegrees(spanCents / 100.0);
     var spanSemis = spanCents / 100.0;
     var fullOct = Math.floor(spanSemis / 12);
     var restSemis = Math.round((spanSemis - fullOct * 12) * 100) / 100;
@@ -1533,6 +1954,12 @@
         raw_lowest: lowRaw ? fmtNote(lowRaw) : null,
         robust: robust.stats,
         span_semitones: Math.round(spanSemis * 100) / 100,
+        span_degrees: spanDegreesObj ? spanDegreesObj.total : 0,
+        span_octaves: spanDegreesObj ? spanDegreesObj.octaves : 0,
+        span_degrees_rest: spanDegreesObj ? spanDegreesObj.degrees : 0,
+        span_text: spanDegreesObj ? spanDegreesObj.text : '',
+        highest_solfege: solfegeOf(hzToMidi(hiHz), true),
+        lowest_solfege: solfegeOf(hzToMidi(loHz), true),
         span_octaves: Math.round(spanSemis / 12.0 * 100) / 100,
         span_cents: Math.round(spanCents * 10) / 10,
         full_octaves: fullOct,
@@ -1544,7 +1971,7 @@
       notes: notes,
       note_counts: noteCounts,
       pauses: pauses.slice(0, 50),
-      contour: downsampleContour(times, freqs)
+      contour: downsampleContour(times, res.trace_freqs || freqs)
     };
   }
 
@@ -1711,6 +2138,8 @@
       this.shownAt = this.t;
       note = {
         note_name: midiToName(midiS),
+        solfege: solfegeOf(midiS, true),
+        degree: degreeFromLow(midiS, this.lo ? this.lo.midi : midiS),
         midi: midiR,
         midi_exact: Math.round(midiS * 1000) / 1000,
         f0_hz: Math.round(f0S * 100) / 100,
@@ -1734,6 +2163,8 @@
       if (this.shown) {
         note = {
           note_name: midiToName(this.shown.midi),
+          solfege: solfegeOf(this.shown.midi, true),
+          degree: degreeFromLow(this.shown.midi, this.lo ? this.lo.midi : this.shown.midi),
           midi: Math.round(this.shown.midi),
           midi_exact: Math.round(this.shown.midi * 1000) / 1000,
           f0_hz: Math.round(this.shown.f0 * 100) / 100,
@@ -1763,7 +2194,11 @@
           midi: Math.round(this.hi.midi * 100) / 100,
           f0_hz: Math.round(this.hi.f0 * 100) / 100
         } : null,
-        span_semitones: (this.lo && this.hi) ? Math.round((this.hi.midi - this.lo.midi) * 100) / 100 : 0
+        span_semitones: (this.lo && this.hi) ? Math.round((this.hi.midi - this.lo.midi) * 100) / 100 : 0,
+        span_degrees: (this.lo && this.hi)
+          ? Math.round((this.hi.midi - this.lo.midi) * (DEG_PER_OCT / SEMI_PER_OCT) * 10) / 10 : 0,
+        span_text: (this.lo && this.hi)
+          ? spanInDegrees(this.hi.midi - this.lo.midi).text : '۰ درجه'
       }
     };
   };
@@ -1779,19 +2214,25 @@
     prepareAudio: prepareAudio, safeDownmix: safeDownmix,
     pitchTrack: pitchTrack, pitchFrame: pitchFrame,
     pitchWindow: pitchWindow, pitchTrackRange: pitchTrackRange,
+    frameTimes: frameTimes,
     yinParams: yinParams, yinTrackRange: yinTrackRange,
     refineNotesRange: refineNotesRange, applyRefinements: applyRefinements,
     spectralOctaveFix: spectralOctaveFix, frameScores: frameScores,
     yinTrack: yinTrack, fuseWithSecond: fuseWithSecond,
     smoothPitchContour: smoothPitchContour, removeOctaveSpecks: removeOctaveSpecks,
     segmentNotes: segmentNotes, refineNotes: refineNotes, refineNoteF0: refineNoteF0,
+    fixNoteOctaves: fixNoteOctaves, fixNoteOctavesByContext: fixNoteOctavesByContext,
+    strictTraceFreqs: strictTraceFreqs, isSungNote: isSungNote,
+    dropTraceOutliers: dropTraceOutliers,
     analyzeChannels: analyzeChannels, analyzeChannelsAsync: analyzeChannelsAsync,
     buildReport: buildReport,
     extractPitchChunk: extractPitchChunk,
     extractPitchChunkInfo: extractPitchChunkInfo,
     LiveTracker: LiveTracker,
     qualityStatus: qualityStatus,
-    midiToName: midiToName, hzToMidi: hzToMidi, midiToHz: midiToHz, median: median, percentile: percentile
+    midiToName: midiToName, hzToMidi: hzToMidi, midiToHz: midiToHz,
+    solfegeOf: solfegeOf, spanInDegrees: spanInDegrees, degreeFromLow: degreeFromLow,
+    faDigits: faDigits, DEG_PER_OCT: DEG_PER_OCT, median: median, percentile: percentile
   };
 
   global.LocalEngineCore = api;
