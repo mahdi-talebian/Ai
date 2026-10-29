@@ -249,7 +249,7 @@ class MainActivity : Activity() {
 
         col.addView(Theme.space(this, 28f))
         val emblem = Theme.text(this, "۞", 78f, Theme.GOLD, true, Gravity.CENTER).apply {
-            shadowLayer = 20f, 0f, 0f, Theme.withAlpha(Theme.GOLD, 0.22f)
+            setShadowLayer(Theme.dpF(this@MainActivity, 20f), 0f, 0f, Theme.withAlpha(Theme.GOLD, 0.22f))
         }
         col.addView(emblem)
         col.addView(Theme.space(this, 4f))
