@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.view.Gravity
@@ -42,11 +43,16 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
     var onRestart: (() -> Unit)? = null
     var onSpeed: ((Float) -> Unit)? = null
     var onFollowToggle: ((Boolean) -> Unit)? = null
+    var onSkip: ((Double) -> Unit)? = null
+    var onTraceSeek: ((Double) -> Unit)? = null
 
     private val playBtn = PlayButton(context)
+    private val skipBackBtn = Theme.chip(context, "−۱۰ث", Theme.DIM)
+    private val skipForwardBtn = Theme.chip(context, "+۱۰ث", Theme.DIM)
     private val timeNow = Theme.text(context, "۰:۰۰٫۰", 12f, Theme.GOLD, true, Gravity.START or Gravity.CENTER_VERTICAL)
     private val timeTotal = Theme.text(context, "۰:۰۰٫۰", 12f, Theme.DIM, false, Gravity.END or Gravity.CENTER_VERTICAL)
     private val bar = GoldSeekBar(context)
+    private val pitchTrace = MiniPitchTraceView(context)
 
     private val followBtn = Theme.chip(context, "⊙ دنبال‌کردن", Theme.TEAL)
     private val restartBtn = Theme.chip(context, "↺ از اول", Theme.DIM)
@@ -60,7 +66,8 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
 
     init {
         orientation = VERTICAL
-        background = Theme.rounded(Theme.withAlpha(Theme.GOLD, 0.05f), Theme.dpF(context, 16f), 1, Theme.withAlpha(Theme.GOLD, 0.22f))
+        // Deep-navy panel and a quiet blue outline, matching the reference visual theme.
+        background = Theme.rounded(0xFF0C1429.toInt(), Theme.dpF(context, 16f), 1, 0x334A5A7A.toInt())
         val pad = Theme.dp(context, 12f)
         setPadding(pad, pad, pad, pad)
 
@@ -69,6 +76,15 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         val size = Theme.dp(context, 54f)
         playBtn.layoutParams = LayoutParams(size, size)
         row1.addView(playBtn)
+        val skipSize = Theme.dp(context, 38f)
+        skipBackBtn.layoutParams = LayoutParams(skipSize, Theme.dp(context, 42f))
+        skipForwardBtn.layoutParams = LayoutParams(skipSize, Theme.dp(context, 42f))
+        skipBackBtn.setOnClickListener { onSkip?.invoke(-10.0) }
+        skipForwardBtn.setOnClickListener { onSkip?.invoke(10.0) }
+        row1.addView(Theme.space(context, 4f))
+        row1.addView(skipBackBtn)
+        row1.addView(Theme.space(context, 4f))
+        row1.addView(skipForwardBtn)
 
         val mid = LinearLayout(context)
         mid.orientation = VERTICAL
@@ -93,6 +109,13 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         mid.addView(bar)
         row1.addView(mid)
         addView(row1)
+
+        // ── ردّ زیر و بمی: نمودار فشرده و قابل لمس ────────────────────────
+        addView(Theme.space(context, 8f))
+        addView(Theme.text(context, "ردِّ صدا · برای رفتن به لحظهٔ دلخواه لمس کنید", 10.5f, Theme.DIM))
+        pitchTrace.layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(context, 88f))
+        addView(pitchTrace)
+        pitchTrace.onSeek = { onTraceSeek?.invoke(it) }
 
         // ── ردیف دوم: سرعت‌ها، دنبال‌کردن، از اول ────────────────────────
         addView(Theme.space(context, 8f))
@@ -152,13 +175,40 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         bar.setProgress(0.0)
     }
 
+    /** خلاصهٔ موج صدا؛ نمونه‌برداری محدود برای جلوگیری از مکث روی فایل‌های بلند */
+    fun setWaveform(pcm: ShortArray?) {
+        if (pcm == null || pcm.isEmpty()) {
+            bar.setWaveform(FloatArray(0))
+            return
+        }
+        val bins = 104
+        val values = FloatArray(bins)
+        for (i in 0 until bins) {
+            val from = (i.toLong() * pcm.size / bins).toInt()
+            val to = (((i + 1).toLong() * pcm.size / bins).toInt()).coerceAtLeast(from + 1).coerceAtMost(pcm.size)
+            var peak = 0
+            val samples = 28
+            for (j in 0 until samples) {
+                val index = (from.toLong() + (to - from - 1L) * j / (samples - 1)).toInt().coerceIn(0, pcm.lastIndex)
+                peak = max(peak, kotlin.math.abs(pcm[index].toInt()))
+            }
+            values[i] = (peak / 32768f).coerceIn(0.06f, 1f)
+        }
+        bar.setWaveform(values)
+    }
+
     /** هر تیکِ پخش (≈۶۰ بار در ثانیه) */
+    fun setPitchTrace(spec: TraceSpec?) {
+        pitchTrace.setSpec(spec)
+    }
+
     fun setPosition(sec: Double) {
         if (dragging) return
         val frac = (sec / totalSec).coerceIn(0.0, 1.0)
         bar.setProgress(frac)
         playBtn.progress = frac
         timeNow.text = fmt(sec)
+        pitchTrace.setPlayhead(sec)
     }
 
     fun setPlaying(playing: Boolean) {
@@ -203,6 +253,151 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         val rest = s - m * 60
         val restTxt = String.format(java.util.Locale.US, "%04.1f", rest)
         return "${PitchMath.faDigits(m)}:$restTxt"
+    }
+
+
+    /** Compact F0 contour embedded in the player. */
+    internal class MiniPitchTraceView(ctx: Context) : View(ctx) {
+        var onSeek: ((Double) -> Unit)? = null
+        private var spec: TraceSpec? = null
+        private var playhead = 0.0
+        private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        private val grid = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val panel = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val panelBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+        private val cursor = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val path = Path()
+
+        init { isClickable = true }
+
+        fun setSpec(value: TraceSpec?) {
+            spec = value
+            invalidate()
+        }
+
+        fun setPlayhead(sec: Double) {
+            playhead = sec.coerceAtLeast(0.0)
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val sp = spec ?: return
+            if (sp.times.isEmpty() || sp.mids.isEmpty()) return
+            // Framed midnight-blue plot area, like the supplied reference.
+            val outer = Theme.dp(context, 4f).toFloat()
+            panel.color = 0xFF0A1123.toInt()
+            canvas.drawRoundRect(outer, outer, width - outer, height - outer,
+                Theme.dp(context, 9f).toFloat(), Theme.dp(context, 9f).toFloat(), panel)
+            panelBorder.color = 0x334A5A7A.toInt()
+            panelBorder.strokeWidth = Theme.dpF(context, 1f)
+            canvas.drawRoundRect(outer, outer, width - outer, height - outer,
+                Theme.dp(context, 9f).toFloat(), Theme.dp(context, 9f).toFloat(), panelBorder)
+            val left = Theme.dp(context, 12f).toFloat()
+            val right = width - left
+            val top = Theme.dp(context, 10f).toFloat()
+            val bottom = height - Theme.dp(context, 10f).toFloat()
+            if (right <= left || bottom <= top) return
+            val duration = sp.duration.coerceAtLeast(0.01)
+            var minMidi = Double.POSITIVE_INFINITY
+            var maxMidi = Double.NEGATIVE_INFINITY
+            for (m in sp.mids) if (m.isFinite()) {
+                minMidi = kotlin.math.min(minMidi, m)
+                maxMidi = kotlin.math.max(maxMidi, m)
+            }
+            if (!minMidi.isFinite() || !maxMidi.isFinite()) return
+            minMidi = (minMidi - 2.0).coerceAtLeast(0.0)
+            maxMidi = kotlin.math.max(minMidi + 4.0, maxMidi + 2.0)
+            val xAt: (Double) -> Float = { sec ->
+                left + (sec / duration).coerceIn(0.0, 1.0).toFloat() * (right - left)
+            }
+            val yAt: (Double) -> Float = { midi ->
+                bottom - ((midi - minMidi) / (maxMidi - minMidi)).coerceIn(0.0, 1.0).toFloat() * (bottom - top)
+            }
+
+            grid.color = 0x263D5275.toInt()
+            grid.strokeWidth = Theme.dpF(context, 1f)
+            for (i in 1..3) {
+                val y = top + (bottom - top) * i / 4f
+                canvas.drawLine(left, y, right, y, grid)
+            }
+
+            // The full contour is muted antique gold; the played portion glows brighter gold.
+            path.reset()
+            var started = false
+            for (i in sp.times.indices) {
+                val tm = sp.times[i]
+                val midi = sp.mids.getOrNull(i) ?: Double.NaN
+                if (!tm.isFinite() || !midi.isFinite() || tm < 0.0 || tm > duration) {
+                    started = false
+                    continue
+                }
+                val x = xAt(tm)
+                val y = yAt(midi)
+                if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
+            }
+            line.color = 0xFFB9A05B.toInt()
+            line.strokeWidth = Theme.dpF(context, 1.9f)
+            canvas.drawPath(path, line)
+
+            path.reset()
+            started = false
+            for (i in sp.times.indices) {
+                val tm = sp.times[i]
+                val midi = sp.mids.getOrNull(i) ?: Double.NaN
+                if (!tm.isFinite() || !midi.isFinite() || tm < 0.0 || tm > duration || tm > playhead) {
+                    started = false
+                    continue
+                }
+                val x = xAt(tm)
+                val y = yAt(midi)
+                if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
+            }
+            line.color = Theme.GOLD
+            line.strokeWidth = Theme.dpF(context, 2.3f)
+            canvas.drawPath(path, line)
+
+            val cx = xAt(playhead)
+            cursor.color = 0xFFE5E8F0.toInt()
+            cursor.strokeWidth = Theme.dpF(context, 1.2f)
+            canvas.drawLine(cx, top, cx, bottom, cursor)
+            cursor.style = Paint.Style.FILL
+            canvas.drawCircle(cx, top + Theme.dp(context, 3f), Theme.dp(context, 3f).toFloat(), cursor)
+            cursor.style = Paint.Style.STROKE
+        }
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            val sp = spec ?: return false
+            if (sp.duration <= 0.0 || width <= 0) return false
+            when (event.action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    val sec = (event.x.coerceIn(0f, width.toFloat()) / width) * sp.duration
+                    playhead = sec
+                    invalidate()
+                    if (event.action == MotionEvent.ACTION_MOVE) onSeek?.invoke(sec)
+                    return true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val sec = (event.x.coerceIn(0f, width.toFloat()) / width) * sp.duration
+                    playhead = sec
+                    invalidate()
+                    onSeek?.invoke(sec)
+                    performClick()
+                    return true
+                }
+                MotionEvent.ACTION_CANCEL -> return true
+            }
+            return true
+        }
+
+        override fun performClick(): Boolean {
+            super.performClick()
+            return true
+        }
     }
 
     // ── دکمهٔ گرد پخش/توقف ────────────────────────────────────────────────
@@ -289,6 +484,7 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         private var frac = 0.0
         private var preview = -1.0
         private var active = false
+        private var waveform = FloatArray(0)
 
         private val track = Paint(Paint.ANTI_ALIAS_FLAG)
         private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Theme.GOLD }
@@ -305,6 +501,11 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         }
 
         fun progressFraction(): Double = frac
+
+        fun setWaveform(values: FloatArray) {
+            waveform = values.copyOf()
+            invalidate()
+        }
 
         private fun fracAt(x: Float): Double {
             val pad = Theme.dp(context, 12f).toFloat()
@@ -372,6 +573,19 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
                 fillPaint.shader = g
                 canvas.drawRoundRect(left, cy - thickness / 2, x, cy + thickness / 2, thickness / 2, thickness / 2, fillPaint)
                 fillPaint.shader = null
+            }
+
+            // موجِ واقعیِ صوت با رنگ متفاوت برای بخش پخش‌شده و باقی‌مانده
+            if (waveform.isNotEmpty()) {
+                val step = (right - left) / waveform.size
+                val barW = max(Theme.dp(context, 1.4f).toFloat(), step * 0.42f)
+                for (i in waveform.indices) {
+                    val bx = left + (i + 0.5f) * step
+                    val amp = waveform[i]
+                    val bh = max(Theme.dp(context, 2f).toFloat(), amp * Theme.dp(context, 18f).toFloat())
+                    track.color = if (i.toDouble() / waveform.size <= f) Theme.GOLD2 else Theme.withAlpha(Theme.DIM, 0.58f)
+                    canvas.drawRoundRect(bx - barW / 2, cy - bh / 2, bx + barW / 2, cy + bh / 2, barW / 2, barW / 2, track)
+                }
             }
 
             // هالهٔ نورانی + دستگیره

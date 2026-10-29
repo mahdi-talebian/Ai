@@ -24,8 +24,8 @@ object Theme {
     const val BG1 = 0xFF0B1224.toInt()
     const val BG2 = 0xFF121C33.toInt()
     const val BG3 = 0xFF0A1020.toInt()
-    const val CARD = 0xFF111B31.toInt()
-    const val LINE = 0x1AFFFFFF
+    const val CARD = 0xFF101A2E.toInt()
+    const val LINE = 0x16FFFFFF
     const val TXT = 0xFFE8ECF7.toInt()
     const val DIM = 0xFF93A0BD.toInt()
     const val GOLD = 0xFFF7D171.toInt()
@@ -102,10 +102,10 @@ object Theme {
     }
 
     /** کارت پایهٔ رابط */
-    fun card(ctx: Context, padDp: Float = 16f): LinearLayout {
+    fun card(ctx: Context, padDp: Float = 14f): LinearLayout {
         val c = LinearLayout(ctx)
         c.orientation = LinearLayout.VERTICAL
-        c.background = rounded(CARD, dpF(ctx, 18f), 1, LINE)
+        c.background = rounded(CARD, dpF(ctx, 14f), 1, LINE)
         val p = dp(ctx, padDp)
         c.setPadding(p, p, p, p)
         return c
@@ -118,14 +118,14 @@ object Theme {
         t.gravity = Gravity.CENTER
         t.typeface = font(ctx, true)
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (small) 13f else 15f)
-        val h = dp(ctx, if (small) 40f else 50f)
+        val h = dp(ctx, if (small) 38f else 46f)
         t.minHeight = h
         t.minimumHeight = h
         val padH = dp(ctx, if (small) 14f else 18f)
         t.setPadding(padH, dp(ctx, 10f), padH, dp(ctx, 10f))
         t.isClickable = true
         t.isFocusable = true
-        val radius = dpF(ctx, 15f)
+        val radius = dpF(ctx, 12f)
         if (primary) {
             t.setTextColor(INK)
             t.background = RippleDrawable(
@@ -144,10 +144,10 @@ object Theme {
     }
 
     fun chip(ctx: Context, label: String, color: Int): TextView {
-        val t = text(ctx, label, 12f, color, true, Gravity.CENTER)
+        val t = text(ctx, label, 11f, color, true, Gravity.CENTER)
         val g = rounded(withAlpha(color, 0.12f), dpF(ctx, 20f), 1, withAlpha(color, 0.45f))
         t.background = g
-        t.setPadding(dp(ctx, 12f), dp(ctx, 6f), dp(ctx, 12f), dp(ctx, 6f))
+        t.setPadding(dp(ctx, 10f), dp(ctx, 5f), dp(ctx, 10f), dp(ctx, 5f))
         return t
     }
 
@@ -165,8 +165,8 @@ object Theme {
         val v = View(ctx)
         v.setBackgroundColor(0x14FFFFFF)
         val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(ctx, 0.8f)))
-        lp.topMargin = dp(ctx, 10f)
-        lp.bottomMargin = dp(ctx, 10f)
+        lp.topMargin = dp(ctx, 8f)
+        lp.bottomMargin = dp(ctx, 8f)
         v.layoutParams = lp
         return v
     }

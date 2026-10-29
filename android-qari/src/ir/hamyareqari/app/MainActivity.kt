@@ -42,7 +42,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.1.3"
+        const val VERSION = "1.1.6"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -137,23 +137,23 @@ class MainActivity : Activity() {
         val inner = LinearLayout(this)
         inner.orientation = LinearLayout.VERTICAL
         val padH = Theme.dp(this, 14f)
-        inner.setPadding(padH, Theme.dp(this, 12f), padH, Theme.dp(this, 28f))
+        inner.setPadding(padH, Theme.dp(this, 10f), padH, Theme.dp(this, 20f))
 
         // سربرگ
         val head = LinearLayout(this)
         head.orientation = LinearLayout.VERTICAL
         head.gravity = Gravity.CENTER_HORIZONTAL
-        val title = Theme.text(this, "همیار قاری", 24f, Theme.GOLD, true, Gravity.CENTER)
+        val title = Theme.text(this, "همیار قاری", 22f, Theme.GOLD, true, Gravity.CENTER)
         val sub = Theme.text(
             this,
-            "گسترهٔ صدای خواننده — بالاترین و پایین‌ترین نت",
-            12.5f, Theme.DIM, false, Gravity.CENTER
+            "تحلیل گستره و زیر و بمی تلاوت",
+            12f, Theme.DIM, false, Gravity.CENTER
         )
         head.addView(title)
         head.addView(Theme.space(this, 2f))
         head.addView(sub)
-        head.addView(Theme.space(this, 6f))
-        val privacy = Theme.chip(this, "🔒 ۱۰۰٪ روی همین گوشی · بدون اینترنت", Theme.TEAL)
+        head.addView(Theme.space(this, 4f))
+        val privacy = Theme.text(this, "🔒 پردازش روی گوشی · بدون اینترنت", 10.5f, Theme.DIM, false, Gravity.CENTER)
         val privacyRow = Theme.row(this)
         privacyRow.gravity = Gravity.CENTER_HORIZONTAL
         privacyRow.addView(privacy)
@@ -207,10 +207,10 @@ class MainActivity : Activity() {
 
     private fun tabButton(label: String, active: Boolean): TextView {
         val t = Theme.text(this, label, 14f, if (active) Theme.INK else Theme.DIM, true, Gravity.CENTER)
-        val h = Theme.dp(this, 46f)
+        val h = Theme.dp(this, 42f)
         t.minHeight = h
         t.gravity = Gravity.CENTER
-        val radius = Theme.dpF(this, 14f)
+        val radius = Theme.dpF(this, 12f)
         t.background = if (active)
             Theme.gradient(Theme.GOLD, Theme.GOLD2, radius)
         else
@@ -220,12 +220,12 @@ class MainActivity : Activity() {
 
     private fun showTab(index: Int) {
         val fileActive = index == 0
-        tabFile.background = if (fileActive) Theme.gradient(Theme.GOLD, Theme.GOLD2, Theme.dpF(this, 14f))
-        else Theme.rounded(0x0DFFFFFF, Theme.dpF(this, 14f), 1, Theme.LINE)
+        tabFile.background = if (fileActive) Theme.gradient(Theme.GOLD, Theme.GOLD2, Theme.dpF(this, 12f))
+        else Theme.rounded(0x0DFFFFFF, Theme.dpF(this, 12f), 1, Theme.LINE)
         tabFile.setTextColor(if (fileActive) Theme.INK else Theme.DIM)
 
-        tabLive.background = if (!fileActive) Theme.gradient(Theme.GOLD, Theme.GOLD2, Theme.dpF(this, 14f))
-        else Theme.rounded(0x0DFFFFFF, Theme.dpF(this, 14f), 1, Theme.LINE)
+        tabLive.background = if (!fileActive) Theme.gradient(Theme.GOLD, Theme.GOLD2, Theme.dpF(this, 12f))
+        else Theme.rounded(0x0DFFFFFF, Theme.dpF(this, 12f), 1, Theme.LINE)
         tabLive.setTextColor(if (!fileActive) Theme.INK else Theme.DIM)
 
         panelFile.visibility = if (fileActive) View.VISIBLE else View.GONE
@@ -240,7 +240,7 @@ class MainActivity : Activity() {
         col.orientation = LinearLayout.VERTICAL
 
         val pick = Theme.card(this)
-        val pickTitle = Theme.text(this, "۱. فایل صوتی یا ویدیو را انتخاب کنید", 14f, Theme.TXT, true)
+        val pickTitle = Theme.text(this, "انتخاب فایل صوتی یا ویدیو", 14f, Theme.TXT, true)
         pick.addView(pickTitle)
         pick.addView(Theme.space(this, 4f))
         pick.addView(
@@ -682,6 +682,8 @@ class MainActivity : Activity() {
         // ══ پخش‌کنندهٔ صوتی ══
         val playerBar = AudioPlayerBar(this)
         playerBar.setTotal(r.durationSec)
+        playerBar.setWaveform(sharePcm)
+        playerBar.setPitchTrace(chart.spec)
         val lpBar = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         lpBar.topMargin = Theme.dp(this, 10f)
         playerBar.layoutParams = lpBar
@@ -723,6 +725,27 @@ class MainActivity : Activity() {
             }
         }
         playerBar.onSpeed = { v -> player?.setSpeed(v) }
+        playerBar.onTraceSeek = { sec ->
+            val p = ensurePlayer()
+            if (p != null) {
+                p.setSpeed(playerBar.currentSpeed())
+                p.playFrom(sec)
+                chart.setPlayhead(sec)
+                playerBar.setPosition(sec)
+                startTicker(chart, playerBar)
+            }
+        }
+        playerBar.onSkip = { delta ->
+            val p = ensurePlayer()
+            if (p != null) {
+                val target = (p.positionSec() + delta).coerceIn(0.0, p.durationSec())
+                p.setSpeed(playerBar.currentSpeed())
+                p.playFrom(target)
+                chart.setPlayhead(target)
+                playerBar.setPosition(target)
+                startTicker(chart, playerBar)
+            }
+        }
         playerBar.onFollowToggle = { on -> chart.followPlayhead = on }
         playerBar.setFollowing(chart.followPlayhead)
 
@@ -941,6 +964,14 @@ class MainActivity : Activity() {
         tickBaseAt = System.currentTimeMillis()
         tickLastSync = tickBaseAt
         val total = chart.totalDuration()
+        player?.onComplete {
+            ui.post {
+                stopTicker()
+                chart.setPlayhead(total)
+                bar.setPosition(total)
+                bar.setPlaying(false)
+            }
+        }
         val r = object : Runnable {
             override fun run() {
                 val p = player ?: return
@@ -952,7 +983,7 @@ class MainActivity : Activity() {
                     tickLastSync = now
                 }
                 val playing = p.isPlaying
-                val pos = (tickBasePos + (now - tickBaseAt) / 1000.0).coerceIn(0.0, total)
+                val pos = (tickBasePos + (now - tickBaseAt) / 1000.0 * bar.currentSpeed()).coerceIn(0.0, total)
                 chart.setPlayhead(pos)
                 bar.setPosition(pos)
                 if (playing) {
