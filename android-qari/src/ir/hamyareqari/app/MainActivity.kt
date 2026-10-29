@@ -42,7 +42,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.1.0"
+        const val VERSION = "1.1.1"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -664,7 +664,7 @@ class MainActivity : Activity() {
         )
         chartCard.addView(Theme.space(this, 6f))
         val chart = ChartView(this)
-        chart.setData(r.contourT, r.contourHz, r.durationSec)
+        chart.setReport(r)
         chart.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(this, 210f))
         chartCard.addView(chart)
 
@@ -884,15 +884,33 @@ class MainActivity : Activity() {
         }
     }
 
+    private var tickBasePos = 0.0
+    private var tickBaseAt = 0L
+    private var tickLastSync = 0L
+
+    /**
+     * انیمیشن ۶۰ فریمی: موقعیت بین دو هم‌گام‌سازی با ساعت پیش‌بینی می‌شود
+     * تا نور طلایی نرم حرکت کند (نه پرشی هر ۸۰ میلی‌ثانیه).
+     */
     private fun startTicker(chart: ChartView, label: TextView, total: Double) {
         stopTicker()
+        tickBasePos = player?.positionSec() ?: 0.0
+        tickBaseAt = System.currentTimeMillis()
+        tickLastSync = tickBaseAt
         val r = object : Runnable {
             override fun run() {
                 val p = player ?: return
-                val pos = p.positionSec()
+                val now = System.currentTimeMillis()
+                // هر ۴۰۰ms با خود پخش‌کننده هم‌گام می‌شویم (جلوگیری از رانش)
+                if (now - tickLastSync > 400) {
+                    tickBasePos = p.positionSec()
+                    tickBaseAt = now
+                    tickLastSync = now
+                }
+                val pos = (tickBasePos + (now - tickBaseAt) / 1000.0).coerceIn(0.0, total)
                 chart.setPlayhead(pos)
                 label.text = "${PitchMath.faFixed(pos, 1)} / ${PitchMath.faFixed(total, 1)}"
-                if (p.isPlaying) ui.postDelayed(this, 80)
+                if (p.isPlaying) ui.postDelayed(this, 16)
             }
         }
         ticker = r
@@ -1329,7 +1347,7 @@ class MainActivity : Activity() {
             liveLowLabel.text = "—"
             liveSpanLabel.text = "—"
             liveDurLabel.text = "—"
-            liveChart.setData(DoubleArray(0), DoubleArray(0), 12.0)
+            liveChart.setLiveData(emptyList(), emptyList())
             toast("رکورد زنده صفر شد")
         }
         val lpReset = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -1365,7 +1383,7 @@ class MainActivity : Activity() {
         liveRecording = if (recordCheck.isChecked) ShortGrow(1 shl 17, AudioIo.TARGET_RATE * 60 * 20) else null
         val engine = LiveEngine()
         live = engine
-        liveChart.setData(DoubleArray(0), DoubleArray(0), 10.0)
+        liveChart.setLiveData(emptyList(), emptyList())
         liveChart.setLive(true)
         liveHighLabel.text = "—"
         liveLowLabel.text = "—"
@@ -1725,7 +1743,10 @@ class MainActivity : Activity() {
                 liveGauge.invalidate()
             }
             synchronized(lock) {
-                liveChart.setData(traceT.toDoubleArray(), traceHz.toDoubleArray(), 12.0)
+                // میدی برای رندرر؛ سکوت = NaN تا نور پنهان شود
+                val mids = ArrayList<Double>(traceHz.size)
+                for (v in traceHz) mids.add(if (v > 0) PitchMath.hzToMidi(v) else Double.NaN)
+                liveChart.setLiveData(ArrayList(traceT), mids)
             }
         }
     }

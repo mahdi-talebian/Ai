@@ -38,7 +38,7 @@ class VideoMaker(private val ctx: Context) {
     }
 
     companion object {
-        private const val FPS = 20
+        private const val FPS = 25
         private const val AUDIO_RATE = 22050
         private const val AUDIO_BITRATE = 96_000
         private const val MAX_SECONDS = 20 * 60
@@ -255,6 +255,7 @@ class VideoMaker(private val ctx: Context) {
 
     // ── رسم یک فریم ───────────────────────────────────────────────────────
 
+    /** یک فریم = همان نمودارِ روی صفحه، تمام‌قاب (خروجی ویدیو عیناً همان نمایش اپ) */
     private fun renderFrame(
         c: Canvas,
         w: Int,
@@ -265,55 +266,7 @@ class VideoMaker(private val ctx: Context) {
         title: String
     ) {
         val unit = w / 460f
-        val bg = Paint(Paint.ANTI_ALIAS_FLAG)
-        bg.shader = LinearGradient(
-            0f, 0f, 0f, h.toFloat(),
-            intArrayOf(Theme.BG1, Theme.BG2, Theme.BG3), null, Shader.TileMode.CLAMP
-        )
-        c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bg)
-
-        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Theme.GOLD
-            textSize = 15f * unit
-            typeface = Theme.font(ctx, true)
-            textAlign = Paint.Align.RIGHT
-        }
-        val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Theme.DIM
-            textSize = 9.5f * unit
-            typeface = Theme.font(ctx, false)
-            textAlign = Paint.Align.RIGHT
-        }
-        val bigPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Theme.TXT
-            textSize = 12f * unit
-            typeface = Theme.font(ctx, true)
-            textAlign = Paint.Align.RIGHT
-        }
-        c.drawText(title, w - 14f * unit, 22f * unit, titlePaint)
-        val rangeLine = "بالاترین ${r.highest?.name ?: "—"}  ·  پایین‌ترین ${r.lowest?.name ?: "—"}  ·  " +
-            "گستره ${PitchMath.faFixed(r.spanSemitones, 1)} نیم‌پرده"
-        c.drawText(rangeLine, w - 14f * unit, 38f * unit, subPaint)
-
-        // نمودار
-        val chartTop = 48f * unit
-        val chartH = h - chartTop - 30f * unit
-        val save = c.save()
-        c.translate(0f, chartTop)
-        chart.drawFrameForVideo(c, w.toFloat(), chartH, unit, t)
-        c.restoreToCount(save)
-
-        // نتِ لحظهٔ جاری
-        val nowHz = hzAt(r, t)
-        if (nowHz > 0) {
-            val name = PitchMath.noteName(nowHz)
-            c.drawText("♪ $name", 14f * unit, h - 12f * unit, bigPaint)
-        }
-        c.drawText(
-            "${PitchMath.faFixed(t, 1)} / ${PitchMath.faFixed(r.durationSec, 1)} ثانیه",
-            w - 14f * unit, h - 12f * unit, subPaint
-        )
-        c.drawText("همیار قاری", 14f * unit, 22f * unit, subPaint)
+        chart.drawFrameForVideo(c, w.toFloat(), h.toFloat(), unit, t)
     }
 
     private fun hzAt(r: Report, t: Double): Double {
