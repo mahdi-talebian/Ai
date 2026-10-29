@@ -42,7 +42,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.1.2"
+        const val VERSION = "1.1.3"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -70,6 +70,7 @@ class MainActivity : Activity() {
     private var videoFile: java.io.File? = null
     private var lastElapsedMs = 0L
     private var chartRef: ChartView? = null
+    private var audioBar: AudioPlayerBar? = null
     private lateinit var fileLabel: TextView
     private lateinit var analyzeBtn: TextView
     private lateinit var progressBar: android.widget.ProgressBar
@@ -668,18 +669,52 @@ class MainActivity : Activity() {
         chart.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(this, 210f))
         chartCard.addView(chart)
 
-        val playRow = Theme.row(this)
-        val playBtn = Theme.button(this, "▶  پخش", false, true)
-        val stopBtn = Theme.button(this, "⏸ توقف", false, true)
-        playRow.addView(playBtn)
-        playRow.addView(Theme.space(this, 8f))
-        playRow.addView(stopBtn)
-        val playTime = Theme.text(this, "۰٫۰ / ${PitchMath.faFixed(r.durationSec, 1)}", 11.5f, Theme.DIM, false, Gravity.END)
-        playRow.addView(playTime, weight(1f))
-        val lpPlay = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lpPlay.topMargin = Theme.dp(this, 8f)
-        playRow.layoutParams = lpPlay
-        chartCard.addView(playRow)
+        // ══ پخش‌کنندهٔ صوتی ══
+        val playerBar = AudioPlayerBar(this)
+        playerBar.setTotal(r.durationSec)
+        val lpBar = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lpBar.topMargin = Theme.dp(this, 10f)
+        playerBar.layoutParams = lpBar
+        chartCard.addView(playerBar)
+        audioBar = playerBar
+
+        playerBar.onPlayPause = {
+            val p = ensurePlayer() ?: run {
+                playerBar.setPlaying(false)
+                null
+            }
+            if (p != null) {
+                if (p.isPlaying) {
+                    p.pause()
+                    stopTicker()
+                } else {
+                    if (seekToEnd()) p.playFrom(0.0)
+                    p.setSpeed(playerBar.currentSpeed())
+                    startTicker(chart, playerBar)
+                }
+            }
+        }
+        playerBar.onRestart = {
+            val p = ensurePlayer()
+            if (p != null) {
+                p.setSpeed(playerBar.currentSpeed())
+                p.playFrom(0.0)
+                chart.setPlayhead(0.0)
+                startTicker(chart, playerBar)
+            }
+        }
+        playerBar.onSeek = { sec ->
+            val p = ensurePlayer()
+            if (p != null) {
+                p.setSpeed(playerBar.currentSpeed())
+                p.playFrom(sec)
+                chart.setPlayhead(sec)
+                startTicker(chart, playerBar)
+            }
+        }
+        playerBar.onSpeed = { v -> player?.setSpeed(v) }
+        playerBar.onFollowToggle = { on -> chart.followPlayhead = on }
+        playerBar.setFollowing(chart.followPlayhead)
 
         // زوم زمانی و ارتفاع (مثل نسخهٔ وب)
         val zoomRow = Theme.row(this)
@@ -705,13 +740,15 @@ class MainActivity : Activity() {
         chartCard.addView(zoomRow)
 
         zoomInT.setOnClickListener {
+            // با زوم، کادر خودش دنبال صدا می‌رود (قفل نمی‌کند)
             chart.zoomTime(2.0)
-            chart.setViewCenter(player?.positionSec() ?: (r.durationSec / 2))
             zoomLabel.text = chart.zoomLabel()
+            ensureTicker(chart)
         }
         zoomOutT.setOnClickListener {
             chart.zoomTime(0.5)
             zoomLabel.text = chart.zoomLabel()
+            ensureTicker(chart)
         }
         zoomInP.setOnClickListener {
             chart.zoomPitch(1.4)
@@ -724,6 +761,7 @@ class MainActivity : Activity() {
         zoomReset.setOnClickListener {
             chart.zoomReset()
             zoomLabel.text = chart.zoomLabel()
+            ensureTicker(chart)
         }
 
         chartRef = chart
@@ -734,20 +772,14 @@ class MainActivity : Activity() {
         resultBox.addView(buildVideoCard(r, chart))
         resultBox.addView(Theme.space(this, 12f))
 
-        playBtn.setOnClickListener {
-            val player = ensurePlayer() ?: return@setOnClickListener
-            player.playFrom(0.0)
-            startTicker(chart, playTime, r.durationSec)
-        }
-        stopBtn.setOnClickListener {
-            player?.pause()
-            stopTicker()
-        }
+        // لمس نمودار = پخش از همان لحظه
         chart.onSeek = { sec ->
-            val player = ensurePlayer()
-            if (player != null) {
-                player.playFrom(sec)
-                startTicker(chart, playTime, r.durationSec)
+            val p = ensurePlayer()
+            if (p != null) {
+                p.setSpeed(audioBar?.currentSpeed() ?: 1f)
+                p.playFrom(sec)
+                chart.setPlayhead(sec)
+                startTicker(chart, audioBar!!)
             }
         }
 
@@ -892,11 +924,13 @@ class MainActivity : Activity() {
      * انیمیشن ۶۰ فریمی: موقعیت بین دو هم‌گام‌سازی با ساعت پیش‌بینی می‌شود
      * تا نور طلایی نرم حرکت کند (نه پرشی هر ۸۰ میلی‌ثانیه).
      */
-    private fun startTicker(chart: ChartView, label: TextView, total: Double) {
+    private fun startTicker(chart: ChartView, bar: AudioPlayerBar) {
         stopTicker()
+        audioBar = bar
         tickBasePos = player?.positionSec() ?: 0.0
         tickBaseAt = System.currentTimeMillis()
         tickLastSync = tickBaseAt
+        val total = chart.totalDuration()
         val r = object : Runnable {
             override fun run() {
                 val p = player ?: return
@@ -907,14 +941,36 @@ class MainActivity : Activity() {
                     tickBaseAt = now
                     tickLastSync = now
                 }
+                val playing = p.isPlaying
                 val pos = (tickBasePos + (now - tickBaseAt) / 1000.0).coerceIn(0.0, total)
                 chart.setPlayhead(pos)
-                label.text = "${PitchMath.faFixed(pos, 1)} / ${PitchMath.faFixed(total, 1)}"
-                if (p.isPlaying) ui.postDelayed(this, 16)
+                bar.setPosition(pos)
+                if (playing) {
+                    ui.postDelayed(this, 16)
+                } else {
+                    bar.setPlaying(false)
+                    ticker = null
+                }
             }
         }
         ticker = r
+        bar.setPlaying(true)
         ui.post(r)
+    }
+
+    /** اگر پخش در جریان نیست، فقط نقطه و نوار را در جای فعلی نگه می‌دارد */
+    private fun ensureTicker(chart: ChartView) {
+        val bar = audioBar ?: return
+        if (ticker != null || player?.isPlaying == true) return
+        val pos = chart.playhead.takeIf { it >= 0 } ?: 0.0
+        bar.setPosition(pos)
+    }
+
+    /** آیا پخش به انتها رسیده است؟ */
+    private fun seekToEnd(): Boolean {
+        val p = player ?: return true
+        val pos = p.positionSec()
+        return pos >= p.durationSec() - 0.25 || !p.isPlaying && pos > 0.0
     }
 
     private fun stopTicker() {

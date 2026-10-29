@@ -87,6 +87,9 @@ class ChartView(context: Context) : View(context) {
     var live = false
         private set
 
+    /** با زوم، پنجرهٔ دید همراه پخش جلو می‌رود (قفل نمی‌کند) */
+    var followPlayhead = true
+
     var timeZoom = 1.0
         private set
     var tightness = 1.0          // زوم ارتفاع (۱ = پیش‌فرض)
@@ -120,6 +123,8 @@ class ChartView(context: Context) : View(context) {
         const val HIGH_LINE = 0x8CFFE2A0.toInt()
         const val LOW_LINE = 0x8CA9D6FF.toInt()
         const val GAP_BRIDGE_SEC = 0.75
+        // نور جاری در ۳۸٪ از عرض کادر می‌ایستد (کمی جلوتر از مرکز)
+        const val FOLLOW_BIAS = 0.12
         const val BAR_MIN_SEC = 0.34
     }
 
@@ -134,11 +139,13 @@ class ChartView(context: Context) : View(context) {
     private val path = Path()
     private val rect = RectF()
 
-    // کش سگمنت‌ها برای بازهٔ دید جاری
-    private var cacheKey = ""
-    private var cacheSegs: List<FloatArray> = emptyList()   // [x,y ...] با زمان‌ها
-    private var cacheSegT: List<DoubleArray> = emptyList()
-    private var cachedGeom: Geom? = null
+    // کش «بخش دیده‌شده» برای همین فریم (با حرکت پنجرهٔ زوم هر فریم عوض می‌شود)
+    private var frameKey = ""
+    private var frameDim: List<FloatArray> = emptyList()
+    private var frameGold: List<FloatArray> = emptyList()
+
+    private val pathDim = Path()
+    private val pathGold = Path()
 
     private class Geom(
         val w: Float, val h: Float,
@@ -161,7 +168,7 @@ class ChartView(context: Context) : View(context) {
     fun setReport(r: Report) {
         spec = TraceSpec.from(r)
         live = false
-        cacheKey = ""
+        invalidateFrameCaches()
         invalidate()
     }
 
@@ -178,14 +185,21 @@ class ChartView(context: Context) : View(context) {
             duration = if (n > 0) t[n - 1] else 1.0,
             highMidi = Double.NaN, lowMidi = Double.NaN, spanSemitones = 0.0
         )
-        cacheKey = ""
+        invalidateFrameCaches()
         invalidate()
     }
 
     fun setLive(isLive: Boolean) {
         live = isLive
-        cacheKey = ""
+        invalidateFrameCaches()
         invalidate()
+    }
+
+    /** باطل‌کردن کش‌ها (هندسه، بخش دیده‌شده) */
+    private fun invalidateFrameCaches() {
+        frameKey = ""
+        frameDim = emptyList()
+        frameGold = emptyList()
     }
 
     fun setPlayhead(sec: Double) {
@@ -197,13 +211,13 @@ class ChartView(context: Context) : View(context) {
 
     fun zoomTime(factor: Double) {
         timeZoom = (timeZoom * factor).coerceIn(1.0, 16.0)
-        cacheKey = ""
+        invalidateFrameCaches()
         invalidate()
     }
 
     fun zoomPitch(factor: Double) {
         tightness = (tightness * factor).coerceIn(1.0, 4.0)
-        cacheKey = ""
+        invalidateFrameCaches()
         invalidate()
     }
 
@@ -211,15 +225,18 @@ class ChartView(context: Context) : View(context) {
         timeZoom = 1.0
         tightness = 1.0
         viewCenter = Double.NaN
-        cacheKey = ""
+        invalidateFrameCaches()
         invalidate()
     }
 
     fun setViewCenter(sec: Double) {
         viewCenter = sec
-        cacheKey = ""
+        invalidateFrameCaches()
         invalidate()
     }
+
+    /** مدت کل صدا (برای نوار پخش) */
+    fun totalDuration(): Double = spec?.duration ?: 1.0
 
     fun zoomLabel(): String {
         val window = shownWindow()
@@ -534,53 +551,65 @@ class ChartView(context: Context) : View(context) {
     }
 
     /**
-     * ساخت نقطه‌های منحنی: قطع روی سکوت/پرشِ غیرممکن، پل‌زدن شکاف‌های کوتاه،
-     * و کم‌کردن تعداد نقطه برای رسم سبک روی گوشی.
+     * ساخت منحنی در «فضای زمان» — یک‌بار برای هر گزارش.
+     *
+     * چرا فضای زمان و نه پیکسل؟ چون با زوم، پنجرهٔ دید با پخش جلو می‌رود.
+     * اگر نقطه‌ها با پیکسل ذخیره شوند، هر فریم باید کل منحنی دوباره ساخته
+     * شود (همان چیزی که هنگام زوم، رابط را قفل/کند می‌کرد). این‌جا هندسه
+     * یک‌بار ساخته می‌شود و هر فریم فقط بخشِ داخل کادر تبدیل به پیکسل
+     * می‌شود؛ پس نور طلایی روان حرکت می‌کند.
      */
-    private fun buildSegments(
-        spec: TraceSpec, mids: DoubleArray, g: Geom
-    ): Pair<List<FloatArray>, List<DoubleArray>> {
-        val runs = ArrayList<ArrayList<DoubleArray>>()  // هر نقطه: [t, midi]
+    private var segSpec: TraceSpec? = null
+    private var segMids: DoubleArray? = null
+    private var segTimes: List<DoubleArray> = emptyList()
+    private var segVals: List<DoubleArray> = emptyList()
+
+    private fun segmentsFor(sp: TraceSpec, mids: DoubleArray): Pair<List<DoubleArray>, List<DoubleArray>> {
+        if (segSpec === sp && segMids === mids) return segTimes to segVals
+
+        class Run(val pts: ArrayList<DoubleArray>, val hard: Boolean)
+
+        val runs = ArrayList<Run>()
         var cur = ArrayList<DoubleArray>()
+        var curHard = false
         var lastT = Double.NaN
-        var hardStart = false
 
         fun flush(nextHard: Boolean) {
-            if (cur.size > 1) runs.add(ArrayList(cur))
+            if (cur.size > 1) runs.add(Run(ArrayList(cur), curHard))
             cur = ArrayList()
-            hardStart = nextHard
+            curHard = nextHard
         }
 
-        for (i in spec.times.indices) {
-            val t = spec.times[i]
+        for (i in sp.times.indices) {
+            val t = sp.times[i]
             val m = mids[i]
-            val inside = t >= g.t0 - 1e-9 && t <= g.t1 + 1e-9
-            if (m.isNaN() || !inside) {
+            if (m.isNaN()) {
                 flush(false)
                 lastT = Double.NaN
                 continue
             }
             if (!lastT.isNaN() && t - lastT > C.GAP_BRIDGE_SEC) {
                 flush(false)
-            } else if (cur.isNotEmpty()) {
+            } else if (cur.isNotEmpty() && !lastT.isNaN()) {
                 val prevM = cur[cur.size - 1][1]
+                // پرشِ غیرممکن (>۴ نیم‌پرده در <۵۰ms): سگمنت جدا شود
                 if (abs(m - prevM) > 4.0 && (t - lastT) < 0.05) flush(true)
             }
             cur.add(doubleArrayOf(t, m))
             lastT = t
         }
-        if (cur.size > 1) runs.add(ArrayList(cur))
+        if (cur.size > 1) runs.add(Run(ArrayList(cur), curHard))
 
         // پل‌زدن شکاف‌های کوتاه با شیب معقول
         val merged = ArrayList<ArrayList<DoubleArray>>()
         for (run in runs) {
-            if (merged.isEmpty() || hardStartFor(run, merged, spec)) {
-                merged.add(ArrayList(run))
+            if (merged.isEmpty() || run.hard) {
+                merged.add(ArrayList(run.pts))
                 continue
             }
             val prev = merged[merged.size - 1]
             val a = prev[prev.size - 1]
-            val b = run[0]
+            val b = run.pts[0]
             val gap = b[0] - a[0]
             val leap = abs(b[1] - a[1])
             val slope = if (gap > 1e-6) leap / gap else 999.0
@@ -590,73 +619,59 @@ class ChartView(context: Context) : View(context) {
                     val f = j.toDouble() / steps
                     prev.add(doubleArrayOf(a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
                 }
-                prev.addAll(run)
+                prev.addAll(run.pts)
             } else {
-                merged.add(ArrayList(run))
+                merged.add(ArrayList(run.pts))
             }
         }
 
-        // صاف‌کردن هندسیِ مسیر (Chaikin، دو مرحله) — گوشه‌ها گرد می‌شوند
+        // صاف‌کردن گوشه‌ها (Chaikin، دو مرحله)
         val smoothed = ArrayList<ArrayList<DoubleArray>>(merged.size)
         for (run in merged) {
-            var cur = run
+            var c = run
             for (it in 0 until 2) {
-                if (cur.size < 3) break
-                if (cur.size > 900) break
-                val nxt = ArrayList<DoubleArray>(cur.size * 2)
-                nxt.add(cur[0])
-                for (k in 1 until cur.size) {
-                    val a0 = cur[k - 1]
-                    val b0 = cur[k]
+                if (c.size < 3 || c.size > 4000) break
+                val nxt = ArrayList<DoubleArray>(c.size * 2)
+                nxt.add(c[0])
+                for (k in 1 until c.size) {
+                    val a0 = c[k - 1]
+                    val b0 = c[k]
                     nxt.add(doubleArrayOf(a0[0] * 0.75 + b0[0] * 0.25, a0[1] * 0.75 + b0[1] * 0.25))
                     nxt.add(doubleArrayOf(a0[0] * 0.25 + b0[0] * 0.75, a0[1] * 0.25 + b0[1] * 0.75))
                 }
-                nxt.add(cur[cur.size - 1])
-                cur = nxt
+                nxt.add(c[c.size - 1])
+                c = nxt
             }
-            smoothed.add(cur)
+            smoothed.add(c)
         }
 
-        // تبدیل به پیکسل + کم‌کردن نقطه (سقف ۱۴۰۰ نقطه در هر سگمنت)
-        val xs = ArrayList<FloatArray>(merged.size)
-        val ts = ArrayList<DoubleArray>(merged.size)
+        // جداکردن زمان و ارتفاع + سبک‌سازی زمانی (هر ۴ms یک نقطه کافی است)
+        val times = ArrayList<DoubleArray>(smoothed.size)
+        val vals = ArrayList<DoubleArray>(smoothed.size)
         for (run in smoothed) {
             if (run.size < 2) continue
-            val stride = max(1, run.size / 1400)
-            val n = (run.size + stride - 1) / stride
-            val px = FloatArray(n * 2)
-            val pt = DoubleArray(n)
-            var k = 0
-            var idx = 0
-            while (idx < run.size && k < n) {
-                val ptv = run[idx]
-                px[k * 2] = g.xOf(ptv[0])
-                px[k * 2 + 1] = g.yOf(ptv[1])
-                pt[k] = ptv[0]
-                k++
-                idx += stride
+            val keepT = ArrayList<Double>(run.size)
+            val keepM = ArrayList<Double>(run.size)
+            var lastKept = -1e9
+            for (i in run.indices) {
+                val t = run[i][0]
+                if (i == run.size - 1 || t - lastKept >= 0.004) {
+                    keepT.add(t)
+                    keepM.add(run[i][1])
+                    lastKept = t
+                }
             }
-            if (k > 1) {
-                xs.add(px.copyOf(k * 2))
-                ts.add(pt.copyOf(k))
+            if (keepT.size > 1) {
+                times.add(keepT.toDoubleArray())
+                vals.add(keepM.toDoubleArray())
             }
         }
-        return xs to ts
-    }
 
-    private fun hardStartFor(
-        run: ArrayList<DoubleArray>,
-        merged: ArrayList<ArrayList<DoubleArray>>,
-        spec: TraceSpec
-    ): Boolean {
-        // اگر فاصلهٔ زمانی زیاد است یا پرش ارتفاعی بزرگ، سگمنت جدا بماند
-        if (merged.isEmpty()) return true
-        val prev = merged[merged.size - 1]
-        val a = prev[prev.size - 1]
-        val b = run[0]
-        val gap = b[0] - a[0]
-        val leap = abs(b[1] - a[1])
-        return gap > C.GAP_BRIDGE_SEC || leap > 4.0
+        segSpec = sp
+        segMids = mids
+        segTimes = times
+        segVals = vals
+        return times to vals
     }
 
     // ───────────────────────────── رسم ─────────────────────────────
@@ -698,9 +713,15 @@ class ChartView(context: Context) : View(context) {
             t1 = total
         } else {
             val win = total / timeZoom
-            val center = if (!viewCenter.isNaN()) viewCenter
-            else if (!tNow.isNaN()) tNow
-            else total / 2
+            // وقتی دنبال‌کردن روشن است، کادر با پخش جلو می‌رود و نور طلایی
+            // هیچ‌وقت به لبه نمی‌رسد و «قفل» نمی‌شود. کمی جلوتر از مرکز
+            // می‌ایستد تا نت‌های بعدی هم دیده شوند.
+            val center = when {
+                followPlayhead && !tNow.isNaN() -> tNow + win * C.FOLLOW_BIAS
+                !viewCenter.isNaN() -> viewCenter
+                !tNow.isNaN() -> tNow
+                else -> total / 2
+            }
             val a = (center - win / 2).coerceIn(0.0, max(0.0, total - win))
             t0 = a
             t1 = a + win
@@ -721,21 +742,14 @@ class ChartView(context: Context) : View(context) {
         canvas.drawRect(0f, 0f, w, h, p)
         p.shader = null
 
-        val key = "${g.loLim},${g.hiLim},${g.t0},${g.t1},${sp.times.size},${sp.mids.sumOf { if (it.isNaN()) 0.0 else 1.0 }}"
-        if (key != cacheKey) {
-            val built = buildSegments(sp, midsClean, g)
-            cacheSegs = built.first
-            cacheSegT = built.second
-            cacheKey = key
-            cachedGeom = g
-        }
+        val endT = if (tNow.isNaN()) total else min(tNow, g.t1)
+        buildFramePaths(sp, midsClean, g, endT)
 
         drawGrid(canvas, sp, g, k)
         drawDimCurve(canvas, g)
         drawDimNotes(canvas, sp, g, k, tNow)
         drawBorder(canvas, w, h)
 
-        val endT = if (tNow.isNaN()) total else min(tNow, g.t1)
         drawGoldCurve(canvas, g, k, endT)
         drawPastNotes(canvas, sp, g, k, endT)
         drawRangeGuides(canvas, sp, g, k)
@@ -775,45 +789,114 @@ class ChartView(context: Context) : View(context) {
         }
     }
 
-    private fun drawDimCurve(canvas: Canvas, g: Geom) {
-        for (s in 0 until cacheSegs.size) {
-            val pts = cacheSegs[s]
-            stroke.color = C.DIM_SHADOW
-            stroke.strokeWidth = 3.8f * g.k
-            strokePath(canvas, pts, -1.0, 0, cacheSegT[s])
-            stroke.color = C.DIM_CURVE
-            stroke.strokeWidth = 2.7f * g.k
-            strokePath(canvas, pts, -1.0, 0, cacheSegT[s])
+    /**
+     * تبدیلِ فقط «بخشِ داخل کادر» به پیکسل برای همین فریم.
+     *
+     * این تابع قلبِ روان‌بودنِ زوم است: با هر فریم، پنجره دو-سه پیکسل
+     * جابه‌جا می‌شود، ولی ما فقط نقطه‌های همان بازه را تبدیل می‌کنیم
+     * (در زوم ×۱۶ حدود ۶٪ از کل منحنی) و نقطه‌هایی که به یک پیکسل
+     * می‌افتند را رد می‌کنیم. نتیجه: بدون لَگی و بدون قفل.
+     */
+    private fun buildFramePaths(sp: TraceSpec, mids: DoubleArray, g: Geom, endT: Double) {
+        val key = "${g.t0},${g.t1},${g.loLim},${g.hiLim},${g.w},${g.h},$endT"
+        if (key == frameKey) return
+
+        val (times, vals) = segmentsFor(sp, mids)
+        val dim = ArrayList<FloatArray>(times.size)
+        val gold = ArrayList<FloatArray>(times.size)
+        val spanT = max(1e-6, g.t1 - g.t0)
+        val spanM = max(1e-6, g.hiLim - g.loLim)
+        val usableW = g.w - g.ml - g.mr
+        val usableH = g.h - g.mt - g.mb
+        val t0m = g.t0 - spanT * 0.02
+        val t1m = g.t1 + spanT * 0.02
+
+        for (si in times.indices) {
+            val ts = times[si]
+            val ms = vals[si]
+            val n = ts.size
+            if (n < 2) continue
+            // جست‌وجوی دودویی: اولین نقطهٔ داخل کادر
+            var lo = 0
+            var hi = n - 1
+            while (lo < hi) {
+                val mid = (lo + hi) ushr 1
+                if (ts[mid] < t0m) lo = mid + 1 else hi = mid
+            }
+            val start = max(0, lo - 1)
+            // آخرین نقطهٔ داخل کادر
+            lo = start
+            hi = n - 1
+            while (lo < hi) {
+                val mid = (lo + hi + 1) ushr 1
+                if (ts[mid] > t1m) hi = mid - 1 else lo = mid
+            }
+            val end = min(n - 1, lo + 1)
+            if (end - start < 1) continue
+
+            var dimBuf = FloatArray(min(end - start + 2, 4096) * 2)
+            var goldBuf = FloatArray(dimBuf.size)
+            var dimN = 0
+            var goldN = 0
+            var lastX = Float.NaN
+            var lastY = Float.NaN
+            var goldOpen = false
+            var closed = false
+
+            for (i in start..end) {
+                val x = (g.ml + ((ts[i] - g.t0) / spanT) * usableW).toFloat()
+                val y = (g.mt + ((1.0 - (ms[i] - g.loLim) / spanM) * usableH)).toFloat()
+                // نقطه‌های هم‌پیکسل حذف می‌شوند (سبک‌سازی)
+                if (!lastX.isNaN() && abs(x - lastX) < 0.35f && abs(y - lastY) < 0.35f) continue
+                if (dimN + 2 > dimBuf.size) dimBuf = dimBuf.copyOf(dimBuf.size * 2)
+                dimBuf[dimN] = x
+                dimBuf[dimN + 1] = y
+                dimN += 2
+                if (ts[i] <= endT) {
+                    if (goldN + 2 > goldBuf.size) goldBuf = goldBuf.copyOf(goldBuf.size * 2)
+                    goldBuf[goldN] = x
+                    goldBuf[goldN + 1] = y
+                    goldN += 2
+                    goldOpen = true
+                } else if (goldOpen && !closed) {
+                    // نقطهٔ پایانیِ نور: میانِ این نقطه و قبلی، تا حرکت نرم بماند
+                    if (goldN + 2 <= goldBuf.size) {
+                        goldBuf[goldN] = (dimBuf[dimN - 2] + x) / 2f
+                        goldBuf[goldN + 1] = (dimBuf[dimN - 1] + y) / 2f
+                        goldN += 2
+                    }
+                    closed = true
+                }
+                lastX = x
+                lastY = y
+            }
+            if (dimN >= 4) dim.add(dimBuf.copyOf(dimN))
+            if (goldN >= 4) gold.add(goldBuf.copyOf(goldN))
         }
+        frameDim = dim
+        frameGold = gold
+        frameKey = key
     }
 
-    /** چندضلعی ساده از روی نقطه‌ها؛ اگر maxT داده شود فقط تا آن زمان (مثل مرجع) */
-    private fun strokePath(canvas: Canvas, pts: FloatArray, maxT: Double, from: Int, times: DoubleArray) {
-        val n = pts.size / 2
-        if (n < 2) return
-        path.reset()
-        var started = false
-        var count = 0
-        for (i in 0 until n) {
-            if (maxT >= 0 && i < times.size && times[i] > maxT) {
-                // در مرزِ زمان، نقطه را به میانگین دو نمونه می‌رسانیم (پرش نرم)
-                if (started && i > 0) {
-                    path.lineTo((pts[(i - 1) * 2] + pts[i * 2]) / 2, (pts[(i - 1) * 2 + 1] + pts[i * 2 + 1]) / 2)
-                    count++
-                }
-                break
+    private fun drawDimCurve(canvas: Canvas, g: Geom) {
+        if (frameDim.isEmpty()) return
+        stroke.strokeCap = Paint.Cap.ROUND
+        stroke.strokeJoin = Paint.Join.ROUND
+        for (pts in frameDim) {
+            pathDim.reset()
+            pathDim.moveTo(pts[0], pts[1])
+            var i = 2
+            while (i + 1 < pts.size) {
+                pathDim.lineTo(pts[i], pts[i + 1])
+                i += 2
             }
-            val x = pts[i * 2]
-            val y = pts[i * 2 + 1]
-            if (!started) {
-                path.moveTo(x, y)
-                started = true
-            } else {
-                path.lineTo(x, y)
-            }
-            count++
+            stroke.color = C.DIM_SHADOW
+            stroke.strokeWidth = 3.8f * g.k
+            canvas.drawPath(pathDim, stroke)
+            stroke.color = C.DIM_CURVE
+            stroke.strokeWidth = 2.7f * g.k
+            canvas.drawPath(pathDim, stroke)
         }
-        if (count >= 2) canvas.drawPath(path, stroke)
     }
 
     private fun drawDimNotes(canvas: Canvas, sp: TraceSpec, g: Geom, k: Float, tNow: Double) {
@@ -880,19 +963,24 @@ class ChartView(context: Context) : View(context) {
     }
 
     private fun drawGoldCurve(canvas: Canvas, g: Geom, k: Float, endT: Double) {
-        val layers = arrayOf(
-            Triple(8.2f, 0x26FFD478, 1),
-            Triple(4.6f, 0x57FFD478, 1),
-            Triple(2.7f, C.GOLD, 1)
-        )
-        for (s in 0 until cacheSegs.size) {
-            val pts = cacheSegs[s]
-            val times = cacheSegT[s]
-            if (times.isEmpty() || times[0] > endT) continue
-            for (layer in layers) {
-                stroke.color = layer.second
-                stroke.strokeWidth = layer.first * k
-                strokePath(canvas, pts, endT, 0, times)
+        if (frameGold.isEmpty()) return
+        val widths = floatArrayOf(8.2f, 4.6f, 2.7f)
+        val colors = intArrayOf(0x26FFD478, 0x57FFD478, C.GOLD)
+        stroke.strokeCap = Paint.Cap.ROUND
+        stroke.strokeJoin = Paint.Join.ROUND
+        for (pts in frameGold) {
+            // یک مسیر، سه لایه — به‌جای ساختن دوبارهٔ مسیر برای هر لایه
+            pathGold.reset()
+            pathGold.moveTo(pts[0], pts[1])
+            var i = 2
+            while (i + 1 < pts.size) {
+                pathGold.lineTo(pts[i], pts[i + 1])
+                i += 2
+            }
+            for (li in 0 until 3) {
+                stroke.color = colors[li]
+                stroke.strokeWidth = widths[li] * k
+                canvas.drawPath(pathGold, stroke)
             }
         }
     }
@@ -1144,7 +1232,8 @@ class ChartView(context: Context) : View(context) {
         return if (timeZoom <= 1.001) 0.0 to total
         else {
             val win = total / timeZoom
-            val center = if (!viewCenter.isNaN()) viewCenter
+            val center = if (followPlayhead && playhead >= 0) playhead + win * C.FOLLOW_BIAS
+            else if (!viewCenter.isNaN()) viewCenter
             else if (playhead > 0) playhead else total / 2
             val a = (center - win / 2).coerceIn(0.0, max(0.0, total - win))
             a to a + win

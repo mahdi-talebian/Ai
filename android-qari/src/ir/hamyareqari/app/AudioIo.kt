@@ -429,6 +429,23 @@ object AudioIo {
             try { mp?.pause() } catch (e: Exception) { }
         }
 
+        /** سرعت پخش (۰٫۵× تا ۲×) — بدون تغییر زیر و بمی */
+        fun setSpeed(speed: Float) {
+            val player = mp ?: return
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    val params = player.playbackParams
+                    params.speed = speed.coerceIn(0.5f, 2f)
+                    params.pitch = 1f
+                    player.playbackParams = params
+                }
+            } catch (e: Exception) { }
+        }
+
+        fun seekTo(sec: Double) {
+            try { mp?.seekTo((sec.coerceAtLeast(0.0) * 1000).toInt()) } catch (e: Exception) { }
+        }
+
         fun positionSec(): Double {
             val player = mp ?: return 0.0
             return try { player.currentPosition / 1000.0 } catch (e: Exception) { 0.0 }

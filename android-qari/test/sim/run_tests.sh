@@ -15,7 +15,7 @@ mkdir -p "$OUT"
   "$ROOT"/src/ir/hamyareqari/dsp/*.kt \
   "$ROOT"/src/ir/hamyareqari/app/ChartView.kt \
   "$ROOT"/src/ir/hamyareqari/app/VideoMaker.kt \
-  "$DIR"/stubs/*.kt "$DIR"/VideoTest.kt "$DIR"/LongTest.kt 2>&1 | grep -v '^warning:' || true
+  "$DIR"/stubs/*.kt "$DIR"/VideoTest.kt "$DIR"/LongTest.kt "$DIR"/ZoomFollowTest.kt 2>&1 | grep -v '^warning:' || true
 
 cd "$DIR"
 echo "── تست کوتاه (چهار پروفایل دستگاه) ──"
@@ -23,6 +23,12 @@ echo "── تست کوتاه (چهار پروفایل دستگاه) ──"
          -Dfont.bold="$DIR/../../assets/fonts/Estedad-Bold.ttf" \
          -Dfont.regular="$DIR/../../assets/fonts/Estedad-Regular.ttf" \
          -cp "$OUT:$STDLIB" VideoTest
+echo
+echo "── تست زوم و دنبال‌کردن پخش ──"
+"$JAVA" -Dstdout.encoding=UTF-8 -Ddemo.wav="$DIR/../../assets/demo.wav" \
+         -Dfont.bold="$DIR/../../assets/fonts/Estedad-Bold.ttf" \
+         -Dfont.regular="$DIR/../../assets/fonts/Estedad-Regular.ttf" \
+         -cp "$OUT:$STDLIB" ZoomFollowTest
 echo
 echo "── تست بلند (کل نمونهٔ ۳۸ ثانیه‌ای) ──"
 "$JAVA" -Dstdout.encoding=UTF-8 -Ddemo.wav="$DIR/../../assets/demo.wav" \
