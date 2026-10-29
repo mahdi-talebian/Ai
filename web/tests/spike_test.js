@@ -129,10 +129,22 @@ function draw(strategy) {
 }
 const rawPairs = draw('raw');
 const cleanPairs = draw('clean');
-check('بدون پاک‌سازی، رسم «برو و برگردِ عمودی» می‌سازد (بازتولید مشکل)',
-  rawPairs >= 5, rawPairs + ' جفت پرش');
-check('با پاک‌سازی، هیچ برو-و-برگشتی روی نمودار نمی‌ماند', cleanPairs === 0,
-  cleanPairs + ' (قبلاً ' + rawPairs + ')');
+/* ۱) لایهٔ رسم به‌تنهایی: پرشِ ناممکن (بیش از ۴ نیم‌پرده در زیر ۵۰ms) هرگز
+      به‌صورت پاره‌خط کشیده نمی‌شود — حتی اگر دادهٔ ورودی نظافت‌نشده باشد. */
+check('گاردِ رسم حتی با دادهٔ نظافت‌نشده هم خطِ عمودیِ بلند نمی‌کشد',
+  rawPairs === 0, rawPairs + ' جفت پرش');
+check('با پاک‌سازی هم هیچ برو-و-برگشتی روی نمودار نمی‌ماند', cleanPairs === 0,
+  cleanPairs + ' جفت');
+/* ۲) بازتولیدِ مشکل در سطحِ «داده»: دادهٔ خام همان گشت‌های کاذب را دارد */
+{
+  let rawBad = 0;
+  for (let i = 0; i < mids.length; i++) {
+    const expect = 57 + 4 * Math.floor(times[i] / 2.5);
+    if (Math.abs(mids[i] - expect) > 5) rawBad++;
+  }
+  check('دادهٔ خام همان گشت‌های کاذب را دارد (مشکل واقعی است)', rawBad > 20,
+    rawBad + ' فریمِ پرت در دادهٔ خام');
+}
 
 /* همان معیار روی دادهٔ آمادهٔ رسم: انحراف از سطحِ محلی */
 {
@@ -198,6 +210,39 @@ check('با پاک‌سازی، هیچ برو-و-برگشتی روی نمودا�
   check('spec رسم، نسخهٔ پاک‌شدهٔ ارتفاع را در اختیار همهٔ خروجی‌ها می‌گذارد',
     !!L.mids && L.mids.length === mids.length, (L.mids ? L.mids.length : 0) + ' نمونه');
   check('همهٔ نقاطِ رسم داخل محدودهٔ منطقی‌اند (بدون NaN)', out === 0);
+}
+
+/* ── ۴٫۵) خطای اکتاوِ «چند دهمِ ثانیه‌ای» (همان چیزی که در فایل واقعی بود) ──
+   الگو: نُتِ پایدار ۵۵ → ۰٫۳s قفل روی ۶۷ (هارمونیکِ دوم) → برگشت به ۵۵.
+   میانهٔ محلی این را نمی‌بیند؛ باید به اکتاو برگردانده یا حذف شود. */
+{
+  const t3 = [], m3 = [];
+  for (let t = 0; t < 6; t += 0.02) {
+    let m = 55;
+    if (t >= 2.0 && t < 2.4) m = 67;          /* +12 نیم‌پرده */
+    if (t >= 4.0 && t < 4.25) m = 43.5;       /* −11.5 نیم‌پرده */
+    t3.push(t); m3.push(m);
+  }
+  const c3 = S.cleanMids(t3, m3);
+  let worst = 0;
+  for (let i = 0; i < c3.length; i++) {
+    if (c3[i] == null) continue;
+    worst = Math.max(worst, Math.abs(c3[i] - 55));
+  }
+  check('قفلِ اکتاویِ ۰٫۳ ثانیه‌ای به اکتاوِ درست برگردانده می‌شود',
+    worst <= 1.2, 'بیشترین فاصله از سطحِ واقعی=' + worst.toFixed(2) + ' نیم‌پرده');
+  const spec3 = {
+    W: 1280, H: 720, dpr: 1, times: t3, mids: m3, notes: [], range: {},
+    duration: 6, t: 6, view: { t0: 0, t1: 6 }, tightness: 1
+  };
+  const L3 = S.prepare(spec3);
+  let maxJump = 0;
+  for (let i = 1; i < L3.mids.length; i++) {
+    if (L3.mids[i] == null || L3.mids[i - 1] == null) continue;
+    maxJump = Math.max(maxJump, Math.abs(L3.mids[i] - L3.mids[i - 1]));
+  }
+  check('پرشِ فریم‌به‌فریمِ دادهٔ رسم کوچک می‌ماند', maxJump < 3,
+    'بیشترین پرش=' + maxJump.toFixed(2) + ' نیم‌پرده');
 }
 
 /* ── ۵) کارایی: رسم ۶۰fps نباید هزینهٔ پاک‌سازی را هر فریم بدهد ───────── */

@@ -469,6 +469,12 @@
     return this.xOfTimeIn(t, { t0: 0, t1: this.duration });
   };
 
+  /* نسخهٔ پاک‌شدهٔ نت‌ها (بدون نقطه‌های پرتِ اکتاوی) — برای شمارش و جدول */
+  TraceRenderer.prototype.cleanNoteList = function () {
+    var mids = this.midi;
+    return LocalTraceStyle.cleanNotes(this.notes, this.times, mids);
+  };
+
   TraceRenderer.prototype.currentMidi = function (t) {
     return LocalTraceStyle.currentMidi({
       times: this.times, mids: this.midi

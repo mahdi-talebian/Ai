@@ -251,6 +251,7 @@
   function cleanMids(times, mids) {
     var n = mids.length;
     if (!n) return mids;
+    var orig = mids;                     /* داوریِ پاس دوم روی دادهٔ خام */
     var level = rollingMedian(mids, SPikeHalfWin);
     var out = new Array(n);
     var i, j;
@@ -292,7 +293,197 @@
       }
       i = k > i ? k : i + 1;
     }
+
+    /* ── پاس دوم: اصلاحِ «خطای اکتاو» در گشت‌های کوتاه ─────────────────────
+       مشکلِ واقعیِ فایلِ خواننده همین بود: گاهی ۰٫۲–۰٫۵ ثانیه تخمین روی
+       هارمونیکِ دوم قفل می‌کند و منحنی یک‌دفعه ۱۲ نیم‌پرده بالا می‌رود و
+       برمی‌گردد. میانهٔ محلی این حالت را نمی‌بیند (چون خودش هم بالا رفته)،
+       پس مرجع را از «گشت‌های بلندِ دو طرف» می‌گیریم: اگر گشتِ کوتاه از
+       سطحِ قبل و بعد (که با هم هم‌سطح‌اند) بیش از ۸ نیم‌پرده فاصله داشته
+       باشد، به نزدیک‌ترین اکتاو برگردانده می‌شود؛ اگر برنگشت، حذف می‌شود. */
+    var runs = [], ri = 0;
+    while (ri < n) {
+      if (out[ri] == null || !isFinite(out[ri])) { ri++; continue; }
+      var j0 = ri;
+      while (ri < n && out[ri] != null && isFinite(out[ri])) ri++;
+      var vals2 = [];
+      for (j = j0; j < ri; j++) {
+        if (orig[j] != null && isFinite(orig[j])) vals2.push(orig[j]);
+      }
+      if (!vals2.length) { for (j = j0; j < ri; j++) vals2.push(out[j]); }
+      vals2.sort(function (a, b) { return a - b; });
+      runs.push({ i0: j0, i1: ri - 1, med: vals2[vals2.length >> 1] });
+    }
+    if (runs.length >= 3) {
+      var step = 1 / 30;
+      if (times && times.length > 1) {
+        step = (times[times.length - 1] - times[0]) / Math.max(1, times.length - 1);
+        if (!(step > 0)) step = 1 / 30;
+      }
+      var fOf = function (r) { return times ? times[r.i0] : r.i0 * step; };
+      var lOf = function (r) { return times ? times[r.i1] : r.i1 * step; };
+      var dur = function (r) { return lOf(r) - fOf(r); };
+      for (var a2 = 0; a2 < runs.length; a2++) {
+        var r = runs[a2];
+        if (dur(r) > 0.45) continue;                 /* نتِ کشیده = واقعی */
+        var pre = null, post = null;
+        for (var b2 = a2 - 1; b2 >= 0; b2--) {
+          if (dur(runs[b2]) >= 0.25) { if (fOf(r) - lOf(runs[b2]) <= 3) pre = runs[b2]; break; }
+        }
+        for (b2 = a2 + 1; b2 < runs.length; b2++) {
+          if (dur(runs[b2]) >= 0.25) { if (fOf(runs[b2]) - lOf(r) <= 3) post = runs[b2]; break; }
+        }
+        var ref = null, dev = 0, kOct = 0, shifted = 0;
+        if (pre && post && Math.abs(pre.med - post.med) <= 2) {
+          ref = (pre.med + post.med) / 2;
+          dev = r.med - ref;
+          kOct = Math.round(dev / 12);
+          shifted = r.med - 12 * kOct;
+          if (Math.abs(dev) >= 8 && kOct !== 0 && Math.abs(shifted - ref) <= 3) {
+            for (j = r.i0; j <= r.i1; j++) {        /* برگشت به اکتاو */
+              var rv = (orig[j] != null && isFinite(orig[j])) ? orig[j] : out[j];
+              out[j] = rv - 12 * kOct;
+            }
+            continue;
+          }
+        }
+        /* مرجعِ پشتیبان: میانهٔ وزنیِ گشت‌های ±۲٫۵ ثانیه. گشتِ کوتاهی که
+           بیش از ۶ نیم‌پرده از آن دور بماند، پرت است (نه نُتِ واقعی). */
+        var pool = [], tc = (fOf(r) + lOf(r)) / 2;
+        for (b2 = 0; b2 < runs.length; b2++) {
+          if (b2 === a2) continue;
+          var o2 = runs[b2];
+          var oc = (fOf(o2) + lOf(o2)) / 2;
+          if (Math.abs(oc - tc) > 2.5) continue;
+          var reps = Math.min(20, o2.i1 - o2.i0 + 1);
+          for (var w = 0; w < reps; w++) pool.push(o2.med);
+        }
+        if (pool.length < 6) continue;
+        pool.sort(function (x, y) { return x - y; });
+        var ref2 = pool[pool.length >> 1];
+        if (Math.abs(r.med - ref2) >= 4.5) {
+          for (j = r.i0; j <= r.i1; j++) out[j] = null;        /* حذفِ پرت */
+        }
+      }
+    }
+    /* ── پاس چهارم: محدودیتِ سرعتِ تغییرِ گام ─────────────────────────────
+       صدای انسان نمی‌تواند بیش از ~۶۰ نیم‌پرده در ثانیه تغییر کند؛ هر چیزی
+       تندتر از این، پرشِ تخمین است و به‌صورت خطِ عمودی دیده می‌شود. مقدار را
+       تا سقفِ مجاز به سمتِ مقدارِ قبلی می‌کشیم (بدون حذفِ داده). */
+    var MAX_RATE = 150;            /* نیم‌پرده در ثانیه (سخاوتمندانه) */
+    var prevI = -1;
+    for (i = 0; i < n; i++) {
+      if (out[i] == null || !isFinite(out[i])) continue;
+      if (prevI >= 0) {
+        var dt = times ? (times[i] - times[prevI]) : (i - prevI) / 30;
+        if (dt >= 0.01 && dt < 0.5) {
+          var capRate = MAX_RATE * dt;
+          var d = out[i] - out[prevI];
+          if (Math.abs(d) > capRate) out[i] = out[prevI] + (d > 0 ? capRate : -capRate);
+        }
+      }
+      prevI = i;
+    }
+
+    /* ── پاس سوم: «تیغِ» تک‌فریمی ─────────────────────────────────────────
+       اگر همسایهٔ چپ و راستِ نزدیک (زیر ۱۲۰ms) هم‌سطح باشند و فریم بیش از
+       ۴ نیم‌پرده از آن‌ها فاصله داشته باشد، یک تیغِ عمودی است: با میانگینِ
+       دو همسایه جای‌گزین می‌شود. */
+    for (i = 0; i < n; i++) {
+      if (out[i] == null || !isFinite(out[i])) continue;
+      var lp = -1, rp = -1;
+      for (j = i - 1; j >= 0 && j >= i - 6; j--) {
+        if (out[j] != null && isFinite(out[j])) { lp = j; break; }
+      }
+      for (j = i + 1; j < n && j <= i + 6; j++) {
+        if (out[j] != null && isFinite(out[j])) { rp = j; break; }
+      }
+      if (lp < 0 || rp < 0) continue;
+      if (times) {
+        if (times[i] - times[lp] > 0.12 || times[rp] - times[i] > 0.12) continue;
+      }
+      var lm = out[lp], rm = out[rp];
+      if (Math.abs(lm - rm) > 2) continue;
+      var mn = (lm + rm) / 2;
+      if (Math.abs(out[i] - mn) > 4) out[i] = mn;
+    }
     return out;
+  }
+
+  /* ── حذف نت‌های پرت (اکتاو/هارمونیک) ────────────────────────────────────
+     هر نُتِ تشخیص‌داده‌شده با «سطحِ منحنی» در همان لحظه مقایسه می‌شود؛ اگر
+     بیش از ۵ نیم‌پرده فاصله داشته باشد و از ۰٫۶ ثانیه کوتاه‌تر باشد، پرت است
+     (قفلِ تخمین روی هارمونیک دوم/سوم). این نت‌ها هم نقطه‌های پرتِ روی نمودار
+     می‌ساختند و هم در شمارش/جدولِ نت‌ها می‌آمدند. */
+  var NOTE_OUTLIER_SEMI = 5.0;
+  var NOTE_OUTLIER_MAX_SEC = 0.6;
+
+  function cleanNotes(notes, times, mids) {
+    var list = notes || [];
+    if (!list.length || !times || !mids || !mids.length) return list;
+    /* مرجع محلی: میانهٔ منحنیِ پاک‌شده در بازهٔ خودِ نت (±۰٫۳۵ ثانیه).
+       اگر ناحیه بی‌صدا باشد، پنجره تا ±۱٫۲ ثانیه باز می‌شود. */
+    function levelFor(start, dur) {
+      var win = 0.35, vals = [];
+      for (var pass = 0; pass < 2; pass++) {
+        vals = [];
+        var a = start - win, b = start + Math.max(dur, 0.06) + win;
+        for (var i = 0; i < times.length; i++) {
+          var t = times[i];
+          if (t < a) continue;
+          if (t > b) break;
+          var v = mids[i];
+          if (v != null && isFinite(v)) vals.push(v);
+        }
+        if (vals.length >= 3) break;
+        win = 1.2;
+      }
+      if (vals.length < 3) return null;
+      vals.sort(function (x, y) { return x - y; });
+      return vals[vals.length >> 1];
+    }
+    var kept = [], folded = 0, removed = 0;
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i];
+      if (!n || !(n.f0_hz > 0)) continue;
+      var m = midiOf(n.f0_hz);
+      var start = n.start || 0;
+      var dur = n.duration || 0;
+      if (m == null || dur > NOTE_OUTLIER_MAX_SEC) { kept.push(n); continue; }
+      var lvl = levelFor(start, dur);
+      if (lvl == null) {
+        /* ناحیهٔ بی‌صدا: مرجعِ آخر = میانهٔ گامِ نت‌های پایدارِ همسایه */
+        var nb = [];
+        for (var k2 = 0; k2 < list.length; k2++) {
+          var o3 = list[k2];
+          if (o3 === n || !(o3.f0_hz > 0)) continue;
+          if (Math.abs((o3.start || 0) - start) > 2.0) continue;
+          nb.push(midiOf(o3.f0_hz));
+        }
+        if (nb.length < 3) { kept.push(n); continue; }
+        nb.sort(function (x, y) { return x - y; });
+        lvl = nb[nb.length >> 1];
+      }
+      var dev = m - lvl;
+      if (Math.abs(dev) <= NOTE_OUTLIER_SEMI) { kept.push(n); continue; }
+      /* خطای اکتاو: اگر ÷۲ (یا ÷۳) نت را دقیقاً روی سطح محلی بنشاند،
+         گام تصحیح می‌شود؛ وگرنه نتِ پرت حذف می‌شود. */
+      var k = Math.round(dev / 12);
+      if (k !== 0 && Math.abs(dev - 12 * k) <= 3) {
+        var f = n.f0_hz / Math.pow(2, k);
+        n = Object.assign({}, n, {
+          f0_hz: f, f0_hz_folded: n.f0_hz,
+          f0_hz_coarse: (n.f0_hz_coarse > 0 ? n.f0_hz_coarse / Math.pow(2, k) : n.f0_hz_coarse)
+        });
+        folded++;
+        kept.push(n);
+        continue;
+      }
+      removed++;
+    }
+    if (folded) kept.foldedOutliers = folded;
+    if (removed) kept.removedOutliers = removed;
+    return kept;
   }
 
   /* پاک‌سازی گران است (یک‌بار برای هر فایل کافی است)؛ نتیجه را بر اساس
@@ -309,39 +500,44 @@
 
   /* ── ساخت نقطه‌های منحنی در فضای پیکسل (نسبت به بازهٔ دید) ───────────── */
   function buildSegments(times, mids, view, xOf, yOf) {
-    var runs = [], cur = [], lastT = null, i;
+    var runs = [], cur = [], lastT = null, i, curHard = false;
     for (i = 0; i < times.length; i++) {
       var t = times[i], m = mids[i];
       var inside = (t >= view.t0 - 1e-9) && (t <= view.t1 + 1e-9);
       if (m == null || !isFinite(m) || !inside) {
-        if (cur.length > 1) runs.push(cur);
-        cur = []; lastT = null; continue;
+        if (cur.length > 1) { cur.hardStart = curHard; runs.push(cur); }
+        cur = []; curHard = false; lastT = null; continue;
       }
       if (lastT != null && t - lastT > GAP_BRIDGE_SEC) {
-        if (cur.length > 1) runs.push(cur);
-        cur = [];
+        if (cur.length > 1) { cur.hardStart = curHard; runs.push(cur); }
+        cur = []; curHard = false;            /* شکافِ بی‌صدا: پل‌زدن آزاد است */
       } else if (cur.length) {
         /* پرشِ غیرممکن: تغییر > ۷ نیم‌پرده در کمتر از ۲۵ms در صدای انسان
            رخ نمی‌دهد؛ به‌جای خطِ عمودیِ بلند، سگمنت را قطع می‌کنیم. */
         var prev = cur[cur.length - 1];
-        if (Math.abs(m - (prev.m == null ? m : prev.m)) > 7 && (t - lastT) < 0.025) {
-          if (cur.length > 1) runs.push(cur);
-          cur = [];
+        if (Math.abs(m - (prev.m == null ? m : prev.m)) > 4 && (t - lastT) < 0.05) {
+          if (cur.length > 1) { cur.hardStart = curHard; runs.push(cur); }
+          cur = []; curHard = true;
         }
       }
       cur.push({ x: xOf(t), y: yOf(m), t: t, m: m });
       lastT = t;
     }
-    if (cur.length > 1) runs.push(cur);
+    if (cur.length > 1) { cur.hardStart = curHard; runs.push(cur); }
 
     /* پر کردن شکاف‌های کوتاه با درون‌یابی خطی (نمای پیوسته) */
     var segs = [];
     for (i = 0; i < runs.length; i++) {
       var run = runs[i];
       if (!segs.length) { segs.push(run.slice()); continue; }
+      if (run.hardStart) { segs.push(run.slice()); continue; }
       var prev = segs[segs.length - 1];
       var gap = run[0].t - prev[prev.length - 1].t;
-      if (gap <= GAP_BRIDGE_SEC) {
+      /* اگر دو سرِ شکاف بیش از ۷ نیم‌پرده فاصله داشته باشند، پل‌زدن یک
+         خطِ عمودیِ بلند می‌سازد؛ همان «موجِ سینوسیِ عمودی» که نباید دیده شود. */
+      var prevM = prev[prev.length - 1].m, nextM = run[0].m;
+      var leap = (prevM != null && nextM != null) ? Math.abs(nextM - prevM) : 0;
+      if (gap <= GAP_BRIDGE_SEC && leap <= 4) {
         var a = prev[prev.length - 1], b = run[0];
         var n = Math.max(2, Math.min(24, Math.round(gap * 40) + 2));
         for (var j = 1; j < n; j++) {
@@ -660,8 +856,11 @@
     var view = spec.view || { t0: 0, t1: Math.max(spec.duration || 1, 0.001) };
     /* برای رسم، پرش‌های کاذب پاک می‌شوند (دادهٔ گزارش دست‌نخورده می‌ماند) */
     var drawn = cleanedFor(spec.mids || []);
+    /* نت‌ها هم پاک می‌شوند: نقطه/نوارِ پرت روی نمودار کشیده نشود */
+    var drawnNotes = cleanNotes(spec.notes, spec.times, drawn);
+    spec = Object.assign({}, spec, { notes: drawnNotes });
     L.mids = drawn;
-    var lim = pitchLimits(drawn, view, spec.times, spec.tightness, spec.t, spec.notes);
+    var lim = pitchLimits(drawn, view, spec.times, spec.tightness, spec.t, drawnNotes);
     L.zoomEff = lim.zoomEff || 1;
     L.loLim = lim.loLim;
     L.hiLim = lim.hiLim;
@@ -673,13 +872,15 @@
     L.xOf = function (tt) { return L.ML + ((tt - view.t0) / spanT) * usableW; };
     L.yOf = function (mm) { return L.MT + (1 - (mm - L.loLim) / span) * usableH; };
     L.segs = buildSegments(spec.times, drawn, view, L.xOf, L.yOf);
+    L.spec = spec;          /* spec با نت‌های پاک‌شده؛ لایه‌های رسم از این استفاده می‌کنند */
     return L;
   }
 
   function draw(g, spec) {
     var L = prepare(spec);
-    drawBase(g, spec, L, L.segs);
-    drawDynamic(g, spec, L, L.segs);
+    var sp = L.spec || spec;     /* نت‌های پاک‌شده، نه فهرست خام */
+    drawBase(g, sp, L, L.segs);
+    drawDynamic(g, sp, L, L.segs);
     return L;
   }
 
@@ -697,6 +898,7 @@
     BAR_MIN_SEC: BAR_MIN_SEC,
     cleanMids: cleanMids,
     cleanedFor: cleanedFor,
+    cleanNotes: cleanNotes,
     setClean: function (on) { setClean(on); CLEAN_CACHE.src = null; CLEAN_CACHE.n = -1; },
     SPIKE_SEMI: SPIKE_SEMI,
     currentMidi: currentMidiOf,
