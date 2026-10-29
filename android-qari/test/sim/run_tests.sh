@@ -14,10 +14,14 @@ mkdir -p "$OUT"
   -no-reflect -jvm-target 1.8 -nowarn -d "$OUT" \
   "$ROOT"/src/ir/hamyareqari/dsp/*.kt \
   "$ROOT"/src/ir/hamyareqari/app/ChartView.kt \
+  "$ROOT"/src/ir/hamyareqari/app/AudioTimeline.kt \
   "$ROOT"/src/ir/hamyareqari/app/VideoMaker.kt \
-  "$DIR"/stubs/*.kt "$DIR"/VideoTest.kt "$DIR"/LongTest.kt "$DIR"/ZoomFollowTest.kt 2>&1 | grep -v '^warning:' || true
+  "$DIR"/stubs/*.kt "$DIR"/VideoTest.kt "$DIR"/LongTest.kt "$DIR"/ZoomFollowTest.kt "$DIR"/AudioTimelineTest.kt 2>&1 | grep -v '^warning:' || true
 
 cd "$DIR"
+echo "── تست waveform و زمان‌بندی پخش ──"
+"$JAVA" -Dstdout.encoding=UTF-8 -cp "$OUT:$STDLIB" AudioTimelineTest
+echo
 echo "── تست کوتاه (چهار پروفایل دستگاه) ──"
 "$JAVA" -Dstdout.encoding=UTF-8 -Ddemo.wav="$DIR/../../assets/demo.wav" \
          -Dfont.bold="$DIR/../../assets/fonts/Estedad-Bold.ttf" \

@@ -42,7 +42,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.1.6"
+        const val VERSION = "1.1.7"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -59,10 +59,15 @@ class MainActivity : Activity() {
 
     // نمای‌ها
     private lateinit var pageHost: FrameLayout
+    private lateinit var welcomePanel: View
     private lateinit var homePanel: View
+    private lateinit var libraryPanel: View
     private lateinit var analysisScreen: View
+    private lateinit var playerScreen: View
+    private lateinit var playerContent: LinearLayout
     private lateinit var settingsPanel: View
     private lateinit var aboutPanel: View
+    private lateinit var librarySelectedLabel: TextView
     private lateinit var navHome: TextView
     private lateinit var navFiles: TextView
     private lateinit var navSettings: TextView
@@ -205,11 +210,17 @@ class MainActivity : Activity() {
         analysisColumn.addView(analysisScroll)
         analysisScreen = analysisColumn
 
+        welcomePanel = buildWelcomePanel()
         homePanel = buildHomePanel()
+        libraryPanel = buildLibraryPanel()
+        playerScreen = buildPlayerScreen()
         settingsPanel = buildSettingsPanel()
         aboutPanel = buildAboutPanel()
+        pageHost.addView(welcomePanel, FrameLayout.LayoutParams(-1, -1))
         pageHost.addView(homePanel, FrameLayout.LayoutParams(-1, -1))
+        pageHost.addView(libraryPanel, FrameLayout.LayoutParams(-1, -1))
         pageHost.addView(analysisScreen, FrameLayout.LayoutParams(-1, -1))
+        pageHost.addView(playerScreen, FrameLayout.LayoutParams(-1, -1))
         pageHost.addView(settingsPanel, FrameLayout.LayoutParams(-1, -1))
         pageHost.addView(aboutPanel, FrameLayout.LayoutParams(-1, -1))
 
@@ -226,6 +237,123 @@ class MainActivity : Activity() {
             insets
         }
         setPage("home")
+        if (!getSharedPreferences("onboarding", MODE_PRIVATE).getBoolean("welcome_seen", false)) {
+            setPage("welcome")
+        }
+    }
+
+    private fun buildWelcomePanel(): View {
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            val p = Theme.dp(this@MainActivity, 24f)
+            setPadding(p, Theme.dp(this@MainActivity, 24f), p, Theme.dp(this@MainActivity, 20f))
+        }
+        col.addView(Theme.space(this, 12f))
+        col.addView(HeroArtView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(this@MainActivity, 260f))
+            contentDescription = "نگارهٔ قرآن روی رحل در قاب محراب"
+        })
+        col.addView(Theme.text(this, "همیار قاری", 30f, Theme.GOLD, true, Gravity.CENTER))
+        col.addView(Theme.space(this, 8f))
+        col.addView(Theme.text(this, "تحلیل و همراهی در مسیر تلاوت", 14f, Theme.TXT, false, Gravity.CENTER))
+        col.addView(Theme.space(this, 26f))
+        val start = Theme.button(this, "شروع", true)
+        start.setOnClickListener {
+            getSharedPreferences("onboarding", MODE_PRIVATE).edit().putBoolean("welcome_seen", true).apply()
+            setPage("home")
+        }
+        col.addView(start, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        col.addView(Theme.space(this, 18f))
+        col.addView(Theme.text(this, "پردازش روی دستگاه شما · حریم خصوصی محفوظ است", 10.5f, Theme.DIM, false, Gravity.CENTER))
+        return col
+    }
+
+    private fun buildLibraryPanel(): View {
+        val scroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            val p = Theme.dp(this@MainActivity, 18f)
+            setPadding(p, Theme.dp(this@MainActivity, 18f), p, Theme.dp(this@MainActivity, 22f))
+        }
+        col.addView(pageHeader("فایل‌های صوتی"))
+        col.addView(Theme.space(this, 16f))
+        val browse = Theme.card(this, 16f).apply {
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { pickFile() }
+        }
+        browse.addView(Theme.text(this, "انتخاب فایل از دستگاه", 15f, Theme.TXT, true))
+        browse.addView(Theme.space(this, 5f))
+        browse.addView(Theme.text(this, "فایل صوتی یا ویدیو را با انتخاب‌گر امن اندروید باز کنید.", 11.5f, Theme.DIM))
+        browse.addView(Theme.space(this, 12f))
+        val open = Theme.button(this, "انتخاب فایل", true)
+        open.setOnClickListener { pickFile() }
+        browse.addView(open)
+        col.addView(browse)
+        col.addView(Theme.space(this, 16f))
+        col.addView(Theme.text(this, "فایل انتخاب‌شده", 12f, Theme.GOLD, true))
+        col.addView(Theme.space(this, 8f))
+        val selected = Theme.card(this, 14f)
+        selected.orientation = LinearLayout.HORIZONTAL
+        selected.gravity = Gravity.CENTER_VERTICAL
+        selected.addView(Theme.text(this, "♫", 25f, Theme.GOLD, true, Gravity.CENTER).apply {
+            layoutParams = LinearLayout.LayoutParams(Theme.dp(this@MainActivity, 44f), Theme.dp(this@MainActivity, 44f))
+        })
+        val fileText = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        librarySelectedLabel = Theme.text(this, "هنوز فایلی انتخاب نشده", 13f, Theme.DIM, true)
+        fileText.addView(librarySelectedLabel)
+        fileText.addView(Theme.space(this, 4f))
+        fileText.addView(Theme.text(this, "فقط فایل واقعی انتخاب‌شده در این نشست نمایش داده می‌شود.", 10.5f, Theme.DIM))
+        selected.addView(Theme.space(this, 10f))
+        selected.addView(fileText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val openSelected = Theme.text(this, "‹", 24f, Theme.GOLD, false, Gravity.CENTER).apply {
+            setOnClickListener { if (decoded != null) setPage("analysis") else pickFile() }
+        }
+        selected.addView(openSelected)
+        col.addView(selected)
+        col.addView(Theme.space(this, 16f))
+        val sample = Theme.card(this, 14f)
+        sample.addView(Theme.text(this, "نمونهٔ آموزشی داخل برنامه", 13f, Theme.TXT, true))
+        sample.addView(Theme.space(this, 4f))
+        sample.addView(Theme.text(this, "نمونهٔ بسته‌بندی‌شده برای آشنایی با تحلیل؛ فایل شخصی شما نیست.", 10.5f, Theme.DIM))
+        sample.addView(Theme.space(this, 10f))
+        val demo = Theme.button(this, "اجرای نمونهٔ آموزشی", false)
+        demo.setOnClickListener { loadDemo(demo) }
+        sample.addView(demo)
+        col.addView(sample)
+        scroll.addView(col)
+        return scroll
+    }
+
+    private fun buildPlayerScreen(): View {
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        val scroller = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            val p = Theme.dp(this@MainActivity, 16f)
+            setPadding(p, Theme.dp(this@MainActivity, 10f), p, Theme.dp(this@MainActivity, 20f))
+        }
+        content.addView(pageHeader("پخش و نمودار F0", "analysis"))
+        content.addView(Theme.space(this, 8f))
+        content.addView(HeroArtView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(this@MainActivity, 150f))
+            contentDescription = "نگارهٔ محراب و رحل قرآن"
+        })
+        content.addView(Theme.space(this, 6f))
+        content.addView(Theme.text(this, "موج صوت از دامنهٔ فایل · ردِّ طلایی از تحلیل واقعی F0", 11f, Theme.DIM))
+        content.addView(Theme.space(this, 10f))
+        playerContent = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(playerContent)
+        scroller.addView(content)
+        column.addView(scroller)
+        return column
     }
 
     private fun buildHomePanel(): View {
@@ -260,11 +388,10 @@ class MainActivity : Activity() {
 
         col.addView(homeActionCard("تحلیل فایل صوتی", "انتخاب فایل و مشاهدهٔ نمودار و نتایج", "♫") {
             setPage("files")
-            showTab(0)
         })
         col.addView(Theme.space(this, 12f))
         col.addView(homeActionCard("اجرای زنده", "تحلیل زیر و بمی صدا با میکروفون", "♩") {
-            setPage("files")
+            setPage("analysis")
             showTab(1)
         })
         col.addView(Theme.space(this, 12f))
@@ -324,7 +451,7 @@ class MainActivity : Activity() {
         engine.addView(Theme.text(this, "موتور موجود برنامه به همراه مسیر سازگاری قبلی حفظ شده است.", 11.5f, Theme.DIM))
         engine.addView(Theme.space(this, 10f))
         val openAnalysis = Theme.button(this, "رفتن به تحلیل فایل", false, true)
-        openAnalysis.setOnClickListener { setPage("files"); showTab(0) }
+        openAnalysis.setOnClickListener { setPage("files") }
         engine.addView(openAnalysis)
         col.addView(engine)
         col.addView(Theme.space(this, 16f))
@@ -365,7 +492,8 @@ class MainActivity : Activity() {
         col.addView(Theme.space(this, 8f))
         col.addView(Theme.text(this, "همیار قاری", 28f, Theme.GOLD, true, Gravity.CENTER))
         col.addView(Theme.space(this, 6f))
-        col.addView(Theme.text(this, "نسخهٔ $VERSION", 12f, Theme.DIM, false, Gravity.CENTER))
+        val installedVersion = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "—" } catch (_: Exception) { "—" }
+        col.addView(Theme.text(this, "نسخهٔ $installedVersion", 12f, Theme.DIM, false, Gravity.CENTER))
         col.addView(Theme.space(this, 28f))
         col.addView(Theme.text(this, "تحلیل گستره و زیر و بمی تلاوت قرآن کریم", 14f, Theme.TXT, true, Gravity.CENTER))
         col.addView(Theme.space(this, 10f))
@@ -384,13 +512,13 @@ class MainActivity : Activity() {
         return scroll
     }
 
-    private fun pageHeader(title: String): View {
+    private fun pageHeader(title: String, backTarget: String = "home"): View {
         val row = Theme.row(this)
         val back = Theme.text(this, "‹", 28f, Theme.TXT, false, Gravity.CENTER).apply {
             background = Theme.rounded(0x0DFFFFFF, Theme.dpF(this@MainActivity, 12f), 1, Theme.LINE)
             minWidth = Theme.dp(this@MainActivity, 42f)
             minHeight = Theme.dp(this@MainActivity, 42f)
-            setOnClickListener { setPage("home") }
+            setOnClickListener { setPage(backTarget) }
         }
         row.addView(back)
         row.addView(Theme.space(this, 12f))
@@ -425,14 +553,20 @@ class MainActivity : Activity() {
 
     private fun setPage(page: String) {
         currentPage = page
+        welcomePanel.visibility = if (page == "welcome") View.VISIBLE else View.GONE
         homePanel.visibility = if (page == "home") View.VISIBLE else View.GONE
-        analysisScreen.visibility = if (page == "files") View.VISIBLE else View.GONE
+        libraryPanel.visibility = if (page == "files") View.VISIBLE else View.GONE
+        analysisScreen.visibility = if (page == "analysis") View.VISIBLE else View.GONE
+        playerScreen.visibility = if (page == "player") View.VISIBLE else View.GONE
         settingsPanel.visibility = if (page == "settings") View.VISIBLE else View.GONE
         aboutPanel.visibility = if (page == "about") View.VISIBLE else View.GONE
-        val active = Theme.GOLD
-        navHome.setTextColor(if (page == "home") active else Theme.DIM)
-        navFiles.setTextColor(if (page == "files") active else Theme.DIM)
-        navSettings.setTextColor(if (page == "settings" || page == "about") active else Theme.DIM)
+        if (::navHome.isInitialized) {
+            root.getChildAt(1)?.visibility = if (page == "welcome") View.GONE else View.VISIBLE
+            val active = Theme.GOLD
+            navHome.setTextColor(if (page == "home") active else Theme.DIM)
+            navFiles.setTextColor(if (page == "files" || page == "analysis" || page == "player") active else Theme.DIM)
+            navSettings.setTextColor(if (page == "settings" || page == "about") active else Theme.DIM)
+        }
     }
 
     private fun tabButton(label: String, active: Boolean): TextView {
@@ -609,7 +743,14 @@ class MainActivity : Activity() {
         if (requestCode == REQ_PICK && resultCode == Activity.RESULT_OK) {
             val uri = data?.data ?: return
             pickUri = uri
+            decoded = null
+            report = null
+            playerContent.removeAllViews()
             sourceName = displayName(uri)
+            librarySelectedLabel.text = sourceName
+            librarySelectedLabel.setTextColor(Theme.TXT)
+            setPage("analysis")
+            showTab(0)
             fileLabel.text = sourceName
             fileLabel.setTextColor(Theme.TXT)
             analyzeBtn.isEnabled = true
@@ -628,6 +769,11 @@ class MainActivity : Activity() {
         busy = true
         btn.isEnabled = false
         sourceName = "نمونهٔ آزمایشی"
+        decoded = null
+        report = null
+        playerContent.removeAllViews()
+        librarySelectedLabel.text = "نمونهٔ آموزشی · داخل برنامه"
+        librarySelectedLabel.setTextColor(Theme.GOLD)
         pickUri = null
         playerToken++
         player?.release(); player = null
@@ -643,6 +789,8 @@ class MainActivity : Activity() {
                     busy = false
                     btn.isEnabled = true
                     hideProgress()
+                    setPage("analysis")
+                    showTab(0)
                     fileLabel.text = "نمونهٔ آزمایشی · ${PitchMath.faFixed(dec.durationSec, 1)} ثانیه"
                     fileLabel.setTextColor(Theme.TXT)
                     startAnalysis()
@@ -849,6 +997,10 @@ class MainActivity : Activity() {
         chips.addView(Theme.chip(this, "${r.noteCount} نت", Theme.TEAL))
         hero.addView(chips)
         resultBox.addView(hero)
+        resultBox.addView(Theme.space(this, 10f))
+        val openPlayer = Theme.button(this, "پخش فایل و مشاهدهٔ نمودار F0", true)
+        openPlayer.setOnClickListener { setPage("player") }
+        resultBox.addView(openPlayer)
         resultBox.addView(Theme.space(this, 12f))
 
         // کارت آمار
@@ -1028,12 +1180,15 @@ class MainActivity : Activity() {
         }
 
         chartRef = chart
-        resultBox.addView(chartCard)
-        resultBox.addView(Theme.space(this, 12f))
+        playerContent.removeAllViews()
+        playerContent.addView(Theme.text(this, sourceName, 14f, Theme.TXT, true))
+        playerContent.addView(Theme.space(this, 10f))
+        playerContent.addView(chartCard)
+        playerContent.addView(Theme.space(this, 12f))
 
         // ══ کارت ویدیوی ردِّ صدا ══
-        resultBox.addView(buildVideoCard(r, chart))
-        resultBox.addView(Theme.space(this, 12f))
+        playerContent.addView(buildVideoCard(r, chart))
+        playerContent.addView(Theme.space(this, 12f))
 
         // لمس نمودار = پخش از همان لحظه
         chart.onSeek = { sec ->

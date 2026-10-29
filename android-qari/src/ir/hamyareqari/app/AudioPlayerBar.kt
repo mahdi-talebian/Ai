@@ -161,7 +161,7 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
             override fun onCommit(frac: Double) {
                 dragging = false
                 playBtn.ghost = -1.0
-                onSeek?.invoke(frac * totalSec)
+                onSeek?.invoke(AudioTimeline.secondsAtFraction(frac, totalSec))
             }
         }
         setSpeed(1f)
@@ -177,24 +177,8 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
 
     /** خلاصهٔ موج صدا؛ نمونه‌برداری محدود برای جلوگیری از مکث روی فایل‌های بلند */
     fun setWaveform(pcm: ShortArray?) {
-        if (pcm == null || pcm.isEmpty()) {
-            bar.setWaveform(FloatArray(0))
-            return
-        }
-        val bins = 104
-        val values = FloatArray(bins)
-        for (i in 0 until bins) {
-            val from = (i.toLong() * pcm.size / bins).toInt()
-            val to = (((i + 1).toLong() * pcm.size / bins).toInt()).coerceAtLeast(from + 1).coerceAtMost(pcm.size)
-            var peak = 0
-            val samples = 28
-            for (j in 0 until samples) {
-                val index = (from.toLong() + (to - from - 1L) * j / (samples - 1)).toInt().coerceIn(0, pcm.lastIndex)
-                peak = max(peak, kotlin.math.abs(pcm[index].toInt()))
-            }
-            values[i] = (peak / 32768f).coerceIn(0.06f, 1f)
-        }
-        bar.setWaveform(values)
+        // Cached, deterministic amplitude envelope; the F0 contour is supplied separately.
+        bar.setWaveform(AudioTimeline.waveform(pcm))
     }
 
     /** هر تیکِ پخش (≈۶۰ بار در ثانیه) */
@@ -204,7 +188,7 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
 
     fun setPosition(sec: Double) {
         if (dragging) return
-        val frac = (sec / totalSec).coerceIn(0.0, 1.0)
+        val frac = AudioTimeline.fractionAtSeconds(sec, totalSec)
         bar.setProgress(frac)
         playBtn.progress = frac
         timeNow.text = fmt(sec)
@@ -375,14 +359,14 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
             if (sp.duration <= 0.0 || width <= 0) return false
             when (event.action) {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                    val sec = (event.x.coerceIn(0f, width.toFloat()) / width) * sp.duration
+                    val sec = AudioTimeline.secondsAtFraction(event.x.coerceIn(0f, width.toFloat()).toDouble() / width, sp.duration)
                     playhead = sec
                     invalidate()
                     if (event.action == MotionEvent.ACTION_MOVE) onSeek?.invoke(sec)
                     return true
                 }
                 MotionEvent.ACTION_UP -> {
-                    val sec = (event.x.coerceIn(0f, width.toFloat()) / width) * sp.duration
+                    val sec = AudioTimeline.secondsAtFraction(event.x.coerceIn(0f, width.toFloat()).toDouble() / width, sp.duration)
                     playhead = sec
                     invalidate()
                     onSeek?.invoke(sec)
