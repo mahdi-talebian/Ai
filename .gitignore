@@ -19,6 +19,7 @@ server/jobs/
 !android-qari/assets/demo.wav
 # خروجی تست‌های شبیه‌سازی
 android-qari/test/sim/build-test/
+android-qari/test/sim/build-bench/
 
 # کش منحنی‌های تحلیل (md5 → npz)
 server/cache/
