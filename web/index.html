@@ -205,6 +205,19 @@
   .micBtn.rec.on{background:linear-gradient(135deg,#ff7b7b,#ff5b5b);color:#1a0c0c;
     box-shadow:0 0 0 8px rgba(255,90,90,.14);animation:pulse 1.4s infinite}
   @keyframes pulse{0%,100%{box-shadow:0 0 0 8px rgba(255,90,90,.14)}50%{box-shadow:0 0 0 13px rgba(255,90,90,.06)}}
+  /* کپسولِ «نُتِ همین لحظه» — کنار پخش‌کننده و کنار ویدیو */
+  .nowRow{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .nowPill{
+    display:inline-flex;align-items:baseline;gap:8px;
+    padding:6px 12px;border-radius:999px;
+    background:rgba(255,222,140,.10);
+    border:1px solid rgba(255,222,140,.32);
+    color:var(--gold2,#ffd479);font-weight:800;
+    direction:rtl;white-space:nowrap;
+  }
+  .nowPill .n{font-size:1.25rem;line-height:1.1}
+  .nowPill .d{font-size:.74rem;font-weight:600;color:#ffe6a6;opacity:.9}
+  .nowPill .h{font-size:.7rem;font-weight:500;color:var(--mut,#9fb0cc);direction:ltr}
   .liveNote{font-size:2.15rem;font-weight:800;color:var(--gold2);direction:ltr;letter-spacing:1px;line-height:1.1}
   .liveSub{color:var(--dim);font-size:.8rem;margin-top:3px;direction:ltr}
   .segmented{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:5px;border-radius:15px;
@@ -220,6 +233,13 @@
   .recDot{width:11px;height:11px;border-radius:50%;background:#ff5b5b;animation:pulseDot 1.1s infinite}
   @keyframes pulseDot{0%,100%{opacity:1}50%{opacity:.25}}
   .recTime{font-variant-numeric:tabular-nums;font-weight:800;color:#ffb3b3;direction:ltr}
+  .takeHead{display:flex;align-items:center;gap:10px;justify-content:space-between}
+  .takeHead h2{margin:0}
+  .danger{background:rgba(255,90,90,.12)!important;border:1px solid rgba(255,90,90,.42)!important;
+    color:#ffb3b3!important;border-radius:11px;font-family:inherit;cursor:pointer}
+  .danger:active{transform:scale(.96)}
+  .sm{padding:7px 11px;font-size:.78rem;min-height:34px}
+  .take button.del{color:#ffb3b3;border-color:rgba(255,90,90,.42);background:rgba(255,90,90,.10)}
   .takeList{display:flex;flex-direction:column;gap:8px;margin-top:10px}
   .take{
     display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:13px;
@@ -265,9 +285,23 @@
     .saveGrid{gap:6px}
     .saveGrid a.btn{font-size:.8rem}
   }
+  #offlineBadge{
+    display:none; align-items:center; gap:6px; margin-top:10px;
+    font-size:.78rem; color:#bfe6c8; background:rgba(46,160,90,.13);
+    border:1px solid rgba(46,160,90,.35); border-radius:999px; padding:6px 12px;
+    width:max-content; max-width:100%;
+  }
   @media (display-mode:standalone){
     .wrap{padding-top:calc(var(--safe-t) + 10px)}
   }
+.zoomBar{display:flex;align-items:center;gap:6px;margin:8px 0 2px;flex-wrap:wrap}
+.zoomBtn{border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e9e6d8;
+  font:inherit;font-size:.78rem;font-variant-numeric:tabular-nums;padding:5px 10px;border-radius:10px;
+  cursor:pointer;line-height:1.3;min-width:44px;text-align:center}
+.zoomBtn:hover{background:rgba(255,255,255,.10)}
+.zoomBtn:active{transform:scale(.96)}
+.zoomBtn[disabled]{opacity:.4;cursor:default}
+.zoomLabel{font-size:.72rem;color:var(--dim);margin-inline-start:auto;direction:rtl}
 </style>
 </head>
 <body>
@@ -275,6 +309,9 @@
   <header>
     <h1>🎚 ردِّ صدا</h1>
     <p>بالاترین و پایین‌ترین نتی که خوانده می‌شود، گسترهٔ صدا، و حرکت نرم صدا روی خطوط نت.</p>
+    <div id="offlineBadge" style="display:none">
+      🔒 ۱۰۰٪ روی همین دستگاه — بدون اینترنت، بدون سرور
+    </div>
   </header>
 
   <nav class="tabbar" role="tablist" aria-label="بخش‌ها">
@@ -359,9 +396,33 @@
           <canvas class="trace" id="traceCanvas" width="1280" height="720"></canvas>
           <div class="badge" id="liveBadge">● در حال پخش</div>
         </div>
+
+        <div class="zoomBar" role="group" aria-label="زوم نمودار">
+          <button class="zoomBtn" id="zoomTimeOut" title="پنجرهٔ زمانی پهن‌تر">⏱ −</button>
+          <button class="zoomBtn" id="zoomTimeIn" title="پنجرهٔ زمانی تنگ‌تر (جزئیات بیشتر)">⏱ +</button>
+          <button class="zoomBtn" id="zoomPitchOut" title="بازتر کردن محور نت">↕ −</button>
+          <button class="zoomBtn" id="zoomPitchIn" title="نزدیک‌تر کردن محور نت">↕ +</button>
+          <button class="zoomBtn" id="zoomResetBtn" title="بازنشانی زوم">↺</button>
+          <span class="zoomLabel" id="zoomLabel">کل اجرا · زوم ارتفاع ×۱</span>
+        </div>
+
         <audio id="audioPlayer" controls preload="metadata" playsinline></audio>
 
+        <!-- نُتِ همین لحظه: کنارِ پخش‌کننده (همان چیزی که داخل نمودار و ویدیو هم هست) -->
+        <div class="nowRow">
+          <span class="nowPill" id="nowNote">
+            <span class="n">—</span><span class="d">نُتِ همین لحظه</span>
+          </span>
+        </div>
+
         <div class="stack">
+          <div class="field" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+            <span style="font-size:.8rem;color:var(--mut)">اندازهٔ ویدیو:</span>
+            <select id="videoQuality" class="zoomBtn" style="padding:8px 10px">
+              <option value="1080p" selected>۱۰۸۰p — عریض‌تر و واضح‌تر</option>
+              <option value="720p">۷۲۰p — سبک‌تر</option>
+            </select>
+          </div>
           <button class="primary block" id="videoBtn">🎬 ساخت ویدیوی ردِّ صدا</button>
         </div>
         <div class="progress" id="vProgWrap">
@@ -371,6 +432,12 @@
         <div class="status" id="videoStatus"></div>
         <div id="videoBox" style="display:none">
           <video id="videoPlayer" controls preload="metadata" playsinline></video>
+          <!-- نُتِ همین لحظه، هم‌گام با ویدیو -->
+          <div class="nowRow">
+            <span class="nowPill" id="nowNoteVideo">
+              <span class="n">—</span><span class="d">نُتِ همین لحظه</span>
+            </span>
+          </div>
         </div>
 
         <h2 style="margin-top:16px">💾 ذخیره روی دستگاه <span style="font-weight:400;font-size:.74rem;color:var(--dim)">(برای استفادهٔ آفلاین)</span></h2>
@@ -382,9 +449,10 @@
         </div>
         <div id="galleryBox" style="display:none;margin-top:10px">
           <button class="primary block" id="saveVideoBtn"><span class="em">📥</span> ذخیرهٔ ویدیو در گالری</button>
+          <button class="primary block" id="saveImageBtn" style="margin-top:8px"><span class="em">🖼</span> ذخیرهٔ تصویر تحلیل در گالری</button>
           <div class="hint" id="galleryHint" style="margin-top:6px;font-size:.73rem">
-            در اندروید پنجرهٔ اشتراک‌گذاری باز می‌شود؛ «ذخیره در گالری/Photos» را بزن.
-            در آیفون از همان پنجره «Save Video» را انتخاب کن تا در برنامهٔ Photos بیاید.
+            در اپ اندروید فایل مستقیم در گالری گوشی (پوشهٔ Movies برای ویدیو و Pictures برای عکس) ذخیره می‌شود.
+            در مرورگر، پنجرهٔ اشتراک‌گذاری باز می‌شود؛ «ذخیره در گالری/Photos» را بزن.
           </div>
         </div>
         <div class="hint" style="margin-top:8px;font-size:.73rem">
@@ -411,17 +479,12 @@
     </div>
   </section>
 
-  <!-- ═══════════════ تب ۲: اجرای زنده ═══════════════ -->
+  <!-- ═══════════════ تب ۲: اجرا با ضبط ═══════════════ -->
   <section id="panelLive" class="panel" role="tabpanel">
     <div class="card">
       <div class="warn" id="micWarn">
         ⚠️ این صفحه داخل iframe باز شده و مرورگرها در این حالت اجازهٔ میکروفون نمی‌دهند.
         <a id="openNewTab" href="#" target="_blank" rel="noopener">↗ باز کردن در تب جدید</a>
-      </div>
-
-      <div class="segmented" role="tablist" aria-label="حالت اجرا">
-        <button id="modeLive" class="active" role="tab">⚡ لحظه‌ای</button>
-        <button id="modeRec" role="tab">⏺ با ضبط</button>
       </div>
 
       <div class="hint" id="modeHint" style="margin-bottom:12px"></div>
@@ -456,37 +519,37 @@
       </div>
     </div>
 
-    <!-- فقط در حالت ضبط -->
-    <div class="card" id="takesCard" style="display:none">
-      <h2>⏺ ضبط‌های این جلسه</h2>
+    <!-- ضبط‌های این نشست -->
+    <div class="card" id="takesCard">
+      <div class="takeHead">
+        <h2>⏺ ضبط‌های این جلسه</h2>
+        <button class="danger sm" id="clearTakes" title="حذف همهٔ ضبط‌های این جلسه">🗑 حذف همه</button>
+      </div>
       <div class="hint" style="margin-bottom:4px">
         هر ضبط: تحلیل کامل (بالاترین/پایین‌ترین نت، گستره، تصویر) + فایل صوتی برای ذخیره.
+        با 🗑 هر جلسه را پاک کن.
       </div>
       <div class="takeList" id="takeList">
-        <div class="empty">هنوز ضبطی نداری — «⏺ با ضبط» را انتخاب کن و شروع کن.</div>
-      </div>
-    </div>
-
-    <!-- فقط در حالت لحظه‌ای -->
-    <div class="card" id="privacyCard">
-      <h2>⚡ حالت لحظه‌ای</h2>
-      <div class="hint">
-        در این حالت هیچ صدایی ذخیره نمی‌شود: صدا فقط همان لحظه تحلیل و دور ریخته می‌شود.
-        با بستن میکروفون، همه‌چیز پاک می‌شود و چیزی روی دستگاه یا سرور نمی‌ماند.
-        اگر می‌خواهی خوانده‌هایت بماند، «⏺ با ضبط» را انتخاب کن.
+        <div class="empty">هنوز ضبطی نداری — دکمهٔ ⏺ را بزن و شروع کن.</div>
       </div>
     </div>
   </section>
 </div>
 
+<!-- موتور آفلاین: همهٔ تحلیل روی همین دستگاه، بدون هیچ سروری -->
+<script src="engine.js"></script>
+<script src="parallel.js"></script>
+<script src="trace_style.js"></script>
+<script src="vendor/mp4-muxer.js"></script>
+<script src="offline.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════
    ابزارهای پایه
    ═══════════════════════════════════════════════════════════════════ */
-/* آدرس سرور: پیش‌فرض همان مبدأ (وب). در اپ اندروید آینده می‌توان با
-   ?api=https://server.example   یا  localStorage.api_base  سرور را جدا کرد. */
-const API = ((new URLSearchParams(location.search).get('api')
-  || localStorage.getItem('api_base') || '') + '').replace(/\/+$/, '');
+/* این اپ کاملاً آفلاین است: هیچ سروری وجود ندارد و همهٔ درخواست‌های
+   /api/* داخل خود صفحه (offline.js) پاسخ داده می‌شوند. API عمداً خالی و
+   ثابت است تا هیچ تنظیمی نتواند صفحه را به بیرون وصل کند. */
+const API = '';
 
 /** آدرس WebSocket بر اساس API (اگر API خالی باشد، همان مبدأ صفحه) */
 function wsUrl(path) {
@@ -500,8 +563,73 @@ function wsUrl(path) {
     return `${proto}://${location.host}${path}`;
   }
 }
+/* آدرس‌های نسبیِ برگشتی از سرور (مثل /api/file/…) در اپ اندروید — که صفحه از
+   مبدأ دیگری باز می‌شود — باید به آدرس سرور چسبانده شوند. در نسخهٔ وب API خالی
+   است و این تابع رشته را دست‌نخورده برمی‌گرداند */
+const apiPath = p => (!p ? p : ((API && String(p).charAt(0) === '/') ? API + p : p));
+
 const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const faN = n => String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
+
+/* ═══════════════════════════════════════════════════════════════════
+   واحدهای موسیقی: سل‌فژ (دو، ر، می، فا، سل، لا، سی) و «درجه»
+   -------------------------------------------------------------------
+   قرارِ کار: هر اکتاو ۸ درجه (و ۶ پرده = ۱۲ نیم‌پرده) ⇒ ۱ درجه = ۱٫۵ نیم‌پرده.
+   همهٔ محاسبه‌ها یک‌جا در موتور است تا اپ/گزارش/ویدیو یک عدد بدهند.
+   ═══════════════════════════════════════════════════════════════════ */
+const SEMI_NAMES = ['دو', 'دو♯', 'ر', 'ر♯', 'می', 'فا', 'فا♯', 'سل', 'سل♯', 'لا', 'لا♯', 'سی'];
+
+/* solfege(hz) → «سل۴»؛ اگر hz نبود و name داده شد («G4») همان را ترجمه می‌کند */
+function solfege(hz, name) {
+  if (hz == null && name) {
+    const m = /^([A-G])(#?)(-?\d+)$/.exec(String(name));
+    if (!m) return String(name);
+    const pc = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[m[1]] + (m[2] ? 1 : 0);
+    const oct = parseInt(m[3], 10);
+    return (SEMI_NAMES[((pc % 12) + 12) % 12] || 'دو') + faN(oct);
+  }
+  if (hz == null || !isFinite(hz) || hz <= 0) return '—';
+  const midi = 69 + 12 * Math.log2(hz / 440);
+  const r = Math.round(midi);
+  return (SEMI_NAMES[((r % 12) + 12) % 12] || 'دو') + faN(Math.floor(r / 12) - 1);
+}
+
+/* نیم‌پرده → درجه (اکتاو = ۸ درجه) و متنِ «۱ اکتاو و ۳ درجه» */
+function spanDegrees(semis) {
+  if (semis == null || !isFinite(semis)) return { total: 0, octaves: 0, degrees: 0, text: '—' };
+  const total = semis * (8 / 12);
+  let octaves = Math.floor(total / 8 + 1e-9);
+  let rest = Math.round((total - octaves * 8) * 10) / 10;
+  if (rest >= 8 - 1e-9) { octaves += 1; rest = 0; }
+  let text;
+  if (octaves <= 0) text = faN(rest) + ' درجه';
+  else if (rest < 0.05) text = faN(octaves) + ' اکتاو';
+  else text = faN(octaves) + ' اکتاو و ' + faN(rest) + ' درجه';
+  return { total, octaves, degrees: rest, text };
+}
+
+/* نُتِ لحظه‌ای: متنِ کپسول (نام + درجه + فرکانس) */
+function nowNoteParts(hz, lowHz) {
+  if (hz == null || !isFinite(hz) || hz <= 0) {
+    return { name: '—', deg: '', hz: '' };
+  }
+  const midi = 69 + 12 * Math.log2(hz / 440);
+  let deg = '';
+  if (lowHz && lowHz > 0) {
+    const lo = 69 + 12 * Math.log2(lowHz / 440);
+    deg = 'درجهٔ ' + faN(Math.round((midi - lo) * (8 / 12)) + 1);
+  }
+  return { name: solfege(hz), deg: deg, hz: hz.toFixed(1) + ' Hz' };
+}
+
+/* به‌روزرسانی کپسولِ روی صفحه (پخش‌کننده و ویدیو) */
+function setNowNote(el, hz, lowHz) {
+  if (!el) return;
+  const p = nowNoteParts(hz, lowHz);
+  el.innerHTML = `<span class="n">${p.name}</span>` +
+    (p.deg ? `<span class="d">${p.deg}</span>` : '') +
+    (p.hz ? `<span class="h">${p.hz}</span>` : '');
+}
 const midiName = m => (m == null || isNaN(m)) ? '—' : NOTE_NAMES[Math.round(m) % 12] + (Math.floor(Math.round(m) / 12) - 1);
 const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
 const $ = id => document.getElementById(id);
@@ -514,14 +642,14 @@ const fmtClock = s => {
 async function apiRequest(url, options = {}) {
   let res;
   try { res = await fetch(url, options); }
-  catch (e) { throw new Error('اتصال به سرور برقرار نشد — سرور در حال اجراست؟'); }
+  catch (e) { throw new Error('پردازش محلی شروع نشد — صفحه را یک‌بار تازه کن.'); }
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('application/json')) {
     const txt = await res.text();
-    throw new Error('پاسخ نامعتبر از سرور: ' + txt.slice(0, 140));
+    throw new Error('پاسخ نامعتبر از موتور محلی: ' + txt.slice(0, 140));
   }
   const data = await res.json();
-  if (!res.ok || data.error) throw new Error(data.error || ('خطای سرور ' + res.status));
+  if (!res.ok || data.error) throw new Error(data.error || ('خطای موتور محلی ' + res.status));
   return data;
 }
 
@@ -573,13 +701,26 @@ function setFile(f) {
    پیشرفت
    ═══════════════════════════════════════════════════════════════════ */
 const STAGE_FA = {
-  loading: 'بارگذاری فایل', pitch: 'استخراج پردهٔ صدا', clean: 'پاک‌سازی و هموارسازی',
-  notes: 'تفکیک نت‌ها', plot: 'ساخت تصویر', video: 'رندر ویدیو',
+  loading: 'بارگذاری فایل', preparing: 'آماده‌سازی صدا', pitch: 'استخراج پردهٔ صدا',
+  octave: 'اصلاح اکتاو', pyin: 'هم‌سنجی دو موتور', clean: 'پاک‌سازی و هموارسازی',
+  notes: 'تفکیک نت‌ها', refine: 'پالایش هر نت', plot: 'ساخت تصویر', video: 'رندر ویدیو',
   analyzing: 'تحلیل ضبط', uploading: 'ارسال ضبط', done: 'پایان'
 };
+
+/* نشان موازی‌سازی: چند هسته در حال کار است */
+function parallelTag() {
+  try {
+    const p = LocalOffline && LocalOffline.parallel ? LocalOffline.parallel() : null;
+    if (p && p.available) return ' ⚡' + faN(p.cores) + ' هسته';
+  } catch (e) {}
+  return '';
+}
+
 function setProgress(prefix, stage, frac) {
   $(prefix + 'Wrap').style.display = 'block';
-  $(prefix + 'Label').textContent = (STAGE_FA[stage] || stage || 'در حال پردازش') + '…';
+  const heavy = (stage === 'pitch' || stage === 'pyin' || stage === 'refine');
+  $(prefix + 'Label').textContent =
+    (STAGE_FA[stage] || stage || 'در حال پردازش') + (heavy ? parallelTag() : '') + '…';
   const pct = Math.round(frac * 100);
   $(prefix + 'Fill').style.width = pct + '%';
   $(prefix + 'Pct').textContent = faN(pct) + '٪';
@@ -622,6 +763,7 @@ $('analyzeBtn').onclick = async () => {
 };
 
 if ($('saveVideoBtn')) $('saveVideoBtn').onclick = saveVideoToGallery;
+if ($('saveImageBtn')) $('saveImageBtn').onclick = saveImageToGallery;
 
 function waitJob(jobId, prefix) {
   return new Promise((resolve, reject) => {
@@ -675,10 +817,12 @@ function renderReport(r) {
     ? `${n.f0_hz} Hz · ${faN(n.total_sung_sec != null ? n.total_sung_sec : (n.duration || 0))} ثانیه` +
       (n.count ? ` · ${faN(n.count)} بار` : '')
     : '';
-  $('hiNote').textContent = hi ? hi.note_name : '—';
-  $('hiSub').textContent = subOf(hi);
-  $('loNote').textContent = lo ? lo.note_name : '—';
-  $('loSub').textContent = subOf(lo);
+  const nameOf = n => n ? (solfege(n.f0_hz) + ' · ' + n.note_name) : '—';
+  $('hiNote').textContent = hi ? solfege(hi.f0_hz) : '—';
+  $('hiSub').textContent = hi ? (hi.note_name + ' · ' + subOf(hi)) : '';
+  $('loNote').textContent = lo ? solfege(lo.f0_hz) : '—';
+  $('loSub').textContent = lo ? (lo.note_name + ' · ' + subOf(lo)) : '';
+  void nameOf;
 
   /* ── گسترهٔ صدا: نیم‌پرده/پرده + اکتاو + درصد از اکتاو ── */
   renderSpan(rg);
@@ -701,7 +845,7 @@ function renderReport(r) {
   tb.innerHTML = (r.note_counts || []).slice(0, 60).map(row => `
     <tr>
       <td style="padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.06)">
-        <span class="chip gold">${row.note_name}</span>
+        <span class="chip gold">${solfege(null, row.note_name)}</span>
       </td>
       <td style="padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.06);direction:ltr;text-align:right">${faN(row.sung_sec.toFixed(1))}s</td>
       <td style="padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.06);direction:ltr;text-align:right">${faN(row.share_pct)}٪</td>
@@ -711,16 +855,25 @@ function renderReport(r) {
   /* ── دکمه‌های ذخیرهٔ آفلاین ── */
   const dls = (r.meta && r.meta.downloads) || {};
   if (dls.original) {
-    $('dlOriginal').href = dls.original;
+    $('dlOriginal').href = apiPath(dls.original);
     $('dlOriginal').setAttribute('download', (r.meta && r.meta.original_name) || 'original');
   }
-  if (dls.image) $('dlImage').href = dls.image;
-  if (dls.report) $('dlReport').href = dls.report;
+  if (dls.image) {
+    $('dlImage').href = apiPath(dls.image);
+    $('dlImage').setAttribute('download', ((r.meta && r.meta.original_name)
+      ? String(r.meta.original_name).replace(/\.[^.]+$/, '') : 'radde-seda') + '-analysis.png');
+    $('dlImage').dataset.gallery = 'image';
+  }
+  if (dls.report) $('dlReport').href = apiPath(dls.report);
   $('dlVideo').style.display = 'none';
-  $('galleryBox').style.display = 'none';
+  /* در اپ: ذخیرهٔ تصویر در گالری از همین‌جا در دسترس است؛ دکمهٔ ویدیو تا آماده‌شدن پنهان می‌ماند */
+  const inApp = !!(window.NativeBridge && window.NativeBridge.available);
+  $('galleryBox').style.display = inApp ? 'block' : 'none';
+  if ($('saveVideoBtn')) $('saveVideoBtn').style.display = inApp ? 'none' : 'inline-flex';
+  if ($('saveImageBtn')) $('saveImageBtn').style.display = inApp ? 'inline-flex' : 'none';
 
   const audio = $('audioPlayer');
-  audio.src = r.meta.audio_url;
+  audio.src = apiPath(r.meta.audio_url);
   $('results').style.display = 'block';
   $('videoBox').style.display = 'none';
   $('videoStatus').textContent = '';
@@ -773,51 +926,46 @@ function renderQuality(q) {
   }
 }
 
-/* گستره به همهٔ شکل‌ها: نیم‌پرده، پرده، اکتاو + باقی‌مانده، درصد اکتاو */
+/* گستره به «درجه» (اکتاو = ۸ درجه = ۶ پرده = ۱۲ نیم‌پرده)
+   ⇒ ۱ درجه = ۱٫۵ نیم‌پرده و درجه = نیم‌پرده × ۲⁄۳.
+   خروجی نهایی: «۱ اکتاو و ۳ درجه». پرده و ربع‌پرده دیگر نمایش داده نمی‌شوند. */
 function renderSpan(rg) {
   const semis = rg.span_semitones;
   if (semis == null) { $('spanMain').textContent = '—'; return; }
 
   const semiF = Number(semis);
-  const octaves = semiF / 12;
-  let full = Math.floor(semiF / 12);
-  let rest = +(semiF - full * 12).toFixed(2);
-  if (rest >= 11.995) { full += 1; rest = 0; }   // ۱۲٫۰۰ نیم‌پرده = اکتاو کامل
-  const tones = +(semiF / 2).toFixed(1);          // پرده (هر پرده = ۲ نیم‌پرده)
-  const quarters = +(semiF * 2).toFixed(1);       // ربع‌پرده
-  const pctOct = Math.round((semiF / 12) * 100);
+  const span = spanDegrees(semiF);        /* {total, octaves, degrees, text} */
+  const pctOct = Math.round((span.total / 8) * 100);
 
-  // متن اصلی
-  let main = `<b>${faN(semiF.toFixed(2))}</b> نیم‌پرده`;
-  if (full > 0) {
-    main += ` · <b>${faN(full)}</b> اکتاو${rest > 0 ? ` + <b>${faN(rest.toFixed(1))}</b> نیم‌پرده` : ''}`;
-  }
-  $('spanMain').innerHTML = main;
+  // متن اصلی: درجه + اکتاو، نیم‌پرده فقط به‌عنوان عددِ ریزِ کمکی
+  $('spanMain').innerHTML =
+    `<b>${faN(span.text)}</b>` +
+    ` <span style="font-size:.72rem;font-weight:600;color:var(--dim)">(${faN(span.total.toFixed(1))} درجه · ${faN(semiF.toFixed(1))} نیم‌پرده)</span>`;
 
-  // چیپ‌ها
+  // چیپ‌ها: فقط درجه/اکتاو (پرده و ربع‌پرده حذف شد)
   $('spanChips').innerHTML = [
-    `<span class="chip">${faN(octaves.toFixed(2))} اکتاو</span>`,
-    `<span class="chip">${faN(tones)} پرده</span>`,
-    `<span class="chip">${faN(quarters)} ربع‌پرده</span>`,
-    `<span class="chip gold">${faN(pctOct)}٪ یک اکتاو</span>`,
+    `<span class="chip gold">${faN(span.total.toFixed(1))} درجه</span>`,
+    `<span class="chip">${faN(span.octaves)} اکتاو کامل</span>`,
+    `<span class="chip">${faN(pctOct)}٪ یک اکتاو</span>`,
+    `<span class="chip">${faN(semiF.toFixed(1))} نیم‌پرده</span>`,
     `<span class="chip">${faN(Math.round(rg.span_cents))} سنت</span>`
   ].join('');
 
-  // نوار اکتاو: هر اکتاو یک گروه ۱۲ نقطه (نیم‌پرده)
+  // نوار درجه‌ها: هر اکتاو یک گروه ۸ نقطه
   const dots = $('octDots');
   dots.innerHTML = '';
-  const totalDots = Math.max(12, full * 12 + Math.ceil(rest));
+  const totalDots = Math.max(8, span.octaves * 8 + Math.ceil(span.degrees));
   for (let i = 0; i < totalDots; i++) {
     const d = document.createElement('span');
     d.className = 'octDot';
-    const filled = i < Math.floor(semiF);
-    const partial = !filled && i < semiF;
+    const filled = i < Math.floor(span.total);
+    const partial = !filled && i < span.total;
     if (filled) d.classList.add('on');
     else if (partial) d.classList.add('part');
-    if (i % 12 === 0 && i > 0) d.style.marginInlineStart = '6px';
+    if (i % 8 === 0 && i > 0) d.style.marginInlineStart = '6px';
     dots.appendChild(d);
   }
-  $('octLabel').textContent = `${faN(full)}/${faN(Math.ceil(octaves))} اکتاو`;
+  $('octLabel').textContent = `${faN(span.octaves)} اکتاو و ${faN(span.degrees)} درجه`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -831,6 +979,12 @@ function galleryMessage(msg, isErr) {
 }
 
 function triggerDownload(url, name) {
+  /* در اپ اندروید، مرورگرِ درون‌برنامه‌ای blob را ذخیره نمی‌کند؛ پل بومی جایش می‌نشیند.
+     در مرورگر، NativeBridge وجود ندارد و مسیر زیر دقیقاً مثل قبل اجرا می‌شود. */
+  if (window.NativeBridge && window.NativeBridge.available) {
+    window.NativeBridge.save(url, name);
+    return;
+  }
   const a = document.createElement('a');
   a.href = url;
   a.download = name || '';
@@ -840,25 +994,79 @@ function triggerDownload(url, name) {
   a.remove();
 }
 
+/* نوع فایل از روی mime واقعی بلاب — نه از روی نام (منبع اصلی خطای «ناموفق بود») */
+function extFromMime(mime) {
+  const m = String(mime || '').toLowerCase();
+  if (m.indexOf('video/mp4') === 0) return '.mp4';
+  if (m.indexOf('video/webm') === 0) return '.webm';
+  if (m.indexOf('video/3gpp') === 0) return '.3gp';
+  if (m.indexOf('image/png') === 0) return '.png';
+  if (m.indexOf('image/jpeg') === 0) return '.jpg';
+  if (m.indexOf('image/webp') === 0) return '.webp';
+  if (m.indexOf('audio/wav') === 0 || m.indexOf('audio/wave') === 0) return '.wav';
+  if (m.indexOf('audio/mpeg') === 0) return '.mp3';
+  return '';
+}
+
+/* نام نهایی: پسوند باید با نوع واقعی فایل بخواند، وگرنه گالری آن را نشان نمی‌دهد */
+function nameForBlob(blob, base, fallbackExt) {
+  const b = String(base || 'radde-seda').replace(/\.[a-z0-9]+$/i, '');
+  const ext = extFromMime(blob && blob.type) || fallbackExt || '';
+  return b + '-radde-seda' + ext;
+}
+
+function gallerySaveViaApp(blob, name) {
+  /* مسیر مطمئن در اپ: بلاب خوانده می‌شود و بومی در گالری نوشته می‌شود */
+  return new Promise((resolve) => {
+    const NB = window.NativeBridge;
+    if (!NB || !NB.available) { resolve({ ok: false, offline: true }); return; }
+    if (typeof NB.saveBlobToGallery !== 'function') { resolve({ ok: false, msg: 'نسخهٔ اپ قدیمی است' }); return; }
+    NB.saveBlobToGallery(blob, name, (ok, msg) => resolve({ ok: !!ok, msg: msg || '' }));
+  });
+}
+
+async function fetchBlob(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('دریافت فایل ناموفق بود (HTTP ' + res.status + ')');
+  const blob = await res.blob();
+  if (!blob || !blob.size) throw new Error('فایل خالی است — دوباره بسازش');
+  return blob;
+}
+
 async function saveVideoToGallery() {
   if (!STATE.jobId) return;
   const btn = $('saveVideoBtn');
   const label = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '⏳ در حال آماده‌سازی ویدیو…'; }
-  galleryMessage('');
+  galleryMessage('⏳ در حال خواندن فایل ویدیو…');
   const url = `${API}/api/download/${STATE.jobId}/video`;
   const base = (STATE.file && STATE.file.name) ? String(STATE.file.name).replace(/\.[^.]+$/, '')
              : ((STATE.report && STATE.report.meta && STATE.report.meta.original_name)
                 ? String(STATE.report.meta.original_name).replace(/\.[^.]+$/, '') : '');
-  const name = (base || 'radde-seda') + '-radde-seda.mp4';
 
   try {
+    /* در اپ اندروید: بلاب را می‌خوانیم، پسوند را از نوع واقعی می‌گیریم و بومی ذخیره می‌کنیم */
+    if (window.NativeBridge && window.NativeBridge.available) {
+      let blob;
+      try {
+        blob = await fetchBlob(url);
+      } catch (e) {
+        galleryMessage('⚠️ ' + e.message + ' — اول دکمهٔ «ساخت ویدیو» را بزن.', true);
+        return;
+      }
+      const name = nameForBlob(blob, base || 'radde-seda', '.mp4');
+      galleryMessage('⏳ در حال ذخیره در گالری…');
+      const r = await gallerySaveViaApp(blob, name);
+      if (r.ok) galleryMessage('✅ ' + (r.msg || ('در گالری ذخیره شد: ' + name)));
+      else galleryMessage('❌ ' + (r.msg || 'ذخیره در گالری ناموفق بود') , true);
+      return;
+    }
+
     let file = null;
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('دانلود ویدیو ناموفق بود');
-      const blob = await res.blob();
-      file = new File([blob], name, { type: 'video/mp4' });
+      const blob = await fetchBlob(url);
+      const name = nameForBlob(blob, base || 'radde-seda', '.mp4');
+      file = new File([blob], name, { type: blob.type || 'video/mp4' });
     } catch (e) {
       file = null;
     }
@@ -869,22 +1077,61 @@ async function saveVideoToGallery() {
       galleryMessage('اگر ذخیره نشد، در همان پنجره «Save Video / ذخیره در گالری» را انتخاب کن.');
     } else if (file) {
       const objUrl = URL.createObjectURL(file);
-      triggerDownload(objUrl, name);
+      triggerDownload(objUrl, file.name);
       setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
       galleryMessage('فایل ویدیو ذخیره شد. اگر در گالری دیده نشد، از پوشهٔ «دانلودها» به گالری منتقلش کن.');
     } else {
-      // آخرین راه: لینک مستقیم سرور (فایل با نام گالری‌پسند ذخیره می‌شود)
-      triggerDownload(url, name);
+      triggerDownload(url, base ? base + '-radde-seda.mp4' : 'radde-seda.mp4');
       galleryMessage('در حال دانلود فایل ویدیو…');
     }
   } catch (e) {
     if (e && e.name === 'AbortError') galleryMessage('ذخیره لغو شد.');
     else {
-      triggerDownload(url, name);
-      galleryMessage('اشتراک‌گذاری در این مرورگر ممکن نشد؛ فایل ویدیو دانلود شد.', true);
+      triggerDownload(url, base ? base + '-radde-seda.mp4' : 'radde-seda.mp4');
+      galleryMessage('ذخیره در گالری ممکن نشد؛ فایل ویدیو دانلود شد. ' + (e && e.message ? e.message : ''), true);
     }
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = label || '📥 ذخیرهٔ ویدیو در گالری'; }
+  }
+}
+
+/* ── ذخیرهٔ تصویر تحلیل در گالری (Pictures) ── */
+async function saveImageToGallery() {
+  const r = STATE.report;
+  const dls = (r && r.meta && r.meta.downloads) || {};
+  const btn = $('saveImageBtn');
+  const label = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ در حال ذخیره…'; }
+  galleryMessage('⏳ در حال ذخیرهٔ تصویر در گالری…');
+  const url = dls.image ? apiPath(dls.image) : '';
+  if (!url) { galleryMessage('تصویری برای این تحلیل نیست.', true); if (btn) { btn.disabled = false; btn.innerHTML = label; } return; }
+  try {
+    const blob = await fetchBlob(url);
+    const base = (STATE.file && STATE.file.name) ? String(STATE.file.name).replace(/\.[^.]+$/, '')
+               : ((r.meta && r.meta.original_name) ? String(r.meta.original_name).replace(/\.[^.]+$/, '')
+               : 'radde-seda');
+    const name = (base || 'radde-seda') + '-analysis' + (extFromMime(blob.type) || '.png');
+
+    if (window.NativeBridge && window.NativeBridge.available) {
+      const res = await gallerySaveViaApp(blob, name);
+      if (res.ok) galleryMessage('✅ ' + (res.msg || ('تصویر در گالری ذخیره شد: ' + name)));
+      else galleryMessage('❌ ' + (res.msg || 'ذخیرهٔ تصویر ناموفق بود'), true);
+      return;
+    }
+    const file = new File([blob], name, { type: blob.type || 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'ردِّ صدا' });
+      galleryMessage('در همان پنجره «Save Image» را بزن.');
+    } else {
+      const objUrl = URL.createObjectURL(file);
+      triggerDownload(objUrl, name);
+      setTimeout(() => URL.revokeObjectURL(objUrl), 30000);
+      galleryMessage('تصویر ذخیره شد.');
+    }
+  } catch (e) {
+    galleryMessage('❌ ' + (e && e.message ? e.message : 'ذخیرهٔ تصویر ناموفق بود'), true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = label || '🖼 ذخیرهٔ تصویر تحلیل در گالری'; }
   }
 }
 
@@ -900,21 +1147,41 @@ $('videoBtn').onclick = async () => {
   setProgress('vProg', 'video', 0.02);
   try {
     const fd = new FormData();
-    fd.append('fps', '0');        // ۰ = انتخاب خودکار بر اساس طول فایل
+    fd.append('fps', '60');                     // ۶۰ فریم در ثانیه (بدون لگ)
+    fd.append('quality', ($('videoQuality') && $('videoQuality').value) || '1080p');
+    fd.append('window_sec', String(TRACE_VIEW.timeSec || 0));   // همان زومِ نمودار
+    fd.append('tightness', String(TRACE_VIEW.tight || 1));
     const r = await apiRequest(`${API}/api/video/${STATE.jobId}`, { method: 'POST', body: fd });
     const res = await waitJob(r.job_id, 'vProg');
     hideProgress('vProg');
 
-    $('videoPlayer').src = res.video_url;
+    const vpEl = $('videoPlayer');
+    vpEl.src = apiPath(res.video_url);
     $('videoBox').style.display = 'block';
+    /* کپسولِ نُتِ لحظه، هم‌گام با ویدیو */
+    ['timeupdate', 'play', 'pause', 'seeked', 'loadeddata'].forEach(evName => {
+      vpEl.addEventListener(evName, updateVideoNowNote);
+    });
+    updateVideoNowNote();
 
     const dl = $('dlVideo');
     dl.href = `${API}/api/download/${STATE.jobId}/video`;
-    dl.setAttribute('download', 'radde-seda.mp4');
+    dl.setAttribute('download', res.video_name || 'radde-seda.mp4');
+    STATE.videoName = res.video_name || 'radde-seda.mp4';
     dl.style.display = 'inline-flex';
     $('galleryBox').style.display = 'block';
+    if ($('saveVideoBtn')) $('saveVideoBtn').style.display = 'inline-flex';
 
-    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.';
+    const audioSec = (STATE.report && STATE.report.basic && STATE.report.basic.duration_sec) || 0;
+    const speed = (res && res.fast && res.render_sec != null)
+      ? ` ⚡ رندر سریع: ${faN(res.render_sec)}s برای ${faN(audioSec)}s صدا`
+      : ' 🐢 ضبط زمان‌واقعی (این دستگاه WebCodecs ندارد)';
+    let note = '';
+    if (res && res.duration_ok === false && res.probed_duration != null && res.duration != null) {
+      note = ` ⚠️ طولِ فایل ${faN(res.probed_duration.toFixed(1))}s گزارش شد ولی باید ` +
+        `${faN(res.duration.toFixed(1))}s باشد — فایل با این حال تا آخر پخش می‌شود.`;
+    }
+    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' + speed + note;
     $('videoStatus').className = 'status ok';
   } catch (e) {
     hideProgress('vProg');
@@ -943,142 +1210,172 @@ function canvasSetup(cv, aspect) {
   return { W: cssW, H: cssH, dpr };
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   🔍 زوم: زمان (پنجره) + ارتفاع (نت) — همان تنظیمی که ویدیو هم می‌گیرد
+   ═══════════════════════════════════════════════════════════════════ */
+const TRACE_VIEW = { timeSec: 0, tight: 1 };      /* timeSec=0 ⇒ نمای کامل */
+const TIME_STEPS = [0, 24, 12, 6, 3];
+const TIGHT_STEPS = [1, 1.6, 2.4, 3.5];
+
+/* پله‌های زوم زمانی: ثانیه‌های ثابت + کسرهایی از طول خودِ فایل
+   (برای فایل‌های کوتاه، «نصف اجرا» و «یک‌سوم اجرا» هم پله می‌شوند) */
+function timeStepList() {
+  const dur = TRACE.dur || 1;
+  const out = [0];
+  TIME_STEPS.forEach(v => { if (v > 0.5 && v < dur * 0.92) out.push(v); });
+  [dur / 2, dur / 3].forEach(v => {
+    const r = Math.round(v * 10) / 10;
+    if (r > 0.5 && r < dur * 0.92) out.push(r);
+  });
+  /* ترتیب = «بازتر به تنگ‌تر»: ۰ (کل اجرا) → پنجره‌های بزرگ → کوچک */
+  const nonZero = out.filter(v => v > 0).sort((a, b) => b - a);
+  return [0].concat(nonZero.filter((v, i, arr) => Math.abs(v - (arr[i - 1] || -1)) > 0.01));
+}
+
+function stepValue(list, cur, dir) {
+  let i = 0, bestD = Infinity;
+  list.forEach((v, k) => { const d = Math.abs(v - cur); if (d < bestD) { bestD = d; i = k; } });
+  return list[Math.max(0, Math.min(list.length - 1, i + dir))];
+}
+
+function zoomTime(dir) {
+  const list = timeStepList();
+  TRACE_VIEW.timeSec = stepValue(list, TRACE_VIEW.timeSec, dir);
+  updateZoomButtons();
+  drawTrace();
+}
+
+function zoomPitch(dir) {
+  TRACE_VIEW.tight = stepValue(TIGHT_STEPS, TRACE_VIEW.tight, dir);
+  updateZoomButtons();
+  drawTrace();
+}
+
+function zoomReset() {
+  TRACE_VIEW.timeSec = 0;
+  TRACE_VIEW.tight = 1;
+  updateZoomButtons();
+  drawTrace();
+}
+
+function updateZoomButtons() {
+  const lbl = $('zoomLabel');
+  if (!lbl) return;
+  const t = TRACE_VIEW.timeSec;
+  const timeTxt = t > 0 ? `قاب ${faN(t)}s` : 'کل اجرا';
+  const tightTxt = TRACE_VIEW.tight > 1 ? `×${TRACE_VIEW.tight.toFixed(1)}` : '×۱';
+  lbl.textContent = `${timeTxt} · زوم ارتفاع ${tightTxt}`;
+  const d = $('zoomTimeIn'); if (d) d.disabled = t === TIME_STEPS[0] ? false : false;
+}
+
+/* بازهٔ زمانی دیده‌شده؛ با زوم زمانی، خط پخش وسط می‌ماند (مثل ویدیو) */
+function traceViewAt(t) {
+  const dur = TRACE.dur || 1;
+  const w = TRACE_VIEW.timeSec;
+  if (!(w > 0) || w >= dur) return { t0: 0, t1: dur };
+  const half = w / 2;
+  let t0 = Math.max(0, Math.min(t - half, dur - w));
+  return { t0: t0, t1: t0 + w };
+}
+
+function traceSpec(t) {
+  return {
+    W: TRACE.W, H: TRACE.H, dpr: TRACE.dpr,
+    times: TRACE.times, mids: TRACE.mids, notes: TRACE.notes,
+    range: TRACE.range || {}, duration: TRACE.dur, t: t,
+    view: traceViewAt(t), tightness: TRACE_VIEW.tight
+  };
+}
+
 function buildTraceData(r) {
   const c = r.contour || { t: [], midi: [] };
-  const times = c.t, mids = c.midi;
-  const notes = (r.notes || []).filter(n => n.f0_hz > 0);
+  TRACE.times = (c.t || []).slice();
+  TRACE.mids = (c.midi || []).map(v => (v == null || !isFinite(v)) ? null : v);
+  TRACE.notes = (r.notes || []).filter(n => n.f0_hz > 0);
+  TRACE.range = r.range || {};
+  TRACE.dur = TRACE.times.length ? TRACE.times[TRACE.times.length - 1] : 1;
 
   const cv = $('traceCanvas');
-  const phone = isPhone();
-  const geo = canvasSetup(cv, phone ? 0.70 : 0.5625);
-  const { W, H, dpr } = geo;
-
-  const valid = mids.filter(m => m != null);
-  let lo = valid.length ? Math.min(...valid) : 48;
-  let hi = valid.length ? Math.max(...valid) : 60;
-  const span = Math.max(hi - lo, 11.9);
-  const center = (lo + hi) / 2;
-  const pad = Math.max(1.6, span * 0.10);
-  const loLim = Math.floor(center - span / 2 - pad);
-  const hiLim = Math.ceil(center + span / 2 + pad);
-
-  const ML = phone ? 44 : 62, MR = phone ? 22 : 34;
-  const MT = phone ? 44 : 56, MB = phone ? 34 : 38;
-  const dur = times.length ? times[times.length - 1] : 1;
-  const xOf = t => ML + (t / Math.max(dur, 0.001)) * (W - ML - MR);
-  const yOf = m => MT + (1 - (m - loLim) / Math.max(hiLim - loLim, 1e-6)) * (H - MT - MB);
-
-  Object.assign(TRACE, {
-    ready: true, W, H, dpr, phone, ML, MR, MT, MB, dur, loLim, hiLim, xOf, yOf,
-    times, mids, notes,
-    px: times.map(t => xOf(t)),
-    py: mids.map(m => m == null ? NaN : yOf(m)),
-    hi, lo, range: r.range
-  });
-  TRACE.segs = buildSegments();
-  TRACE.base = buildBase();
+  const geo = canvasSetup(cv, isPhone() ? 0.70 : 0.5625);
+  TRACE.W = geo.W; TRACE.H = geo.H; TRACE.dpr = geo.dpr;
+  TRACE.ready = true;
+  updateZoomButtons();
+  drawTrace();
 }
 
-function buildSegments() {
-  const { times, px, py } = TRACE;
-  const GAP = 0.75;
-  const runs = []; let cur = []; let lastT = null;
-  for (let i = 0; i < px.length; i++) {
-    if (isNaN(py[i])) {
-      if (cur.length > 1) runs.push(cur);
-      cur = []; lastT = null; continue;
-    }
-    if (lastT != null && times[i] - lastT > GAP) {
-      if (cur.length > 1) runs.push(cur);
-      cur = [];
-    }
-    cur.push({ x: px[i], y: py[i], t: times[i] });
-    lastT = times[i];
-  }
-  if (cur.length > 1) runs.push(cur);
+/* لایهٔ ثابت (پس‌زمینه + خطوط + منحنی محو آینده) یک‌بار در بومِ جدا کشیده
+   می‌شود و هر فریم فقط همان تصویر + لایهٔ متحرک رسم می‌شود. قبلاً هر فریم
+   کلِ نمودار از نو کشیده می‌شد و روی گوشی پخش را «لگ‌دار» می‌کرد. */
+const TRACE_BASE = { key: '', canvas: null, L: null, segs: null };
 
-  const segs = [];
-  runs.forEach(run => {
-    if (!segs.length) { segs.push(run.slice()); return; }
-    const prev = segs[segs.length - 1];
-    const gap = run[0].t - prev[prev.length - 1].t;
-    if (gap <= GAP) {
-      const a = prev[prev.length - 1], b = run[0];
-      const n = Math.max(2, Math.min(24, Math.round(gap * 40) + 2));
-      for (let j = 1; j < n; j++) {
-        const f = j / n;
-        prev.push({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, t: a.t + (b.t - a.t) * f });
-      }
-      prev.push(...run);
-    } else {
-      segs.push(run.slice());
-    }
-  });
-  return segs.filter(s => s.length > 1);
-}
-
-function buildBase() {
-  const { W, H, dpr, loLim, hiLim, yOf, phone } = TRACE;
-  const cv = document.createElement('canvas');
-  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+function drawTrace() {
+  if (!TRACE.ready) return;
+  const cv = $('traceCanvas');
   const g = cv.getContext('2d');
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const t = traceTime();
+  const spec = traceSpec(t);
+  /* با زوم ارتفاعی کادر دنبال نتِ لحظه می‌رود ⇒ لایهٔ ثابت هر فریم عوض می‌شود */
+  const cacheable = (TRACE_VIEW.tight || 1) <= 1.0001;
+  const key = cacheable
+    ? [cv.width, cv.height, spec.view.t0.toFixed(5), spec.view.t1.toFixed(5)].join('|')
+    : '';
 
-  const bg = g.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#0d172b'); bg.addColorStop(1, '#172440');
-  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, cv.width, cv.height);
 
-  const halo = g.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.62);
-  halo.addColorStop(0, 'rgba(70,110,180,.20)');
-  halo.addColorStop(1, 'rgba(70,110,180,0)');
-  g.fillStyle = halo; g.fillRect(0, 0, W, H);
-
-  // خطوط نت (هر نیم‌پرده یک خط، C پررنگ‌تر + نام نت)
-  const labelSize = phone ? 9 : 10;
-  for (let m = loLim; m <= hiLim; m++) {
-    const y = yOf(m);
-    const isC = ((m % 12) + 12) % 12 === 0;
-    g.strokeStyle = isC ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.07)';
-    g.lineWidth = isC ? 1.4 : 1;
-    g.beginPath(); g.moveTo(6, y); g.lineTo(W - 6, y); g.stroke();
-    if (isC && m !== loLim && m !== hiLim) {
-      g.fillStyle = 'rgba(180,200,235,.45)';
-      g.font = `600 ${labelSize}px Estedad, Tahoma, sans-serif`;
-      g.fillText(midiName(m), 8, y - 4);
+  if (cacheable && TRACE_BASE.key === key && TRACE_BASE.canvas) {
+    g.drawImage(TRACE_BASE.canvas, 0, 0);
+    g.setTransform(TRACE.dpr, 0, 0, TRACE.dpr, 0, 0);
+    LocalTraceStyle.drawDynamic(g, spec, TRACE_BASE.L, TRACE_BASE.segs);
+  } else {
+    g.setTransform(TRACE.dpr, 0, 0, TRACE.dpr, 0, 0);
+    const L = LocalTraceStyle.prepare(spec);
+    LocalTraceStyle.drawBase(g, spec, L, L.segs);
+    LocalTraceStyle.drawDynamic(g, spec, L, L.segs);
+    if (cacheable) {
+      const off = document.createElement('canvas');
+      off.width = cv.width; off.height = cv.height;
+      const og = off.getContext('2d');
+      og.setTransform(TRACE.dpr, 0, 0, TRACE.dpr, 0, 0);
+      LocalTraceStyle.drawBase(og, spec, L, L.segs);
+      TRACE_BASE.canvas = off; TRACE_BASE.key = key;
+      TRACE_BASE.L = L; TRACE_BASE.segs = L.segs;
+    } else {
+      TRACE_BASE.key = ''; TRACE_BASE.canvas = null;
     }
   }
-
-  // منحنی محو (آینده)
-  g.lineWidth = 2;
-  g.strokeStyle = 'rgba(96,132,175,.55)';
-  g.shadowColor = 'rgba(96,132,175,.35)'; g.shadowBlur = 4;
-  TRACE.segs.forEach(seg => {
-    g.beginPath();
-    seg.forEach((p, i) => i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y));
-    g.stroke();
-  });
-  g.shadowBlur = 0;
-
-  TRACE.notes.forEach(n => {
-    const x = TRACE.xOf(n.start + (n.duration || 0) / 2);
-    const y = yOf(69 + 12 * Math.log2(n.f0_hz / 440));
-    g.fillStyle = 'rgba(120,155,195,.38)';
-    g.beginPath(); g.ellipse(x, y, 3.4, 2, 0, 0, Math.PI * 2); g.fill();
-  });
-
-  g.strokeStyle = 'rgba(120,152,205,.28)'; g.lineWidth = 1.4;
-  roundRect(g, 3, 3, W - 6, H - 6, 14); g.stroke();
-  return cv;
+  TRACE.view = spec.view;
+  /* کپسولِ نُتِ همین لحظه، کنار پخش‌کنندهٔ صدا */
+  setNowNote($('nowNote'), traceHzAt(t), lowHzOfReport());
 }
 
-function roundRect(g, x, y, w, h, r) {
-  g.beginPath();
-  g.moveTo(x + r, y);
-  g.arcTo(x + w, y, x + w, y + h, r);
-  g.arcTo(x + w, y + h, x, y + h, r);
-  g.arcTo(x, y + h, x, y, r);
-  g.arcTo(x, y, x + w, y, r);
-  g.closePath();
+/* ارتفاعِ لحظه‌ای (midi) از دادهٔ رَد — برای کپسولِ نُت */
+function traceMidiAt(t) {
+  const times = TRACE.times || [], mids = TRACE.mids || [];
+  if (!times.length) return null;
+  let lo = 0, hi = times.length - 1, idx = 0;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (times[m] <= t) { idx = m; lo = m + 1; } else hi = m - 1;
+  }
+  const a = mids[idx], b = mids[Math.min(idx + 1, mids.length - 1)];
+  if (a == null && b == null) return null;
+  if (a == null) return b;
+  if (b == null) return a;
+  const t0 = times[idx], t1 = times[Math.min(idx + 1, times.length - 1)];
+  const f = t1 > t0 ? Math.min(1, Math.max(0, (t - t0) / (t1 - t0))) : 0;
+  return a + (b - a) * f;
+}
+
+/* پایین‌ترین نتِ اجرا (برای شمارهٔ درجه در کپسول) */
+function lowHzOfReport() {
+  const lo = (TRACE.range && TRACE.range.lowest) || null;
+  return (lo && lo.f0_hz > 0) ? lo.f0_hz : null;
+}
+
+function traceHzAt(t) {
+  const m = traceMidiAt(t);
+  return (m == null || !isFinite(m)) ? null : 440 * Math.pow(2, (m - 69) / 12);
 }
 
 function traceTime() {
@@ -1086,145 +1383,42 @@ function traceTime() {
   return (a && a.currentTime) ? a.currentTime : TRACE.dur;
 }
 
-function drawTrace() {
-  if (!TRACE.ready) return;
-  const cv = $('traceCanvas');
-  const g = cv.getContext('2d');
-  const { W, H, dpr, xOf, yOf, phone } = TRACE;
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.clearRect(0, 0, cv.width, cv.height);
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.drawImage(TRACE.base, 0, 0, W, H);
-
-  const t = traceTime();
-  const xNow = xOf(t);
-
-  // منحنی طلایی تا لحظهٔ t (سه لایه = درخشش)
-  g.lineCap = 'round'; g.lineJoin = 'round';
-  const layers = [[6, 'rgba(255,212,120,.16)'], [3.4, 'rgba(255,212,120,.35)'], [2, '#f7d171']];
-  TRACE.segs.forEach(seg => {
-    const pts = [];
-    for (const p of seg) { if (p.t <= t) pts.push(p); else break; }
-    if (!pts.length) return;
-    let tail = pts;
-    const nxt = seg.find(p => p.t > t);
-    if (nxt) {
-      const a = pts[pts.length - 1];
-      tail = pts.concat([{ x: (a.x + nxt.x) / 2, y: (a.y + nxt.y) / 2 }]);
-    }
-    if (tail.length < 2) return;
-    layers.forEach(([w, color]) => {
-      g.strokeStyle = color; g.lineWidth = w;
-      g.beginPath();
-      tail.forEach((p, i) => i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y));
-      g.stroke();
-    });
-  });
-
-  // نقطه‌های طلایی نت‌های خوانده‌شده
-  TRACE.notes.forEach(n => {
-    if (n.start > t) return;
-    const x = xOf(n.start + (n.duration || 0) / 2);
-    const y = yOf(69 + 12 * Math.log2(n.f0_hz / 440));
-    g.fillStyle = '#ffe6a6';
-    const r = (n.duration || 0) < 0.35 ? 2.2 : 3;
-    g.beginPath(); g.ellipse(x, y, r * 1.5, r, 0, 0, Math.PI * 2); g.fill();
-  });
-
-  // راهنمای بالاترین/پایین‌ترین نت
-  drawRangeGuide(g, TRACE.range && TRACE.range.highest, 'HIGH', 'rgba(255,226,160,');
-  drawRangeGuide(g, TRACE.range && TRACE.range.lowest, 'LOW', 'rgba(169,214,255,');
-
-  // خط پخش
-  g.strokeStyle = 'rgba(255,255,255,.18)'; g.lineWidth = 3.5;
-  g.beginPath(); g.moveTo(xNow, 4); g.lineTo(xNow, H - 4); g.stroke();
-  g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 1.3;
-  g.beginPath(); g.moveTo(xNow, 4); g.lineTo(xNow, H - 4); g.stroke();
-
-  // نقطهٔ درخشان روی نت جاری
-  const mNow = currentMidi(t);
-  if (mNow != null) {
-    const yNow = yOf(mNow);
-    const R = phone ? 26 : 22;
-    const glow = g.createRadialGradient(xNow, yNow, 0, xNow, yNow, R);
-    glow.addColorStop(0, 'rgba(255,244,214,.95)');
-    glow.addColorStop(.35, 'rgba(255,222,140,.55)');
-    glow.addColorStop(1, 'rgba(255,222,140,0)');
-    g.fillStyle = glow;
-    g.beginPath(); g.arc(xNow, yNow, R, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#fffaf0';
-    g.beginPath(); g.arc(xNow, yNow, phone ? 5.5 : 4.6, 0, Math.PI * 2); g.fill();
-  }
-
-  // برچسب‌ها (اندازه بر حسب CSS پیکسل → روی موبایل خوانا)
-  g.textAlign = 'left';
-  g.fillStyle = '#f3eeda';
-  g.font = `800 ${phone ? 16 : 17}px Estedad, Tahoma, sans-serif`;
-  const label = mNow == null ? '—' : `${midiName(mNow)}   ${midiHz(mNow).toFixed(1)} Hz`;
-  g.fillText(label, 10, phone ? 22 : 24);
-
-  g.font = `500 ${phone ? 10 : 11}px Estedad, Tahoma, sans-serif`;
-  g.fillStyle = 'rgba(160,178,210,.85)';
-  g.textAlign = 'right';
-  g.fillText(`${t.toFixed(1)} / ${TRACE.dur.toFixed(1)}s`, W - 10, phone ? 22 : 24);
-
-  const rg = TRACE.range || {};
-  if (rg.highest && rg.lowest) {
-    const txt = `${rg.highest.note_name} ↕ ${rg.lowest.note_name}  ·  ${rg.span_semitones} st`;
-    g.fillStyle = 'rgba(196,210,235,.85)';
-    g.fillText(txt, W - 10, H - 9);
-  }
-  g.textAlign = 'left';
+/* تبدیل نقطهٔ لمس/کلیک → زمان، با احترام به پنجرهٔ زوم */
+function traceTimeAtX(xCss) {
+  const L = LocalTraceStyle.layout(TRACE.W, TRACE.H);
+  const view = TRACE.view || { t0: 0, t1: TRACE.dur };
+  const usable = TRACE.W - L.ML - L.MR;
+  const frac = clamp((xCss - L.ML) / Math.max(usable, 1), 0, 1);
+  return view.t0 + frac * (view.t1 - view.t0);
 }
 
-function drawRangeGuide(g, note, tag, colorPrefix) {
-  if (!note || !note.f0_hz) return;
-  const { W, xOf, yOf, phone } = TRACE;
-  const midi = 69 + 12 * Math.log2(note.f0_hz / 440);
-  const y = yOf(midi);
-  const x0 = xOf(note.start || 0);
-  g.save();
-  g.setLineDash([5, 5]);
-  g.strokeStyle = colorPrefix + '.40)';
-  g.lineWidth = 1;
-  g.beginPath(); g.moveTo(x0, y); g.lineTo(W - 8, y); g.stroke();
-  g.restore();
-  g.fillStyle = colorPrefix + '.92)';
-  g.font = `700 ${phone ? 9 : 9.5}px Estedad, Tahoma, sans-serif`;
-  const lx = tag === 'HIGH' ? TRACE.ML : W - (phone ? 150 : 130);
-  g.fillText(`${tag} ${note.note_name}`, lx, y - 4);
-}
-
-function currentMidi(t) {
-  const { times, mids } = TRACE;
-  if (!times.length) return null;
-  let idx = -1, lo = 0, hi = times.length - 1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (times[mid] <= t) { idx = mid; lo = mid + 1; } else hi = mid - 1;
-  }
-  if (idx < 0) idx = 0;
-  const m0 = mids[idx];
-  if (idx >= times.length - 1) return m0;
-  const m1 = mids[idx + 1];
-  if (m0 == null && m1 == null) {
-    for (let k = idx; k >= 0; k--) if (mids[k] != null) return mids[k];
-    return null;
-  }
-  if (m0 == null) return m1;
-  if (m1 == null) return m0;
-  const t0 = times[idx], t1 = times[idx + 1];
-  const f = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
-  return m0 + (m1 - m0) * clamp(f, 0, 1);
-}
+/* دکمه‌های زوم */
+if ($('zoomTimeIn')) $('zoomTimeIn').addEventListener('click', () => zoomTime(+1));
+if ($('zoomTimeOut')) $('zoomTimeOut').addEventListener('click', () => zoomTime(-1));
+if ($('zoomPitchIn')) $('zoomPitchIn').addEventListener('click', () => zoomPitch(+1));
+if ($('zoomPitchOut')) $('zoomPitchOut').addEventListener('click', () => zoomPitch(-1));
+if ($('zoomResetBtn')) $('zoomResetBtn').addEventListener('click', zoomReset);
 
 let traceRAF = null;
+/* وقتی ویدیوی ساخته‌شده در حال پخش است، نمودار را دوباره رسم نمی‌کنیم؛
+   رسم ۶۰fps هم‌زمان با رمزگشایی ویدیو روی گوشی باعث «لگ» می‌شد. */
+/* کپسولِ نُتِ لحظه، هم‌گام با ویدیو (بر اساس currentTime همان ویدیو) */
+function updateVideoNowNote() {
+  const v = $('videoPlayer');
+  const hz = (v && v.currentTime >= 0) ? traceHzAt(v.currentTime) : null;
+  setNowNote($('nowNoteVideo'), hz, lowHzOfReport());
+}
+
+function videoIsPlaying() {
+  const v = $('videoPlayer');
+  return !!(v && !v.paused && !v.ended && v.currentTime > 0);
+}
 function loopTrace() {
   const a = $('audioPlayer');
   const running = a && !a.paused;
-  drawTrace();
+  if (!videoIsPlaying()) drawTrace();
   if (running) traceRAF = requestAnimationFrame(loopTrace);
-  else if (traceRAF) cancelAnimationFrame(traceRAF);
+  else if (traceRAF) { cancelAnimationFrame(traceRAF); traceRAF = null; }
 }
 
 /* لمس/کلیک روی نمودار = پخش از همان لحظه */
@@ -1234,45 +1428,35 @@ function seekFromEvent(ev) {
   const rect = cv.getBoundingClientRect();
   const cx = (ev.touches ? ev.touches[0].clientX : ev.clientX);
   const x = (cx - rect.left) * (TRACE.W / rect.width);
-  const frac = (x - TRACE.ML) / (TRACE.W - TRACE.ML - TRACE.MR);
-  const t = clamp(frac, 0, 1) * TRACE.dur;
+  const t = clamp(traceTimeAtX(x), 0, TRACE.dur);
   const a = $('audioPlayer');
   if (a && isFinite(a.duration)) { a.currentTime = t; drawTrace(); }
 }
 $('traceCanvas').addEventListener('click', seekFromEvent);
 
 /* ═══════════════════════════════════════════════════════════════════
-   🎙 اجرای زنده — دو حالت:
-     • لحظه‌ای (live): هیچ چیز ذخیره نمی‌شود؛ فقط نمایش همان لحظه
-     • با ضبط (rec):  صدا در حافظه ضبط می‌شود، در پایان تحلیل و قابل ذخیره است
+   🎙 اجرا با ضبط — تنها حالت اپ:
+     صدا در حافظه ضبط می‌شود، در پایان تحلیل می‌شود و قابل ذخیره است.
    ═══════════════════════════════════════════════════════════════════ */
 const LIVE = {
-  mode: 'live',               // live | rec
   ws: null, ctx: null, stream: null, node: null, recNode: null, on: false,
   midi: null, hi: null, lo: null, points: [], startAt: 0,
-  chunks: [], recStart: 0, recTimer: null, takes: []
+  chunks: [], recStart: 0, recTimer: null, takes: [],
+  /* نمایش نرم: target از موتور می‌آید، shown با میان‌یابی نرم به آن می‌رسد */
+  target: null, shown: null, dotAlpha: 0, silent: true,
+  raf: null, lastTs: 0, lastDraw: 0, lastLabel: ''
 };
 
-const MODE_HINT = {
-  live: '⚡ <b>لحظه‌ای:</b> نت جاری و بالاترین/پایین‌ترین همین لحظه نمایش داده می‌شود؛ هیچ صدایی ذخیره نمی‌شود و با توقف همه‌چیز پاک می‌شود.',
-  rec: '⏺ <b>با ضبط:</b> هر چه می‌خوانی در حافظه ضبط می‌شود؛ در پایان، تحلیل کامل (بالاترین/پایین‌ترین نت، گستره، تصویر و فایل صوتی) را می‌گیری و می‌توانی ذخیره کنی.'
-};
+const REC_HINT = '⏺ <b>با ضبط:</b> هر چه می‌خوانی در حافظه ضبط می‌شود؛ در پایان، تحلیل کامل (بالاترین/پایین‌ترین نت، گستره، تصویر و فایل صوتی) را می‌گیری و می‌توانی ذخیره کنی.';
 
-function setMode(mode) {
-  if (LIVE.on) stopLive();          // تعویض حالت وسط اجرا → توقف امن
-  LIVE.mode = mode;
-  $('modeLive').classList.toggle('active', mode === 'live');
-  $('modeRec').classList.toggle('active', mode === 'rec');
-  $('modeHint').innerHTML = MODE_HINT[mode];
-  $('takesCard').style.display = mode === 'rec' ? 'block' : 'none';
-  $('privacyCard').style.display = mode === 'live' ? 'block' : 'none';
-  $('micBtn').classList.toggle('rec', mode === 'rec');
-  $('micBtn').textContent = mode === 'rec' ? '⏺' : '🎤';
-  $('recBar').style.display = (mode === 'rec' && LIVE.on) ? 'flex' : 'none';
+function initRecMode() {
+  $('modeHint').innerHTML = REC_HINT;
+  const tk = $('takesCard'); if (tk) tk.style.display = 'block';
+  $('micBtn').classList.add('rec');
+  $('micBtn').textContent = '⏺';
+  $('recBar').style.display = LIVE.on ? 'flex' : 'none';
   resetSession();
 }
-$('modeLive').onclick = () => setMode('live');
-$('modeRec').onclick = () => setMode('rec');
 
 /* هشدار iframe (میکروفون در iframe بسته است) */
 function checkIframe() {
@@ -1290,6 +1474,7 @@ checkIframe();
 
 function resetSession() {
   LIVE.hi = null; LIVE.lo = null; LIVE.points = []; LIVE.midi = null;
+  LIVE.target = null; LIVE.shown = null; LIVE.dotAlpha = 0; LIVE.lastLabel = '';
   $('liveHi').textContent = '—'; $('liveLo').textContent = '—';
   $('liveSpan').textContent = '—'; $('liveDur').textContent = '—';
   $('liveNote').textContent = '—';
@@ -1321,55 +1506,72 @@ $('micBtn').onclick = async () => {
 
   const src = LIVE.ctx.createMediaStreamSource(LIVE.stream);
 
-  /* تحلیل زنده (در هر دو حالت) */
+  /* تحلیل لحظه‌ای روی همان صدا (برای نمایش زنده روی نمودار) */
   LIVE.node = LIVE.ctx.createScriptProcessor(2048, 1, 1);
   let acc = [];
 
-  /* ضبط (فقط حالت «با ضبط») — ScriptProcessor برای سازگاری با اندروید/وب‌ویو */
-  if (LIVE.mode === 'rec') {
-    LIVE.chunks = [];
-    LIVE.recNode = LIVE.ctx.createScriptProcessor(4096, 1, 1);
-    LIVE.recNode.onaudioprocess = ev => {
-      if (!LIVE.on) return;
-      LIVE.chunks.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
-    };
-    src.connect(LIVE.recNode);
-    const mute = LIVE.ctx.createGain(); mute.gain.value = 0;
-    LIVE.recNode.connect(mute); mute.connect(LIVE.ctx.destination);
-  }
+  /* ضبط — ScriptProcessor برای سازگاری با اندروید/وب‌ویو */
+  LIVE.chunks = [];
+  LIVE.recNode = LIVE.ctx.createScriptProcessor(4096, 1, 1);
+  LIVE.recNode.onaudioprocess = ev => {
+    if (!LIVE.on) return;
+    LIVE.chunks.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+  };
+  src.connect(LIVE.recNode);
+  const mute = LIVE.ctx.createGain(); mute.gain.value = 0;
+  LIVE.recNode.connect(mute); mute.connect(LIVE.ctx.destination);
 
   LIVE.ws.onopen = () => {
     LIVE.ws.send(JSON.stringify({ sample_rate: LIVE.ctx.sampleRate, reset: true }));
     LIVE.on = true;
+    LIVE.target = null; LIVE.shown = null; LIVE.dotAlpha = 0; LIVE.lastLabel = '';
+    startLiveLoop();
     LIVE.startAt = performance.now() / 1000;
     LIVE.recStart = Date.now();
     $('micBtn').classList.add('on');
-    $('liveSub').textContent = LIVE.mode === 'rec' ? 'در حال ضبط…' : 'در حال شنیدن…';
-    $('recBar').style.display = LIVE.mode === 'rec' ? 'flex' : 'none';
-    if (LIVE.mode === 'rec') {
-      LIVE.recTimer = setInterval(() => {
-        $('recTime').textContent = fmtClock((Date.now() - LIVE.recStart) / 1000);
-      }, 250);
-    }
+    $('liveSub').textContent = 'در حال ضبط…';
+    $('recBar').style.display = 'flex';
+    LIVE.recTimer = setInterval(() => {
+      $('recTime').textContent = fmtClock((Date.now() - LIVE.recStart) / 1000);
+    }, 250);
   };
 
   LIVE.ws.onmessage = ev => {
     try {
       const d = JSON.parse(ev.data);
+      LIVE.silent = !!d.silent;
+
       if (d.note) {
-        LIVE.midi = d.note.midi_exact;
+        LIVE.target = d.note.midi_exact;
         LIVE.points.push({ t: performance.now() / 1000, m: d.note.midi_exact });
         if (LIVE.points.length > 1600) LIVE.points.shift();
-        $('liveNote').textContent = d.note.note_name;
+        /* متن فقط وقتی عوض شود که واقعاً عوض شده (بدون لرزش و چیدمان مجدد) */
+        const sName = d.note.solfege || solfege(d.note.f0_hz);
+        const sDeg = (d.note.degree != null) ? ' · درجهٔ ' + faN(d.note.degree) : '';
+        const sKey = sName + sDeg;
+        if (sKey !== LIVE.lastLabel) {
+          LIVE.lastLabel = sKey;
+          $('liveNote').textContent = sName + sDeg;
+        }
         $('liveSub').textContent =
           `${d.note.f0_hz} Hz · ${d.note.cents_offset > 0 ? '+' : ''}${d.note.cents_offset} سنت`;
+      } else if (d.silent) {
+        LIVE.target = null;
+        LIVE.lastLabel = '';
+        $('liveNote').textContent = '—';
+        $('liveSub').textContent = '🔇 سکوت — صدایی شنیده نمی‌شود';
       }
+      /* بستهٔ «نگه‌داشت» بین دو نت عمداً نمایش را تغییر نمی‌دهد */
+
       const s = d.session || {};
-      if (s.highest) { LIVE.hi = s.highest; $('liveHi').textContent = s.highest.note_name; }
-      if (s.lowest) { LIVE.lo = s.lowest; $('liveLo').textContent = s.lowest.note_name; }
-      if (s.span_semitones != null) $('liveSpan').textContent = faN(s.span_semitones) + ' نیم‌پرده';
+      if (s.highest) { LIVE.hi = s.highest; $('liveHi').textContent = solfege(s.highest.f0_hz); }
+      if (s.lowest) { LIVE.lo = s.lowest; $('liveLo').textContent = solfege(s.lowest.f0_hz); }
+      if (s.span_semitones != null) {
+        const sd = spanDegrees(s.span_semitones);
+        $('liveSpan').textContent = sd.text;
+      }
       $('liveDur').textContent = fmtClock((performance.now() / 1000) - LIVE.startAt);
-      drawLive();
+      /* رسم در حلقهٔ rAF انجام می‌شود، نه در هر پیام */
     } catch (e) {}
   };
   LIVE.ws.onclose = () => { if (LIVE.on) stopLive(); };
@@ -1394,7 +1596,9 @@ $('micBtn').onclick = async () => {
 };
 
 function stopLive() {
-  const wasRec = LIVE.mode === 'rec' && LIVE.chunks.length > 0;
+  stopLiveLoop();
+  LIVE.target = null; LIVE.shown = null; LIVE.dotAlpha = 0;
+  const wasRec = LIVE.chunks.length > 0;
   const sampleRate = LIVE.ctx ? LIVE.ctx.sampleRate : 0;
   const chunks = LIVE.chunks.slice();
 
@@ -1411,17 +1615,11 @@ function stopLive() {
   LIVE.ctx = LIVE.node = LIVE.recNode = LIVE.stream = LIVE.ws = null;
   LIVE.chunks = [];
 
-  if (LIVE.mode === 'live') {
-    /* حالت لحظه‌ای: هیچ چیزی در حافظه نمی‌ماند */
-    resetSession();
-    $('liveSub').textContent = 'متوقف شد — چیزی ذخیره نشد';
-  } else {
-    $('liveSub').textContent = 'ضبط تمام شد';
-    if (wasRec && chunks.length && sampleRate) {
-      const take = makeTake(chunks, sampleRate);
-      addTake(take);
-      analyzeTake(take);
-    }
+  $('liveSub').textContent = wasRec ? 'ضبط تمام شد' : 'ضبط متوقف شد';
+  if (wasRec && chunks.length && sampleRate) {
+    const take = makeTake(chunks, sampleRate);
+    addTake(take);
+    analyzeTake(take);
   }
 }
 
@@ -1465,10 +1663,32 @@ function makeTake(chunks, sampleRate) {
 
 function addTake(take) { LIVE.takes.unshift(take); renderTakes(); }
 
+/* حذف همه: تأیید دو مرحله‌ای */
+(function () {
+  const btn = $('clearTakes');
+  if (!btn) return;
+  let armed = false, timer = null;
+  btn.onclick = () => {
+    if (!LIVE.takes.length) { $('liveSub').textContent = 'جلسه‌ای برای حذف نیست'; return; }
+    if (!armed) {
+      armed = true;
+      btn.textContent = '✔ مطمئنی؟ بزن';
+      btn.style.borderColor = 'rgba(255,90,90,.9)';
+      timer = setTimeout(() => {
+        armed = false; btn.textContent = '🗑 حذف همه'; btn.style.borderColor = '';
+      }, 4000);
+      return;
+    }
+    clearTimeout(timer);
+    armed = false; btn.textContent = '🗑 حذف همه'; btn.style.borderColor = '';
+    deleteAllTakes();
+  };
+})();
+
 function renderTakes() {
   const box = $('takeList');
   if (!LIVE.takes.length) {
-    box.innerHTML = '<div class="empty">هنوز ضبطی نداری — «⏺ با ضبط» را انتخاب کن و شروع کن.</div>';
+    box.innerHTML = '<div class="empty">هنوز ضبطی نداری — دکمهٔ ⏺ را بزن و شروع کن.</div>';
     return;
   }
   box.innerHTML = LIVE.takes.map(t => {
@@ -1485,9 +1705,10 @@ function renderTakes() {
         </div>
         <button data-act="play" data-id="${t.id}" title="پخش">▶</button>
         <a href="${t.url}" download="${t.name}" title="ذخیرهٔ صدا">⬇</a>
-        ${dls.image ? `<a href="${dls.image}" title="ذخیرهٔ تصویر">🖼</a>` : ''}
-        ${dls.report ? `<a href="${dls.report}" title="ذخیرهٔ گزارش">📄</a>` : ''}
+        ${dls.image ? `<a href="${apiPath(dls.image)}" download="${t.name.replace(/\.[^.]+$/, '')}-analysis.png" data-gallery="image" title="ذخیرهٔ تصویر در گالری">🖼</a>` : ''}
+        ${dls.report ? `<a href="${apiPath(dls.report)}" download="${t.name.replace(/\.[^.]+$/, '')}-report.json" title="ذخیرهٔ گزارش">📄</a>` : ''}
         ${t.report ? `<button data-act="open" data-id="${t.id}" title="نمایش تحلیل">🎚</button>` : ''}
+        <button class="del" data-act="del" data-id="${t.id}" title="حذف این جلسه">🗑</button>
       </div>`;
   }).join('');
 
@@ -1503,6 +1724,49 @@ function renderTakes() {
       if (t && t.report) openTake(t);
     };
   });
+  box.querySelectorAll('button[data-act="del"]').forEach(btn => {
+    btn.onclick = () => {
+      /* تأیید دو مرحله‌ای داخل خود صفحه (پنجرهٔ confirm در وب‌ویو ممکن است نباشد) */
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = '✔ حذف؟';
+        btn.title = 'برای حذف قطعی دوباره بزن';
+        setTimeout(() => {
+          if (document.body.contains(btn)) {
+            btn.dataset.armed = ''; btn.textContent = '🗑'; btn.title = 'حذف این جلسه';
+          }
+        }, 4000);
+        return;
+      }
+      deleteTake(btn.dataset.id);
+    };
+  });
+}
+
+/* ── حذف یک جلسه (ضبط) از فهرست ── */
+function deleteTake(id) {
+  const i = LIVE.takes.findIndex(x => x.id === id);
+  if (i < 0) return;
+  const t = LIVE.takes[i];
+  try { if (t.url) URL.revokeObjectURL(t.url); } catch (e) {}
+  LIVE.takes.splice(i, 1);
+  /* اگر تحلیلِ همین ضبط روی صفحه باز است، پاکش کن تا داده‌ای جا نماند */
+  if (t.jobId && STATE.jobId === t.jobId) {
+    STATE.jobId = null; STATE.report = null; STATE.videoName = null;
+    const vb = $('videoBox'); if (vb) vb.style.display = 'none';
+    const vp = $('videoPlayer'); if (vp) { try { vp.pause(); } catch (e) {} vp.removeAttribute('src'); }
+    const gb = $('galleryBox'); if (gb) gb.style.display = 'none';
+  }
+  renderTakes();
+  $('liveSub').textContent = '🗑 جلسه حذف شد';
+}
+
+/* ── حذف همهٔ جلسه‌ها ── */
+function deleteAllTakes() {
+  LIVE.takes.forEach(t => { try { if (t.url) URL.revokeObjectURL(t.url); } catch (e) {} });
+  LIVE.takes = [];
+  renderTakes();
+  $('liveSub').textContent = '🗑 همهٔ جلسه‌ها حذف شد';
 }
 
 async function analyzeTake(take) {
@@ -1520,7 +1784,7 @@ async function analyzeTake(take) {
 
     const report = await waitJob(up.job_id, 'prog');
     take.report = report;
-    take.imageUrl = report.meta.visualization_url;
+    take.imageUrl = apiPath(report.meta.visualization_url);
     take.downloads = report.meta.downloads;
     take.busy = false;
     renderTakes();
@@ -1540,6 +1804,69 @@ function openTake(take) {
   STATE.report = take.report;
   renderReport(take.report);
   switchTab('Upload');
+}
+
+/* ═══════════ حلقهٔ نمایش نرم زنده (rAF + میان‌یابی) ═══════════
+   پیام‌ها هر ~۱۲۰ms می‌رسند، ولی صفحه ۶۰ بار در ثانیه رسم می‌شود؛ 따라서
+   نقطه روی خطوط نت «می‌لغزد» نه اینکه بپرد. متن‌ها فقط با تغییر واقعی نت
+   عوض می‌شوند تا چیدمان صفحه هر ۱۲۰ms بازچینی نشود. */
+/* rAF در همهٔ WebViewهای قدیمی هم هست، ولی اگر نبود به تایمر برمی‌گردیم */
+const raf = (fn) => (typeof requestAnimationFrame === 'function')
+  ? requestAnimationFrame(fn) : setTimeout(() => fn(performance.now()), 33);
+const caf = (id) => {
+  try {
+    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id);
+    else clearTimeout(id);
+  } catch (e) {}
+};
+
+function startLiveLoop() {
+  if (LIVE.raf) return;
+  LIVE.lastTs = 0;
+  LIVE.raf = raf(liveFrame);
+}
+
+function stopLiveLoop() {
+  if (LIVE.raf) caf(LIVE.raf);
+  LIVE.raf = null;
+  LIVE.lastTs = 0;
+}
+
+function liveFrame(ts) {
+  if (!LIVE.on) { LIVE.raf = null; return; }
+  LIVE.raf = raf(liveFrame);
+
+  const dt = LIVE.lastTs ? Math.min(0.06, (ts - LIVE.lastTs) / 1000) : 0.016;
+  LIVE.lastTs = ts;
+
+  /* نزدیک شدن نرم به نت هدف (بدون پرش، بدون تأخیر محسوس) */
+  if (LIVE.target != null) {
+    if (LIVE.shown == null || Math.abs(LIVE.target - LIVE.shown) > 6) {
+      LIVE.shown = LIVE.target;               // پرش بزرگ = نت جدید، نه لغزش
+    } else {
+      const k = 1 - Math.exp(-dt / 0.055);
+      LIVE.shown += (LIVE.target - LIVE.shown) * k;
+      if (Math.abs(LIVE.target - LIVE.shown) < 0.004) LIVE.shown = LIVE.target;
+    }
+    LIVE.dotAlpha = Math.min(1, LIVE.dotAlpha + dt / 0.10);
+  } else {
+    LIVE.dotAlpha = Math.max(0, LIVE.dotAlpha - dt / 0.18);
+    if (LIVE.dotAlpha <= 0) LIVE.shown = null;
+  }
+
+  /* حداکثر ~۳۰ رسم در ثانیه: نرم برای چشم، سبک برای باتری */
+  if (ts - LIVE.lastDraw >= 32) { LIVE.lastDraw = ts; drawLive(); }
+}
+
+/* کادر گرد (در سبک مشترک هم هست؛ این برای بوم زنده) */
+function roundRect(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
 }
 
 /* ═══════════ بوم زنده (مختصات CSS + DPR) ═══════════ */
@@ -1562,8 +1889,9 @@ function drawLive() {
   g.strokeStyle = 'rgba(120,152,205,.28)'; g.lineWidth = 1.4;
   roundRect(g, 3, 3, W - 6, H - 6, 14); g.stroke();
 
-  let center = LIVE.midi;
-  if (center == null) center = LIVE.hi ? LIVE.hi.midi : 60;
+  let center = (LIVE.shown != null) ? LIVE.shown
+             : (LIVE.target != null) ? LIVE.target
+             : (LIVE.hi ? LIVE.hi.midi : 60);
   const loLim = Math.round(center) - 12;
   const hiLim = Math.round(center) + 12;
   const yOf = m => MT + (1 - (m - loLim) / (hiLim - loLim)) * (H - MT - MB);
@@ -1606,12 +1934,17 @@ function drawLive() {
     g.fillStyle = col + '.95)';
     g.font = `700 ${phone ? 9 : 9.5}px Estedad, Tahoma, sans-serif`;
     const tx = tag === 'HIGH' ? ML + 2 : W - (phone ? 74 : 66);
-    g.fillText(`${tag} ${rec.note_name}`, tx, y - 4);
+    const degLbl = (LIVE.lo && rec.midi != null)
+      ? ' · درجهٔ ' + faN(Math.round((rec.midi - LIVE.lo.midi) * (8 / 12)) + 1) : '';
+    g.fillText(`${tag === 'HIGH' ? 'بالاترین' : 'پایین‌ترین'} ${solfege(rec.f0_hz)}${degLbl}`,
+      tag === 'HIGH' ? ML + 2 : W - (phone ? 132 : 120), y - 4);
   });
 
-  // نقطهٔ جاری
-  if (LIVE.midi != null) {
-    const y = yOf(LIVE.midi);
+  // نقطهٔ جاری (با محو شدن نرم وقتی صدا قطع می‌شود)
+  if (LIVE.shown != null && LIVE.dotAlpha > 0.01) {
+    g.save();
+    g.globalAlpha = LIVE.dotAlpha;
+    const y = yOf(LIVE.shown);
     const x = W / 2;
     const R = phone ? 28 : 24;
     const glow = g.createRadialGradient(x, y, 0, x, y, R);
@@ -1622,11 +1955,12 @@ function drawLive() {
     g.beginPath(); g.arc(x, y, R, 0, Math.PI * 2); g.fill();
     g.fillStyle = '#fffaf0';
     g.beginPath(); g.arc(x, y, phone ? 5.5 : 4.6, 0, Math.PI * 2); g.fill();
+    g.restore();
   }
 }
 
 /* ═══════════ راه‌اندازی ═══════════ */
-setMode('live');
+initRecMode();
 drawLive();
 
 /* چرخش/تغییر اندازه: نمودارها را دوباره بساز */
@@ -1641,18 +1975,20 @@ window.addEventListener('resize', () => {
 
 /* جلوگیری از بسته‌شدن ناخواسته در حال ضبط */
 window.addEventListener('beforeunload', e => {
-  if (LIVE.on && LIVE.mode === 'rec') {
+  if (LIVE.on) {
     e.preventDefault();
     e.returnValue = '';
   }
 });
 
 /* ثبت Service Worker (آفلاین + نصب‌پذیری) */
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && !window.NativeApp) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   });
 }
 </script>
+<!-- پل بومی اپ اندروید (در مرورگر بی‌اثر است) -->
+<script src="native.js"></script>
 </body>
 </html>
