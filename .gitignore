@@ -21,3 +21,7 @@ server/cache/
 # آیکون‌های اپ (PWA/اندروید) و فونت‌های محلی
 !web/icons/*.png
 !web/fonts/*.woff2
+
+# آیکون‌های اپ بومی «همیار قاری» (بقیهٔ PNG ها همچنان نادیده گرفته می‌شوند)
+!android-qari/res/mipmap-*/ic_launcher.png
+*.idsig
