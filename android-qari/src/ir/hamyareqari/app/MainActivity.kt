@@ -42,7 +42,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.1.5"
+        const val VERSION = "1.1.6"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -866,6 +866,16 @@ class MainActivity : Activity() {
         grid.addView(statLine("نت‌های خوانده‌شده", PitchMath.faDigits(r.noteCount)))
         grid.addView(statLine("مدت خواندن", PitchMath.faFixed(r.sungSec, 0) + " از " + PitchMath.faFixed(r.durationSec, 0) + " ثانیه"))
         grid.addView(statLine("مکث‌ها (≥۰٫۳ ثانیه)", PitchMath.faDigits(r.pauseCount) + " · بلندترین " + PitchMath.faFixed(r.longestPause, 1) + " ثانیه"))
+        if (r.validShare > 0.0) {
+            grid.addView(
+                statLine(
+                    "سهم صدای معتبر",
+                    PitchMath.faFixed(r.validShare * 100.0, 0) + "٪" +
+                        (if (r.estimatedShare > 0.001)
+                            " (تخمینی " + PitchMath.faFixed(r.estimatedShare * 100.0, 1) + "٪)" else "")
+                )
+            )
+        }
         stats.addView(grid)
 
         // نت‌های لحظه‌ای خام: جدا از گسترهٔ واقعی گزارش می‌شوند

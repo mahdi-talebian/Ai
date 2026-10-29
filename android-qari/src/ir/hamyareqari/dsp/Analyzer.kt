@@ -4,6 +4,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /** اطلاعات کیفیت تحلیل */
 class QualityInfo(
@@ -42,11 +43,31 @@ class Report(
     val sungSec: Double,
     val quality: QualityInfo,
     val contourT: DoubleArray,
-    val contourHz: DoubleArray
+    val contourHz: DoubleArray,
+    /** وضعیت هر نقطهٔ منحنی (PitchCurve.SILENT/INVALID/UNCERTAIN/VALID/ESTIMATED) */
+    val contourStatus: ByteArray = ByteArray(contourT.size),
+    /** اعتماد هر نقطهٔ منحنی (۰..۱) */
+    val contourConfidence: DoubleArray = DoubleArray(contourT.size),
+    /** سهم فریم‌های معتبر از کل تحلیل */
+    val validShare: Double = 0.0,
+    /** سهم فریم‌های نامطمئن (تولید نت نمی‌کنند) */
+    val uncertainShare: Double = 0.0,
+    /** سهم فریم‌های درون‌یابی‌شده (تخمینی) */
+    val estimatedShare: Double = 0.0,
+    /** نام موتور F0 که این گزارش با آن ساخته شده */
+    val engineName: String = "legacy"
 ) {
     val centerName: String get() = PitchMath.noteName(centerHz)
     val noteCount: Int get() = notes.size
     val hasData: Boolean get() = highest != null && lowest != null
+}
+
+/** موتور F0 انتخاب‌شده برای مسیر فایل */
+enum class Engine {
+    /** موتور جدید: YIN + MPM + اعتبارسنجی فریم + ردیابی نامزدها */
+    ENHANCED,
+    /** مسیر قدیمی (YIN + اصلاح نردبان هارمونیک) — برای مقایسه و بازگشت */
+    LEGACY
 }
 
 object Analyzer {
@@ -166,10 +187,17 @@ object Analyzer {
         rawInput: DoubleArray,
         sampleRate: Int,
         progress: ((String, Double) -> Unit)? = null
+    ): Report = analyze(rawInput, sampleRate, progress, Engine.ENHANCED)
+
+    fun analyze(
+        rawInput: DoubleArray,
+        sampleRate: Int,
+        progress: ((String, Double) -> Unit)?,
+        engine: Engine
     ): Report {
         progress?.invoke("preprocess", 0.02)
         val prepared = preprocess(rawInput, sampleRate)
-        return analyzeSignal(DoubleSignal(prepared, sampleRate), false, progress)
+        return analyzeSignal(DoubleSignal(prepared, sampleRate), false, progress, engine)
     }
 
     /**
@@ -180,6 +208,13 @@ object Analyzer {
         sigInput: Signal,
         denoise: Boolean = false,
         progress: ((String, Double) -> Unit)? = null
+    ): Report = analyzeSignal(sigInput, denoise, progress, Engine.ENHANCED)
+
+    fun analyzeSignal(
+        sigInput: Signal,
+        denoise: Boolean,
+        progress: ((String, Double) -> Unit)?,
+        engine: Engine
     ): Report {
         var sig = sigInput
         if (denoise) {
@@ -197,16 +232,39 @@ object Analyzer {
 
         // گام زمانی: فایل‌های کوتاه دقیق‌تر (۵ms)، فایل‌های بلند سریع‌تر (۱۰ms)
         val hopMs = if (duration <= 180.0) 5.0 else 10.0
+
+        // ── مرحلهٔ B/C: تخمین و ردیابی F0 ──
         progress?.invoke("yin", 0.05)
-        val track = PitchTracker.track(
-            sig, hopMs, FMIN, FMAX,
-            progress = { p -> progress?.invoke("yin", 0.05 + 0.55 * p) }
-        )
-        progress?.invoke("ladder", 0.62)
-        val corr = Harmonics.correctRuns(track, sig, FMIN, FMAX) { p ->
-            progress?.invoke("ladder", 0.62 + 0.10 * p)
+        val curve: PitchCurve?
+        val track: PitchTrack
+        var octaveUp = 0
+        var octaveDown = 0
+        if (engine == Engine.ENHANCED) {
+            curve = PitchEngine.analyze(
+                sig,
+                hopMs = hopMs,
+                options = PitchEngine.Options(),
+                progress = { p -> progress?.invoke("yin", 0.05 + 0.55 * p) }
+            )
+            track = curve.toTrack()
+            octaveUp = curve.repairedUp
+            octaveDown = curve.repairedDown
+            progress?.invoke("ladder", 0.62)
+        } else {
+            curve = null
+            val raw = PitchTracker.track(
+                sig, hopMs, FMIN, FMAX,
+                progress = { p -> progress?.invoke("yin", 0.05 + 0.55 * p) }
+            )
+            progress?.invoke("ladder", 0.62)
+            val corr = Harmonics.correctRuns(raw, sig, FMIN, FMAX) { p ->
+                progress?.invoke("ladder", 0.62 + 0.10 * p)
+            }
+            track = PitchTrack(raw.hop, raw.sampleRate, raw.t, corr.f0, raw.clarity, raw.rms)
+            octaveUp = corr.up
+            octaveDown = corr.down
         }
-        val fixed = PitchTrack(track.hop, track.sampleRate, track.t, corr.f0, track.clarity, track.rms)
+        val fixed = track
 
         progress?.invoke("notes", 0.74)
         var notes = Segmenter.segment(fixed)
@@ -250,24 +308,52 @@ object Analyzer {
         val shares = Segmenter.shares(notes, sungSec)
         val pauses = Segmenter.pauses(notes, duration)
 
-        // کیفیت
-        val voicedRms = ArrayList<Double>()
-        val quietRms = ArrayList<Double>()
+        // ── کیفیت ──
+        // SNR = میانگین انرژی فریم‌های صدادار ÷ انرژی «پس‌زمینه». پس‌زمینه
+        // فریم‌هایی هستند که انرژی‌شان به‌روشنی زیر سطح صدای قاری است
+        // (< ۱۵٪ میانهٔ انرژی صدادار). اگر چنین فریم‌هایی وجود نداشته باشد،
+        // اندازه‌گیری نویز ممکن نیست و فایل «تمیز» تلقی می‌شود — همان معنایی
+        // که نسخهٔ قبلی گزارش می‌داد.
+        var voicedSum = 0.0
+        var voicedCnt = 0
+        val voicedRmsList = ArrayList<Double>()
         for (i in 0 until fixed.size) {
-            if (fixed.f0[i] > 0.0) voicedRms.add(fixed.rms[i]) else quietRms.add(fixed.rms[i])
+            if (fixed.f0[i] > 0.0) {
+                voicedSum += fixed.rms[i] * fixed.rms[i]
+                voicedCnt++
+                voicedRmsList.add(fixed.rms[i])
+            }
         }
-        val snr = if (voicedRms.isNotEmpty()) {
-            val vr = PitchMath.mean(voicedRms)
-            val qr = if (quietRms.isNotEmpty()) PitchMath.mean(quietRms) else 0.0
-            if (qr > 1e-9) 20.0 * kotlin.math.log10(vr / qr) else 60.0
+        val medVoicedRms = if (voicedRmsList.isNotEmpty())
+            PitchMath.median(voicedRmsList.toDoubleArray()) else 0.0
+        var quietSum = 0.0
+        var quietCnt = 0
+        if (medVoicedRms > 0.0) {
+            val gate = 0.15 * medVoicedRms
+            for (i in 0 until fixed.size) {
+                if (fixed.f0[i] > 0.0) continue
+                val r = fixed.rms[i]
+                if (r < gate) { quietSum += r * r; quietCnt++ }
+            }
+        }
+        val snr = if (voicedCnt > 0) {
+            val vr = if (medVoicedRms > 0.0) sqrt(voicedSum / voicedCnt) else 0.0
+            val qr = if (quietCnt > 8) sqrt(quietSum / quietCnt) else 0.0
+            if (qr > 1e-7) 20.0 * kotlin.math.log10(vr / qr) else 60.0
         } else 0.0
 
         progress?.invoke("agreement", 0.93)
-        val agreement = SecondOpinion.agreement(sig, fixed)
+        // توافق دو تخمین‌گر: در موتور جدید روی همهٔ فریم‌ها محاسبه شده است؛
+        // در مسیر قدیمی با نمونه‌گیری از موتور دوم برآورد می‌شود.
+        val agreement = curve?.agreementPct ?: SecondOpinion.agreement(sig, fixed)
 
         var confSum = 0.0
         for (nt in notes) confSum += nt.confidence
         val meanConf = if (notes.isNotEmpty()) confSum / notes.size else 0.0
+
+        val validShare = if (curve != null && fixed.size > 0) curve.voicedFrames.toDouble() / fixed.size else 0.0
+        val uncertainShare = if (curve != null && fixed.size > 0) curve.uncertainFrames.toDouble() / fixed.size else 0.0
+        val estimatedShare = if (curve != null && fixed.size > 0) curve.estimatedFrames.toDouble() / fixed.size else 0.0
 
         val warnings = ArrayList<String>()
         if (duration < 3.0) warnings.add("فایل کوتاه است؛ برای نتیجهٔ مطمئن دست‌کم ۱۰ ثانیه بخوانید.")
@@ -277,6 +363,17 @@ object Analyzer {
         if (rawHighest != null && highest != null &&
             PitchMath.cents(rawHighest.f0, highest.f0) > 200.0
         ) warnings.add("نت‌های لحظه‌ای پرت (جیغ/لغزش) نادیده گرفته شدند.")
+        if (curve != null) {
+            if (uncertainShare > 0.35) {
+                warnings.add("بخش زیادی از صدا «نامطمئن» تشخیص داده شد (همهمه/تشویق/اکو یا نویز) و در نت‌ها نیامد.")
+            }
+            if (estimatedShare > 0.02) {
+                warnings.add("بخشی از منحنی با درون‌یابی کوتاه پر شده است؛ این نقاط «تخمینی» هستند.")
+            }
+            if (curve.repairedOctaves > 0) {
+                warnings.add("پرش‌های اکتاوی/پرت با شاهد همسایگی اصلاح شدند.")
+            }
+        }
 
         val status = when {
             !hasData(highest, lowest) -> "poor"
@@ -286,23 +383,46 @@ object Analyzer {
             else -> "poor"
         }
 
-        // منحنی نمایش: فشرده‌سازی تا حداکثر ۶۰۰۰ نقطه
+        // منحنی نمایش: فشرده‌سازی تا حداکثر ۶۰۰۰ نقطه — با حفظ وضعیت هر نقطه
         val maxPoints = 6000
         val stride = max(1, fixed.size / maxPoints)
         val nPts = (fixed.size + stride - 1) / stride
         val ct = DoubleArray(nPts)
         val ch = DoubleArray(nPts)
+        val cs = ByteArray(nPts)
+        val cc = DoubleArray(nPts)
         for (p in 0 until nPts) {
             val a = p * stride
             val b = min(fixed.size, a + stride)
             ct[p] = fixed.t[a]
-            // در هر بلوک: اگر بیش از نیمی صدادار بود، میانهٔ صدادارها
             var count = 0
             var sum = 0.0
+            var confSumBlock = 0.0
+            var validFrames = 0
+            var estFrames = 0
+            // میانهٔ فرکانس فریم‌های موجود در بلوک (به‌جای میانگین، تا اوج‌های
+            // لحظه‌ای تحریر در هم نروند)
+            val vals = ArrayList<Double>(b - a)
             for (k in a until b) {
-                if (fixed.f0[k] > 0.0) { count++; sum += fixed.f0[k] }
+                if (curve != null) confSumBlock += curve.confidence[k]
+                if (fixed.f0[k] > 0.0) {
+                    vals.add(fixed.f0[k])
+                    count++
+                    if (curve != null && curve.estimated[k]) estFrames++
+                } else if (curve != null && curve.status[k] == PitchCurve.VALID) {
+                    validFrames++
+                }
             }
-            ch[p] = if (count * 2 >= (b - a) && count > 0) sum / count else 0.0
+            if (curve != null && b > a) {
+                cc[p] = confSumBlock / (b - a)
+                cs[p] = when {
+                    estFrames > 0 -> PitchCurve.ESTIMATED
+                    count * 2 >= (b - a) -> PitchCurve.VALID
+                    count > 0 -> PitchCurve.UNCERTAIN
+                    else -> PitchCurve.INVALID
+                }
+            }
+            ch[p] = if (count * 2 >= (b - a) && count > 0) PitchMath.median(vals.toDoubleArray()) else 0.0
         }
 
         progress?.invoke("done", 1.0)
@@ -334,12 +454,18 @@ object Analyzer {
                 agreementPct = agreement,
                 meanConfidence = meanConf,
                 sampleRate = sampleRate,
-                octaveUp = corr.up,
-                octaveDown = corr.down,
+                octaveUp = octaveUp,
+                octaveDown = octaveDown,
                 warnings = warnings
             ),
             contourT = ct,
-            contourHz = ch
+            contourHz = ch,
+            contourStatus = cs,
+            contourConfidence = cc,
+            validShare = validShare,
+            uncertainShare = uncertainShare,
+            estimatedShare = estimatedShare,
+            engineName = if (engine == Engine.ENHANCED) "enhanced" else "legacy"
         )
     }
 

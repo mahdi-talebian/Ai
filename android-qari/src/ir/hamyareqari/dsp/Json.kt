@@ -68,6 +68,14 @@ object Json {
         }
         sb.append("]\n  },\n")
 
+        // ── اعتبارسنجی صدا (افزوده؛ کلیدهای قبلی دست‌نخورده) ──
+        sb.append("  \"analysis\": {\n")
+        sb.append("    \"engine\": \"").append(esc(r.engineName)).append("\",\n")
+        sb.append("    \"valid_share_pct\": ").append(num(r.validShare * 100.0)).append(",\n")
+        sb.append("    \"uncertain_share_pct\": ").append(num(r.uncertainShare * 100.0)).append(",\n")
+        sb.append("    \"estimated_share_pct\": ").append(num(r.estimatedShare * 100.0)).append("\n")
+        sb.append("  },\n")
+
         sb.append("  \"pauses\": {\n")
         sb.append("    \"count\": ").append(r.pauseCount).append(",\n")
         sb.append("    \"longest_sec\": ").append(num(r.longestPause)).append(",\n")

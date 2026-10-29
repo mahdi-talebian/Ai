@@ -47,6 +47,30 @@ object SelfTest {
         return out
     }
 
+    /**
+     * آزمون دوم: نویز/سکوت نباید «نت» تولید کند.
+     * این آزمون همان لایهٔ اعتبارسنجی فریم را می‌سنجد که برای رد تشویق،
+     * همهمه و باد اضافه شده است.
+     */
+    private fun noiseTest(): Result {
+        val n = (4.0 * SR).toInt()
+        val x = DoubleArray(n)
+        var rnd = 1234567L
+        for (i in 0 until n) {
+            rnd = rnd * 6364136223846793005L + 1442695040888963407L
+            x[i] = ((rnd ushr 40).toDouble() / (1 shl 24).toDouble() - 0.5) * 0.05
+        }
+        val r = Analyzer.analyze(x, SR, null)
+        val falseNotes = r.noteCount
+        val ok = falseNotes == 0 && r.sungSec < 0.05
+        return Result(
+            ok,
+            if (ok) "✅ نویز و سکوت نت تولید نکرد" else "⚠️ نویز به‌عنوان صدا پذیرفته شد",
+            "نویز سفید ۴ ثانیه‌ای → ${PitchMath.faDigits(falseNotes)} نت · " +
+                "مدت خوانده‌شده ${PitchMath.faFixed(r.sungSec, 2)} ثانیه"
+        )
+    }
+
     fun run(): Result {
         val started = System.currentTimeMillis()
         val a3 = tone(220.0, 1.3, 3)
@@ -65,11 +89,14 @@ object SelfTest {
         val errHi = r.highest?.let { abs(PitchMath.cents(it.f0, 440.0)) } ?: 999.0
         val errLo = r.lowest?.let { abs(PitchMath.cents(it.f0, 220.0)) } ?: 999.0
         val ok = hi == "A4" && lo == "A3" && abs(span - 12.0) < 0.4 && errHi < 12 && errLo < 12
+        val noise = noiseTest()
+        val okAll = ok && noise.ok
         val detail = "بالاترین $hi · پایین‌ترین $lo · گستره ${PitchMath.faFixed(span, 1)} نیم‌پرده · " +
-            "خطای کوک ${PitchMath.faFixed(maxOf(errHi, errLo), 1)} سنت · ${PitchMath.faDigits(ms)} میلی‌ثانیه"
+            "خطای کوک ${PitchMath.faFixed(maxOf(errHi, errLo), 1)} سنت · ${PitchMath.faDigits(ms)} میلی‌ثانیه" +
+            "\n" + noise.title + " — " + noise.detail
         return Result(
-            ok,
-            if (ok) "✅ موتور تحلیل سالم است" else "⚠️ نتیجه غیرمنتظره بود",
+            okAll,
+            if (okAll) "✅ موتور تحلیل سالم است" else "⚠️ نتیجه غیرمنتظره بود",
             detail
         )
     }
