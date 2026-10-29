@@ -76,12 +76,16 @@ git merge --no-ff origin/Android # 17388a7
 |---|---|
 | مسیر | `android-qari/release/hamyar-qari-final.apk` (کپی: `release/hamyar-qari-1.1.6.apk`) |
 | اندازه | ۲٬۳۶۴٬۴۶۹ بایت (۲٫۳MB) |
-| MD5 | `3746b8d5670993c3f427c0ebce26ddbe` |
+| MD5 | `4f919d23df9235a330b894c9933b419d` (deleting `classes.dex`: `279b4e8d21a8e669973800c087077d98`) |
 | `applicationId` | `ir.hamyareqari.app` |
 | نسخه | `versionName 1.1.6` / `versionCode 8` |
 | SDK | minSdk 26 · targetSdk 34 |
 | مجوزها | `RECORD_AUDIO` + `WRITE_EXTERNAL_STORAGE` (فقط ≤۲۸) — بدون اینترنت |
 | امضا | APK Signature Scheme v2 + v3 معتبر، `CN=Hamyar Qari`، SHA-256 `1dc4ead2…37ea5` (همان کلید نسخه‌های قبلی) |
+
+بازسازی از `HEAD` (`0f3e08e`) انجام شد و `classes.dex` و `AndroidManifest.xml`
+داخل APK **بایت‌به‌بایت یکسان** با فایل تحویلی‌اند (md5 مشترک
+`279b4e8d…`/`c0ce1d37…`)؛ تفاوت md5 کل فایل فقط از زمان‌مهر zip و امضاست.
 
 **اثبات اینکه APK از درخت ادغام‌شده ساخته شده** (نه از یک شاخهٔ تنها): در
 `classes.dex` هم `PitchEngine`/`DualEstimator`/`Engine`/`PitchCurve` (فقط
