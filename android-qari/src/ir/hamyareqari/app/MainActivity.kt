@@ -381,6 +381,8 @@ class MainActivity : Activity() {
             return
         }
         busy = true
+        playerToken++
+        playerLoading = false
         player?.release(); player = null
         sharePcm = null
         analyzeBtn.isEnabled = false
@@ -658,6 +660,8 @@ class MainActivity : Activity() {
         shareBtn.setOnClickListener { exportJson(r, share = true) }
         resultBox.addView(export)
 
+        prewarmPlayer()
+
         resultBox.addView(Theme.space(this, 10f))
         resultBox.addView(
             Theme.text(
@@ -670,18 +674,54 @@ class MainActivity : Activity() {
         )
     }
 
+    private var playerToken = 0
+    private var playerLoading = false
+
+    /** فایل WAV نمونه را در پس‌زمینه می‌سازد تا دکمهٔ پخش بی‌درنگ جواب بدهد */
+    private fun prewarmPlayer() {
+        val pcm = sharePcm ?: return
+        if (pcm.size > AudioIo.TARGET_RATE * 900) return
+        val token = ++playerToken
+        playerLoading = true
+        Thread {
+            val candidate = AudioIo.Player(this)
+            val ok = candidate.load(pcm, AudioIo.TARGET_RATE)
+            ui.post {
+                if (token != playerToken) {
+                    candidate.release()
+                    return@post
+                }
+                playerLoading = false
+                if (ok) {
+                    player?.release()
+                    player = candidate
+                } else {
+                    candidate.release()
+                }
+            }
+        }.start()
+    }
+
     private fun ensurePlayer(): AudioIo.Player? {
         val pcm = sharePcm ?: return null
         if (pcm.size > AudioIo.TARGET_RATE * 900) {
             toast("پخش نمونه برای فایل‌های بیش از ۱۵ دقیقه خاموش است")
             return null
         }
-        val p = player ?: AudioIo.Player(this).also { player = it }
-        if (!p.load(pcm, AudioIo.TARGET_RATE)) {
-            toast("پخش ممکن نشد")
+        player?.let { return it }
+        if (playerLoading) {
+            toast("پخش در حال آماده‌سازی است؛ یک لحظه بعد بزنید")
             return null
         }
-        return p
+        val p = AudioIo.Player(this)
+        return if (p.load(pcm, AudioIo.TARGET_RATE)) {
+            player = p
+            p
+        } else {
+            p.release()
+            toast("پخش ممکن نشد")
+            null
+        }
     }
 
     private fun startTicker(chart: ChartView, label: TextView, total: Double) {
