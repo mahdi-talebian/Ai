@@ -672,6 +672,7 @@ class MainActivity : Activity() {
         // ══ پخش‌کنندهٔ صوتی ══
         val playerBar = AudioPlayerBar(this)
         playerBar.setTotal(r.durationSec)
+        playerBar.setWaveform(sharePcm)
         val lpBar = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         lpBar.topMargin = Theme.dp(this, 10f)
         playerBar.layoutParams = lpBar
@@ -713,6 +714,17 @@ class MainActivity : Activity() {
             }
         }
         playerBar.onSpeed = { v -> player?.setSpeed(v) }
+        playerBar.onSkip = { delta ->
+            val p = ensurePlayer()
+            if (p != null) {
+                val target = (p.positionSec() + delta).coerceIn(0.0, p.durationSec())
+                p.setSpeed(playerBar.currentSpeed())
+                p.playFrom(target)
+                chart.setPlayhead(target)
+                playerBar.setPosition(target)
+                startTicker(chart, playerBar)
+            }
+        }
         playerBar.onFollowToggle = { on -> chart.followPlayhead = on }
         playerBar.setFollowing(chart.followPlayhead)
 
@@ -931,6 +943,14 @@ class MainActivity : Activity() {
         tickBaseAt = System.currentTimeMillis()
         tickLastSync = tickBaseAt
         val total = chart.totalDuration()
+        player?.onComplete {
+            ui.post {
+                stopTicker()
+                chart.setPlayhead(total)
+                bar.setPosition(total)
+                bar.setPlaying(false)
+            }
+        }
         val r = object : Runnable {
             override fun run() {
                 val p = player ?: return
@@ -942,7 +962,7 @@ class MainActivity : Activity() {
                     tickLastSync = now
                 }
                 val playing = p.isPlaying
-                val pos = (tickBasePos + (now - tickBaseAt) / 1000.0).coerceIn(0.0, total)
+                val pos = (tickBasePos + (now - tickBaseAt) / 1000.0 * bar.currentSpeed()).coerceIn(0.0, total)
                 chart.setPlayhead(pos)
                 bar.setPosition(pos)
                 if (playing) {
