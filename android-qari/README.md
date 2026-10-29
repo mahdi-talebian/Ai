@@ -19,6 +19,28 @@
 
 ---
 
+## 🌿 شاخه‌ها
+
+| شاخه | چیست |
+|---|---|
+| `main` | نسخهٔ وبِ مرجع (رابط HTML/سرور) |
+| `MOBILE` | شاخهٔ موبایل/نمونهٔ اولیه |
+| `android` | **شاخهٔ مادرِ اپ بومی Kotlin** — مستقل، کنار دو شاخهٔ بالا |
+
+`android` عمداً **با هیچ شاخه‌ای مرج نمی‌شود**؛ تاریخِ خودش را دارد و فقط
+جلو می‌رود (fast-forward). ساخت/هم‌گام‌سازی‌اش:
+
+```bash
+bash android-qari/tools/sync_android_branch.sh --dry-run   # بررسی
+bash android-qari/tools/sync_android_branch.sh             # ساخت یا هم‌گام‌سازی
+```
+
+اسکریپت هیچ merge و هیچ pull requestی نمی‌سازد، بازنویسیِ تاریخ را رد می‌کند
+و حذف/force-push روی `android` را ممنوع می‌کند.
+
+
+---
+
 ## نصب
 
 1. فایل `hamyar-qari-1.0.0.apk` را از بخش Releases همین مخزن دانلود کنید.
