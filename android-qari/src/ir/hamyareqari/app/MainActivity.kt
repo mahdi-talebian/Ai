@@ -673,6 +673,7 @@ class MainActivity : Activity() {
         val playerBar = AudioPlayerBar(this)
         playerBar.setTotal(r.durationSec)
         playerBar.setWaveform(sharePcm)
+        playerBar.setPitchTrace(chart.spec)
         val lpBar = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         lpBar.topMargin = Theme.dp(this, 10f)
         playerBar.layoutParams = lpBar
@@ -714,6 +715,16 @@ class MainActivity : Activity() {
             }
         }
         playerBar.onSpeed = { v -> player?.setSpeed(v) }
+        playerBar.onTraceSeek = { sec ->
+            val p = ensurePlayer()
+            if (p != null) {
+                p.setSpeed(playerBar.currentSpeed())
+                p.playFrom(sec)
+                chart.setPlayhead(sec)
+                playerBar.setPosition(sec)
+                startTicker(chart, playerBar)
+            }
+        }
         playerBar.onSkip = { delta ->
             val p = ensurePlayer()
             if (p != null) {
