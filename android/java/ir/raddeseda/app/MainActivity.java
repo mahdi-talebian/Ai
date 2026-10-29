@@ -601,22 +601,47 @@ public class MainActivity extends Activity {
                            long durationMs) throws IOException {
             boolean video = mime.startsWith("video/");
             boolean image = mime.startsWith("image/");
-            String dirName = video ? Environment.DIRECTORY_MOVIES
-                    : image ? Environment.DIRECTORY_PICTURES
-                    : Environment.DIRECTORY_DOWNLOADS;
-            /* RELATIVE_PATH باید اسلش پایانی داشته باشد، وگرنه بعضی دستگاه‌ها
-               فایل را در ریشه می‌سازند یا insert را برمی‌گردانند (منبع خطای «ناموفق بود») */
-            String rel = dirName + "/";
-            Uri collection = video ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                    : image ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                    : MediaStore.Downloads.EXTERNAL_CONTENT_URI;
 
+            /* ── چند مقصد، تا گالریِ سازندهٔ گوشی هم پیدایش کند ──────────────
+               فقط «Movies» کافی نبود: بعضی گالری‌ها (به‌ویژه روی MIUI/OneUI)
+               پوشهٔ Movies را نشان نمی‌دهند و فقط DCIM را ایندکس می‌کنند.
+               ترتیب: DCIM/Camera (همان‌جایی که ویدیوی دوربین می‌رود) و بعد
+               پوشهٔ استانداردِ Movies/Pictures. اولین موفق برمی‌گردد. */
+            String[] rels;
+            Uri collection;
+            if (video) {
+                rels = new String[]{"DCIM/Camera/", "Movies/"};
+                collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+            } else if (image) {
+                rels = new String[]{"DCIM/RaddeSeda/", "Pictures/"};
+                collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+            } else {
+                rels = new String[]{"Download/"};
+                collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+            }
+
+            Exception lastErr = null;
+            for (int i = 0; i < rels.length; i++) {
+                try {
+                    return saveInto(ctx, src, name, mime, collection, rels[i],
+                            video, durationMs);
+                } catch (Exception e) {
+                    lastErr = e;
+                }
+            }
+            throw new IOException("MediaStore: "
+                    + (lastErr != null && lastErr.getMessage() != null
+                    ? lastErr.getMessage() : "insert failed"));
+        }
+
+        /** نوشتن در یک مقصدِ مشخص + تأییدِ ردیف */
+        private static String saveInto(Context ctx, File src, String name, String mime,
+                                       Uri collection, String rel, boolean video,
+                                       long durationMs) throws IOException {
             ContentValues v = new ContentValues();
             v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
             v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
             v.put(MediaStore.MediaColumns.RELATIVE_PATH, rel);
-            /* طولِ ویدیو از همان اول در ردیفِ رسانه نوشته می‌شود؛ گالری‌ها
-               پیش از ایندکسِ کاملِ فایل همین را نشان می‌دهند. */
             if (video && durationMs > 0) {
                 try {
                     v.put(MediaStore.Video.Media.DURATION, durationMs);
@@ -625,35 +650,25 @@ public class MainActivity extends Activity {
             }
 
             Uri item = null;
-            Exception lastErr = null;
-
-            /* تلاش ۱: مسیر استاندارد با IS_PENDING (دسترسی انحصاری تا پایان نوشتن) */
+            /* تلاش ۱: با IS_PENDING (دسترسی انحصاری تا پایانِ نوشتن) */
             try {
                 ContentValues pending = new ContentValues(v);
                 pending.put(MediaStore.MediaColumns.IS_PENDING, 1);
                 item = ctx.getContentResolver().insert(collection, pending);
-            } catch (Exception e) {
-                lastErr = e;
+            } catch (Exception ignored) {
             }
-            /* تلاش ۲: بدون IS_PENDING (بعضی فروشنده‌ها آن را قبول نمی‌کنند) */
+            /* تلاش ۲: بدون IS_PENDING */
             if (item == null) {
-                try {
-                    item = ctx.getContentResolver().insert(collection, v);
-                } catch (Exception e) {
-                    lastErr = e;
-                }
+                item = ctx.getContentResolver().insert(collection, v);
             }
-            if (item == null) {
-                throw new IOException("MediaStore insert failed"
-                        + (lastErr != null && lastErr.getMessage() != null ? ": " + lastErr.getMessage() : ""));
-            }
+            if (item == null) throw new IOException("insert failed");
 
             long written = 0;
             OutputStream os = null;
             try {
                 os = ctx.getContentResolver().openOutputStream(item, "w");
                 if (os == null) os = ctx.getContentResolver().openOutputStream(item);
-                if (os == null) throw new IOException("MediaStore open failed");
+                if (os == null) throw new IOException("open failed");
                 InputStream in = new FileInputStream(src);
                 byte[] buf = new byte[64 * 1024];
                 int n;
@@ -668,15 +683,15 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 try { if (os != null) os.close(); } catch (Exception ignored) {}
                 try { ctx.getContentResolver().delete(item, null, null); } catch (Exception ignored) {}
-                throw new IOException("نوشتن در گالری ناموفق بود"
-                        + (e.getMessage() != null ? ": " + e.getMessage() : ""));
+                throw new IOException("write failed: "
+                        + (e.getMessage() != null ? e.getMessage() : e.toString()));
             }
             if (written <= 0) {
                 try { ctx.getContentResolver().delete(item, null, null); } catch (Exception ignored) {}
-                throw new IOException("فایلِ خالی نوشته شد");
+                throw new IOException("empty file");
             }
 
-            /* پایان کار: طول + IS_PENDING=0 تا فایل در گالری دیده و کامل خوانده شود */
+            /* پایان کار: طول + IS_PENDING=0 */
             try {
                 ContentValues done = new ContentValues();
                 done.put(MediaStore.MediaColumns.IS_PENDING, 0);
@@ -687,11 +702,10 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {
             }
 
-            /* تأییدِ واقعی: ردیف باید موجود و اندازه‌اش > ۰ باشد.
-               «ذخیره شد»ی که پشتش فایلی در گالری نباشد، همان مشکلِ قبلی است. */
+            /* تأییدِ واقعی: ردیف باید باشد و اندازه‌اش > ۰ */
             if (querySize(ctx, item) <= 0) {
                 try { ctx.getContentResolver().delete(item, null, null); } catch (Exception ignored) {}
-                throw new IOException("ردیفِ رسانه تأیید نشد");
+                throw new IOException("row not verified");
             }
             return "✅ در گالری ذخیره شد: " + rel + name;
         }
@@ -866,6 +880,34 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void toast(String msg) {
             toastUi(msg);
+        }
+
+        /* ═══ کدگذارِ بومی (MediaCodec) ══════════════════════════════════
+           WebCodecs یک قابلیتِ WebView است و همیشه نیست؛ اندروید خودش
+           کدگذارِ H.264 دارد. این دو متد توانِ واقعیِ دستگاه را می‌سنجند. */
+        @JavascriptInterface
+        public String videoProbe() {
+            try {
+                return NativeVideo.probeJson();
+            } catch (Throwable e) {
+                return "{\"error\":\"" + String.valueOf(e).replace("\"", "") + "\"}";
+            }
+        }
+
+        /** آزمونِ کاملِ کدگذاریِ بومی: N فریم → MP4 → خواندنِ طولِ واقعی */
+        @JavascriptInterface
+        public String videoSelfTest(int w, int h, int frames, int fps) {
+            try {
+                if (w < 64) w = 1280;
+                if (h < 64) h = 720;
+                if (frames < 1) frames = 60;
+                if (fps < 1) fps = 30;
+                File out = new File(getCacheDir(), "native_selftest.mp4");
+                if (out.exists()) out.delete();
+                return NativeVideo.selfTestJson(out, w, h, frames, fps);
+            } catch (Throwable e) {
+                return "{\"ok\":false,\"error\":\"" + String.valueOf(e).replace("\"", "") + "\"}";
+            }
         }
 
         /** دانلود از سرور تحلیل با DownloadManager (در پوشهٔ Downloads) */

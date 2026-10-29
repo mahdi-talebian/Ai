@@ -492,6 +492,9 @@
           <button class="secondary block" id="capsCopyBtn" style="margin-top:6px;font-size:.78rem">
             📋 کپیِ متنِ تشخیص
           </button>
+          <button class="secondary block" id="nativeCodecBtn" style="margin-top:6px;font-size:.78rem">
+            🔬 آزمونِ کدگذارِ بومی (MediaCodec)
+          </button>
         </details>
         <div id="videoBox" style="display:none">
           <video id="videoPlayer" controls preload="metadata" playsinline></video>
@@ -1244,6 +1247,64 @@ async function updateCapsPanel(caps) {
       if (box.textContent === capsReport(c)) box.textContent = capsReport(c, codec);
     }
   } catch (e) { }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   🔬 آزمونِ کدگذارِ بومی (MediaCodec)
+   -------------------------------------------------------------------
+   این آزمون در خودِ اندروید اجرا می‌شود: ۶۰ فریمِ رنگی را با H.264
+   کدگذاری می‌کند، در MP4 می‌نویسد و بعد طولِ فایل را از خودِ فایل
+   می‌خواند. اگر عددها سالم باشند، مسیرِ «ویدیوی بومی» — مستقل از
+   WebCodecs — روی همین گوشی کار می‌کند.
+   ═══════════════════════════════════════════════════════════════════ */
+if ($('nativeCodecBtn')) {
+  $('nativeCodecBtn').onclick = async () => {
+    const NA = window.NativeApp;
+    const box = $('capsText');
+    if (!NA || typeof NA.videoSelfTest !== 'function') {
+      galleryMessage('این آزمون فقط داخلِ اپِ اندروید کار می‌کند.', true);
+      return;
+    }
+    $('nativeCodecBtn').disabled = true;
+    galleryMessage('⏳ در حال آزمونِ کدگذارِ بومی…');
+    try {
+      let probe = null, test = null;
+      try { probe = JSON.parse(NA.videoProbe()); } catch (e) { probe = { error: String(e) }; }
+      const raw = NA.videoSelfTest(1280, 720, 60, 30);
+      try { test = JSON.parse(raw); } catch (e) { test = { ok: false, error: raw }; }
+      const L = [];
+      L.push('— کدگذارِ بومی (اندروید) —');
+      if (probe) {
+        L.push('H.264 encoders: ' + (probe.encoders != null ? probe.encoders : '?'));
+        if (probe.names) L.push('names: ' + probe.names);
+        L.push('720p: ' + (probe.avc720p ? 'yes' : 'no') +
+               ' · 1080p: ' + (probe.avc1080p ? 'yes' : 'no') +
+               ' · 1080p60: ' + (probe.avc1080p60 ? 'yes' : 'no'));
+        L.push('AAC encoder: ' + (probe.aac ? 'yes' : 'no'));
+        if (probe.error) L.push('probe error: ' + probe.error);
+      }
+      if (test && test.ok) {
+        L.push('encode: ' + test.frames + ' frames @' + test.fps +
+               ' → ' + Math.round(test.bytes / 1024) + ' KB in ' + test.ms + ' ms');
+        L.push('file duration: ' + test.durationMs + ' ms (expected ' +
+               Math.round(test.frames * 1000 / test.fps) + ' ms)');
+        L.push('speed: ' + (test.frames / Math.max(1, test.ms / 1000)).toFixed(1) + ' fps');
+        L.push('file: ' + test.path);
+      } else if (test) {
+        L.push('self-test FAILED: ' + (test.error || '—'));
+      }
+      if (box) box.textContent = (box.textContent ? box.textContent + '\n\n' : '') + L.join('\n');
+      const okDur = test && test.ok &&
+        Math.abs(test.durationMs - Math.round(test.frames * 1000 / test.fps)) <= 120;
+      galleryMessage(test && test.ok && okDur
+        ? '✅ کدگذارِ بومی سالم است — ' + test.frames + ' فریم در ' + test.ms + 'ms، طول ' + test.durationMs + 'ms'
+        : '⚠️ آزمونِ بومی موفق نبود؛ متنِ تشخیص را بفرست.', !(test && test.ok && okDur));
+    } catch (e) {
+      galleryMessage('❌ آزمونِ بومی خطا داد: ' + (e && e.message ? e.message : e), true);
+    } finally {
+      $('nativeCodecBtn').disabled = false;
+    }
+  };
 }
 
 if ($('capsCopyBtn')) {

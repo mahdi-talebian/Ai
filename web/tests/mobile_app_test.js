@@ -113,7 +113,7 @@ check('مشخصاتِ رسم گسترهٔ گزارش را حمل می‌کند',
 check('اندروید متدِ ارسالِ طول را دارد (beginSaveToEx)',
   /beginSaveToEx/.test(java) && /MediaStore\.Video\.Media\.DURATION/.test(java));
 check('اندروید بعد از نوشتن، ردیفِ رسانه را تأیید می‌کند',
-  /querySize/.test(java) && /ردیفِ رسانه تأیید نشد/.test(java));
+  /querySize\(ctx, item\) <= 0/.test(java) && /row not verified/.test(java));
 check('پیامِ «ذخیره شد» فقط وقتی موفق است که واقعاً در گالری باشد',
   /return "✅ در گالری ذخیره شد: "/.test(java) && /⚠️ در گالری ذخیره نشد/.test(java));
 
@@ -151,6 +151,24 @@ NB.saveBlobToGallery(vblob, 'radde-seda.mp4', () => { }, 4321.6);
 check('ذخیرهٔ گالری با مقصدِ gallery و طولِ درست فراخوانی شد',
   calls.length === 1 && calls[0].target === 'gallery' && calls[0].dur === '4322',
   calls.length ? JSON.stringify(calls[0]) : '—');
+
+/* ── ۵) ذخیره در گالری: چند مقصد (DCIM/Camera اول) ─────────────────── */
+check('گالری اول از DCIM/Camera استفاده می‌کند (بعضی گالری‌ها Movies را نشان نمی‌دهند)',
+  /DCIM\/Camera\//.test(java) && /Movies\//.test(java));
+check('اگر مقصدِ اول نشد، مقصدِ دوم امتحان می‌شود',
+  /for \(int i = 0; i < rels\.length; i\+\+\)/.test(java) && /saveInto\(/.test(java));
+
+/* ── ۶) کدگذارِ بومی (پایهٔ مسیرِ بومی، مستقل از WebCodecs) ─────────── */
+const nativeVideo = fs.readFileSync(
+  path.join(ROOT, '../android/java/ir/raddeseda/app/NativeVideo.java'), 'utf8');
+check('کدگذارِ بومی از MediaCodec استفاده می‌کند',
+  /MediaCodec\.createEncoderByType\("video\/avc"\)/.test(nativeVideo));
+check('خروجیِ بومی با MediaMuxer در MP4 نوشته می‌شود',
+  /new MediaMuxer\(/.test(nativeVideo) && /MUXER_OUTPUT_MPEG_4/.test(nativeVideo));
+check('طولِ فایلِ بومی از خودِ فایل خوانده می‌شود',
+  /MediaMetadataRetriever/.test(nativeVideo) && /METADATA_KEY_DURATION/.test(nativeVideo));
+check('پل، آزمونِ بومی را به صفحه می‌دهد',
+  /videoSelfTest/.test(java) && /videoProbe/.test(java) && /nativeCodecBtn/.test(html));
 
 console.log('─'.repeat(70));
 if (fail) { console.log('✖ ' + fail + ' بررسی ناموفق از ' + (pass + fail)); process.exit(1); }
