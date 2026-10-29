@@ -205,6 +205,108 @@
     };
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     پاک‌سازی «پرش‌های کاذب» قبل از رسم
+     ----------------------------------------------------------------------
+     چرا لازم است؟ تخمینِ f0 در چند فریم ممکن است روی هارمونیک دوم/سوم
+     «قفل» کند و یک اکتاو یا پنجم جابه‌جا شود. آن چند فریمِ پرت، به‌صورت
+     خطِ عمودیِ بلند رسم می‌شدند (همان «موج‌های سینوسیِ عمودی»).
+     این‌جا — بی‌آنکه دادهٔ خامِ گزارش دست بخورد — برای *رسم*:
+       ۱) پرشِ اکتاوی/دوازدهم را به نزدیک‌ترین اکتاوِ محلی برمی‌گردانیم
+       ۲) «گشت کوتاه» (کمتر از ۸۰ms) که به مقدارِ محلی برمی‌گردد را حذف
+          می‌کنیم (مقدارِ محلی میانه جایش می‌نشیند)
+     نتیجه: منحنی همان چیزی است که شنیده می‌شود، بدون خطوط عمودیِ کاذب.
+     ══════════════════════════════════════════════════════════════════════ */
+  /* کلیدِ پاک‌سازی (برای تست: با setClean(false) رفتارِ قبلی بازتولید می‌شود) */
+  var CFG = { clean: true };
+  function setClean(on) { CFG.clean = !!on; }
+
+  var SPIKE_SEMI = 2.6;           /* این‌قدر فاصله از «سطحِ محلی» = پرت */
+  var SPikeHalfWin = 25;          /* نیم‌پنجرهٔ میانهٔ غلتان (۲۵ فریم ≈ ۱۲۵ms) */
+  var SPIKE_MAX_RUN = 24;         /* حداکثر طولِ گشتی که حذف می‌شود (~۱۲۰ms) */
+
+  function medianOf(arr) {
+    if (!arr.length) return null;
+    var b = arr.slice().sort(function (x, y) { return x - y; });
+    return b[b.length >> 1];
+  }
+
+  /* ── سطحِ محلی با «میانهٔ غلتان» ─────────────────────────────────────────
+     میانه غلتان دو ویژگی مهم دارد: پلهٔ واقعیِ بین نُت‌ها را جابه‌جا نمی‌کند
+     (چون در هر پنجره اکثریت با یک سمت است) و گشتِ کوتاه‌تر از نیم‌پنجره را
+     کامل نادیده می‌گیرد. پس مرجعِ خوبی برای تشخیص پرت است. */
+  function rollingMedian(mids, half) {
+    var n = mids.length, out = new Array(n);
+    for (var i = 0; i < n; i++) {
+      var vals = [];
+      for (var j = Math.max(0, i - half); j <= Math.min(n - 1, i + half); j++) {
+        var v = mids[j];
+        if (v != null && isFinite(v)) vals.push(v);
+      }
+      out[i] = vals.length ? medianOf(vals) : null;
+    }
+    return out;
+  }
+
+  function cleanMids(times, mids) {
+    var n = mids.length;
+    if (!n) return mids;
+    var level = rollingMedian(mids, SPikeHalfWin);
+    var out = new Array(n);
+    var i, j;
+    for (i = 0; i < n; i++) out[i] = mids[i];
+
+    i = 0;
+    while (i < n) {
+      var m = out[i], lv = level[i];
+      if (m == null || lv == null || Math.abs(m - lv) <= SPIKE_SEMI) { i++; continue; }
+      /* شروعِ گشت: تا کجا ادامه دارد؟ */
+      var k = i;
+      while (k < n && out[k] != null && level[k] != null &&
+        Math.abs(out[k] - level[k]) > SPIKE_SEMI) k++;
+      var runLen = k - i;
+      if (runLen <= SPIKE_MAX_RUN) {
+        /* مقدارِ قبل و بعد از گشت (نزدیک‌ترین نمونه‌های سالم) */
+        var beforeV = null, afterV = null;
+        for (j = i - 1; j >= 0 && j > i - 8; j--) {
+          if (out[j] != null && Math.abs(out[j] - (level[j] == null ? out[j] : level[j])) <= SPIKE_SEMI) {
+            beforeV = out[j]; break;
+          }
+        }
+        for (j = k; j < n && j < k + 8; j++) {
+          if (out[j] != null && Math.abs(out[j] - (level[j] == null ? out[j] : level[j])) <= SPIKE_SEMI) {
+            afterV = out[j]; break;
+          }
+        }
+        var a = (beforeV != null) ? beforeV : level[i];
+        var b = (afterV != null) ? afterV : level[Math.min(n - 1, k)];
+        if (a != null && b != null) {
+          if (runLen === 1) { out[i] = (a + b) / 2; }
+          else {
+            for (j = 0; j < runLen; j++) {
+              var f = (j + 1) / (runLen + 1);
+              out[i + j] = a + (b - a) * f;
+            }
+          }
+        }
+      }
+      i = k > i ? k : i + 1;
+    }
+    return out;
+  }
+
+  /* پاک‌سازی گران است (یک‌بار برای هر فایل کافی است)؛ نتیجه را بر اساس
+     «همان آرایه» کش می‌کنیم تا رسمِ ۶۰fps و هزاران فریمِ ویدیو هزینهٔ اضافه
+     ندهند. */
+  var CLEAN_CACHE = { src: null, n: -1, out: null };
+  function cleanedFor(mids) {
+    if (!mids) return mids;
+    if (CLEAN_CACHE.src === mids && CLEAN_CACHE.n === mids.length) return CLEAN_CACHE.out;
+    var out = CFG.clean ? cleanMids(null, mids) : mids;
+    CLEAN_CACHE.src = mids; CLEAN_CACHE.n = mids.length; CLEAN_CACHE.out = out;
+    return out;
+  }
+
   /* ── ساخت نقطه‌های منحنی در فضای پیکسل (نسبت به بازهٔ دید) ───────────── */
   function buildSegments(times, mids, view, xOf, yOf) {
     var runs = [], cur = [], lastT = null, i;
@@ -218,8 +320,16 @@
       if (lastT != null && t - lastT > GAP_BRIDGE_SEC) {
         if (cur.length > 1) runs.push(cur);
         cur = [];
+      } else if (cur.length) {
+        /* پرشِ غیرممکن: تغییر > ۷ نیم‌پرده در کمتر از ۲۵ms در صدای انسان
+           رخ نمی‌دهد؛ به‌جای خطِ عمودیِ بلند، سگمنت را قطع می‌کنیم. */
+        var prev = cur[cur.length - 1];
+        if (Math.abs(m - (prev.m == null ? m : prev.m)) > 7 && (t - lastT) < 0.025) {
+          if (cur.length > 1) runs.push(cur);
+          cur = [];
+        }
       }
-      cur.push({ x: xOf(t), y: yOf(m), t: t });
+      cur.push({ x: xOf(t), y: yOf(m), t: t, m: m });
       lastT = t;
     }
     if (cur.length > 1) runs.push(cur);
@@ -548,7 +658,10 @@
   function prepare(spec) {
     var L = layout(spec.W, spec.H);
     var view = spec.view || { t0: 0, t1: Math.max(spec.duration || 1, 0.001) };
-    var lim = pitchLimits(spec.mids, view, spec.times, spec.tightness, spec.t, spec.notes);
+    /* برای رسم، پرش‌های کاذب پاک می‌شوند (دادهٔ گزارش دست‌نخورده می‌ماند) */
+    var drawn = cleanedFor(spec.mids || []);
+    L.mids = drawn;
+    var lim = pitchLimits(drawn, view, spec.times, spec.tightness, spec.t, spec.notes);
     L.zoomEff = lim.zoomEff || 1;
     L.loLim = lim.loLim;
     L.hiLim = lim.hiLim;
@@ -559,7 +672,7 @@
     var spanT = Math.max(view.t1 - view.t0, 1e-6);
     L.xOf = function (tt) { return L.ML + ((tt - view.t0) / spanT) * usableW; };
     L.yOf = function (mm) { return L.MT + (1 - (mm - L.loLim) / span) * usableH; };
-    L.segs = buildSegments(spec.times, spec.mids, view, L.xOf, L.yOf);
+    L.segs = buildSegments(spec.times, drawn, view, L.xOf, L.yOf);
     return L;
   }
 
@@ -582,6 +695,10 @@
     buildSegments: buildSegments,
     barWidth: barWidth,
     BAR_MIN_SEC: BAR_MIN_SEC,
+    cleanMids: cleanMids,
+    cleanedFor: cleanedFor,
+    setClean: function (on) { setClean(on); CLEAN_CACHE.src = null; CLEAN_CACHE.n = -1; },
+    SPIKE_SEMI: SPIKE_SEMI,
     currentMidi: currentMidiOf,
     midiOf: midiOf,
     nameOf: nameOf,

@@ -1569,15 +1569,34 @@
     return out;
   }
 
+  /* نمونه‌برداری نزولی «میانه‌محور» (نه یک‌درمیان):
+     قبلاً هر step-اُمین فریم برداشته می‌شد و بقیه دور ریخته می‌شدند؛ در
+     فایل‌های بلند (step بزرگ) همین کار باعث می‌شد یک فریمِ پرت، تنها نمایندهٔ
+     کلِ آن بازه شود و روی نمودار «پرش عمودی» ساخته شود. حالا از هر بازه
+     میانهٔ مقادیر گرفته می‌شود؛ گذارِ واقعی می‌ماند، پرتِ تک‌فریمی حذف. */
   function downsampleContour(times, freqs, maxPoints) {
     maxPoints = maxPoints || 1800;
-    if (!times.length) return { t: [], midi: [] };
-    var step = Math.max(1, Math.ceil(times.length / maxPoints));
+    var n = times.length;
+    if (!n) return { t: [], midi: [] };
+    var step = Math.max(1, Math.ceil(n / maxPoints));
     var t = [], mi = [];
-    for (var i = 0; i < times.length; i += step) {
-      t.push(Math.round(times[i] * 100) / 100);
-      var v = freqs[i];
-      mi.push(v && v > 0 ? Math.round(hzToMidi(v) * 100) / 100 : null);
+    function r2(x) { return Math.round(x * 100) / 100; }
+    for (var i0 = 0; i0 < n; i0 += step) {
+      var i1 = Math.min(n, i0 + step);
+      var vals = [], tsum = 0, cnt = 0;
+      for (var i = i0; i < i1; i++) {
+        tsum += times[i]; cnt++;
+        var v = freqs[i];
+        if (v && v > 0) vals.push(hzToMidi(v));
+      }
+      var tm = cnt ? tsum / cnt : times[i0];
+      if (!vals.length) { t.push(r2(tm)); mi.push(null); continue; }
+      vals.sort(function (a, b) { return a - b; });
+      var mid = vals.length % 2
+        ? vals[vals.length >> 1]
+        : (vals[(vals.length >> 1) - 1] + vals[vals.length >> 1]) / 2;
+      t.push(r2(tm));
+      mi.push(r2(mid));
     }
     return { t: t, midi: mi };
   }

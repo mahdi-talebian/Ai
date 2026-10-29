@@ -4,7 +4,7 @@
 Gradle، بدون Android Studio و بدون Android SDK کامل**.
 
 ```
-release/radde-seda-1.3.4.apk      ← فایل آمادهٔ نصب (versionCode 14)
+release/radde-seda-1.3.5.apk      ← فایل آمادهٔ نصب (versionCode 15)
 ```
 
 > **از نسخهٔ ۱٫۱٫۰ به بعد اپ به هیچ سروری وصل نمی‌شود.** موتور تحلیل
@@ -16,7 +16,7 @@ release/radde-seda-1.3.4.apk      ← فایل آمادهٔ نصب (versionCode 
 
 ## نصب روی گوشی
 
-1. فایل `release/radde-seda-1.3.4.apk` را روی گوشی کپی کنید (کابل، تلگرام
+1. فایل `release/radde-seda-1.3.5.apk` را روی گوشی کپی کنید (کابل، تلگرام
    «Saved Messages»، Google Drive… هر چیزی).
 2. روی فایل بزنید؛ اگر پیام «نصب از منابع نامشخص» آمد، برای همین برنامه
    اجازه بدهید.
@@ -102,7 +102,7 @@ bash android/build_apk.sh                 # خروجی: release/radde-seda-<vers
 متغیرهای اختیاری:
 
 ```bash
-VERSION_NAME=1.3.4 VERSION_CODE=14 APP_VERSION=1.3.4 bash android/build_apk.sh
+VERSION_NAME=1.3.5 VERSION_CODE=15 APP_VERSION=1.3.5 bash android/build_apk.sh
 ANDROID_TOOLS=/path/to/tools JAVA_HOME=/path/to/jdk bash android/build_apk.sh
 ```
 
