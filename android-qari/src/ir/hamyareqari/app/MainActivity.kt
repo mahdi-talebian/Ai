@@ -42,7 +42,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.1.7"
+        const val VERSION = "1.1.8"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -65,6 +65,7 @@ class MainActivity : Activity() {
     private lateinit var analysisScreen: View
     private lateinit var playerScreen: View
     private lateinit var playerContent: LinearLayout
+    private lateinit var resultsScreen: View
     private lateinit var settingsPanel: View
     private lateinit var aboutPanel: View
     private lateinit var librarySelectedLabel: TextView
@@ -214,6 +215,7 @@ class MainActivity : Activity() {
         homePanel = buildHomePanel()
         libraryPanel = buildLibraryPanel()
         playerScreen = buildPlayerScreen()
+        resultsScreen = buildResultsScreen()
         settingsPanel = buildSettingsPanel()
         aboutPanel = buildAboutPanel()
         pageHost.addView(welcomePanel, FrameLayout.LayoutParams(-1, -1))
@@ -221,6 +223,7 @@ class MainActivity : Activity() {
         pageHost.addView(libraryPanel, FrameLayout.LayoutParams(-1, -1))
         pageHost.addView(analysisScreen, FrameLayout.LayoutParams(-1, -1))
         pageHost.addView(playerScreen, FrameLayout.LayoutParams(-1, -1))
+        pageHost.addView(resultsScreen, FrameLayout.LayoutParams(-1, -1))
         pageHost.addView(settingsPanel, FrameLayout.LayoutParams(-1, -1))
         pageHost.addView(aboutPanel, FrameLayout.LayoutParams(-1, -1))
 
@@ -354,6 +357,21 @@ class MainActivity : Activity() {
         scroller.addView(content)
         column.addView(scroller)
         return column
+    }
+
+    private fun buildResultsScreen(): View {
+        val scroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            val p = Theme.dp(this@MainActivity, 16f)
+            setPadding(p, Theme.dp(this@MainActivity, 10f), p, Theme.dp(this@MainActivity, 24f))
+        }
+        content.addView(pageHeader("نتایج تحلیل", "analysis"))
+        content.addView(Theme.space(this, 12f))
+        content.addView(resultBox)
+        scroll.addView(content)
+        return scroll
     }
 
     private fun buildHomePanel(): View {
@@ -558,13 +576,14 @@ class MainActivity : Activity() {
         libraryPanel.visibility = if (page == "files") View.VISIBLE else View.GONE
         analysisScreen.visibility = if (page == "analysis") View.VISIBLE else View.GONE
         playerScreen.visibility = if (page == "player") View.VISIBLE else View.GONE
+        resultsScreen.visibility = if (page == "results") View.VISIBLE else View.GONE
         settingsPanel.visibility = if (page == "settings") View.VISIBLE else View.GONE
         aboutPanel.visibility = if (page == "about") View.VISIBLE else View.GONE
         if (::navHome.isInitialized) {
             root.getChildAt(1)?.visibility = if (page == "welcome") View.GONE else View.VISIBLE
             val active = Theme.GOLD
             navHome.setTextColor(if (page == "home") active else Theme.DIM)
-            navFiles.setTextColor(if (page == "files" || page == "analysis" || page == "player") active else Theme.DIM)
+            navFiles.setTextColor(if (page == "files" || page == "analysis" || page == "player" || page == "results") active else Theme.DIM)
             navSettings.setTextColor(if (page == "settings" || page == "about") active else Theme.DIM)
         }
     }
@@ -667,7 +686,6 @@ class MainActivity : Activity() {
 
         resultBox = LinearLayout(this)
         resultBox.orientation = LinearLayout.VERTICAL
-        col.addView(resultBox)
 
         val hint = Theme.card(this)
         hint.addView(Theme.text(this, "چطور دقیق‌تر می‌شود؟", 13f, Theme.TXT, true))
@@ -801,6 +819,7 @@ class MainActivity : Activity() {
                     btn.isEnabled = true
                     hideProgress()
                     resultBox.addView(errorCard("نمونهٔ آزمایشی خوانده نشد", e.message ?: ""))
+                    setPage("results")
                 }
             }
         }.start()
@@ -863,6 +882,7 @@ class MainActivity : Activity() {
                     hideProgress()
                     resultBox.removeAllViews()
                     resultBox.addView(errorCard("فایل خوانده نشد", e.message ?: "قالب پشتیبانی نمی‌شود"))
+                    setPage("results")
                 }
             }
         }.start()
@@ -910,18 +930,21 @@ class MainActivity : Activity() {
                     busy = false
                     hideProgress()
                     renderReport(rep, elapsed)
+                    setPage("results")
                 }
             } catch (e: OutOfMemoryError) {
                 ui.post {
                     busy = false
                     hideProgress()
                     resultBox.addView(errorCard("حافظه کافی نبود", "فایل کوتاه‌تری را امتحان کنید"))
+                    setPage("results")
                 }
             } catch (e: Exception) {
                 ui.post {
                     busy = false
                     hideProgress()
                     resultBox.addView(errorCard("تحلیل انجام نشد", e.message ?: "خطای نامشخص"))
+                    setPage("results")
                 }
             }
         }.start()
