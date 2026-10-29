@@ -985,6 +985,63 @@
        • نبودِ ctts (B-frame) ⇒ ترتیبِ زمانی سالم در پخش‌کننده‌های گوشی
        • فاصلهٔ فریم‌های کلیدی ≤ سقف (پرشِ نرم، بدونِ وقفهٔ ۲ثانیه‌ای)
      ══════════════════════════════════════════════════════════════════════ */
+  /* ══════════════════════════════════════════════════════════════════════
+     اندازه‌گیریِ زمان‌بندیِ فریم‌ها از خودِ فایل (عدد، نه ادعا)
+     ----------------------------------------------------------------------
+     اگر جدولِ stts نامنظم باشد (VFR) پخش‌کننده برای هر فریم منتظرِ زمانِ
+     خودش می‌ماند ⇒ پرش/توقف. این تابع کمینه/بیشینه/میانگینِ گامِ فریم‌ها
+     و «لرزش» (اختلافِ بیشینه و کمینه) را برمی‌گرداند.
+     ══════════════════════════════════════════════════════════════════════ */
+  function frameTimingStats(buf) {
+    var dv = toDataView(buf);
+    if (!dv) return null;
+    var out = null;
+    walkBoxes(dv, 0, dv.byteLength, function (t, off, size, hdr) {
+      if (t !== 'moov' || out) return;
+      walkBoxes(dv, off + hdr, off + size, function (t2, o2, s2, h2) {
+        if (t2 !== 'trak' || out) return;
+        var handler = '', ts = 0, stts = -1;
+        walkBoxes(dv, o2 + h2, o2 + s2, function (t3, o3, s3, h3) {
+          if (t3 !== 'mdia') return;
+          walkBoxes(dv, o3 + h3, o3 + s3, function (t4, o4, s4, h4) {
+            var b4 = o4 + h4;
+            if (t4 === 'mdhd') ts = dv.getUint32(b4 + (dv.getUint8(b4) === 1 ? 20 : 12));
+            else if (t4 === 'hdlr') handler = fourcc(dv, b4 + 8);
+            else if (t4 === 'minf') {
+              walkBoxes(dv, b4, o4 + s4, function (t5, o5, s5, h5) {
+                if (t5 !== 'stbl') return;
+                walkBoxes(dv, o5 + h5, o5 + s5, function (t6, o6, s6, h6) {
+                  if (t6 === 'stts') stts = o6 + h6;
+                });
+              });
+            }
+          });
+        });
+        if (handler !== 'vide' || stts < 0 || !ts) return;
+        var n = dv.getUint32(stts + 4);
+        var frames = 0, minD = Infinity, maxD = 0, sum = 0;
+        for (var i = 0; i < n && i < 8192; i++) {
+          var cnt = dv.getUint32(stts + 8 + i * 8);
+          var d = dv.getUint32(stts + 12 + i * 8);
+          frames += cnt; sum += cnt * d;
+          if (d < minD) minD = d;
+          if (d > maxD) maxD = d;
+        }
+        if (!frames) return;
+        out = {
+          ok: true, frames: frames, timescale: ts,
+          minMs: +(minD * 1000 / ts).toFixed(1),
+          maxMs: +(maxD * 1000 / ts).toFixed(1),
+          meanMs: +(sum / frames * 1000 / ts).toFixed(1)
+        };
+        out.jitterMs = +(out.maxMs - out.minMs).toFixed(1);
+        out.constant = out.jitterMs <= 0.6;
+        out.cfr = out.constant;
+      });
+    });
+    return out;
+  }
+
   function verifyMp4(buffer, expect) {
     expect = expect || {};
     var tl = mp4Timeline(buffer);
@@ -1431,19 +1488,25 @@
     var fps = planR.fps;
     var duration = Math.max(renderer.duration, 0.2);
 
-    /* فریم‌ها را خودمان با ساعتِ صدا می‌فرستیم (captureStream(0) +
-       requestFrame). قبلاً مرورگر با نرخ ثابت از بوم عکس می‌گرفت و اگر
-       کشیدنِ یک فریم طول می‌کشید، تصویر از صدا عقب می‌افتاد؛ حالا هر فریم
-       دقیقاً «همان لحظه‌ای» است که صدا در آن است. */
-    var stream = canvas.captureStream(0);
-    var vtrack = null;
+    /* ══ ریشهٔ لگ: نرخِ ثابتِ فریم (CFR) ═══════════════════════════════
+       قبلاً با captureStream(0) + requestFrame هر فریم «هر وقت rAF اجازه
+       می‌داد» ثبت می‌شد؛ روی گوشیِ کند نمونه‌ها زمان‌بندیِ نامنظم (VFR)
+       می‌گرفتند و پخش‌کننده باید برای هر فریم منتظرِ زمانِ خودش می‌ماند
+       ⇒ پرش و توقفِ تصویر، هم در اپ و هم در گالری.
+       حالا خودِ مرورگر با گامِ دقیقِ ۱/fps عکس می‌گیرد؛ اگر دستگاه یک فریم
+       را دیر بکشد، همان فریم تکرار می‌شود و زمان‌بندی به‌هم نمی‌ریزد. */
+    var stream = null, vtrack = null, cfr = false;
     try {
-      var vts = stream.getVideoTracks ? stream.getVideoTracks() : [];
-      vtrack = vts && vts[0];
-    } catch (e) { vtrack = null; }
-    if (!vtrack || typeof vtrack.requestFrame !== 'function') {
-      stream = canvas.captureStream(fps);          /* پشتیبان: رفتار قبلی */
-      vtrack = null;
+      stream = canvas.captureStream(fps);
+      cfr = !!stream;
+    } catch (e) { stream = null; }
+    if (!stream) {
+      /* پشتیبانِ قدیمی: بوم قابلیتِ نرخِ ثابت ندارد */
+      stream = canvas.captureStream(0);
+      try {
+        var vts = stream.getVideoTracks ? stream.getVideoTracks() : [];
+        vtrack = vts && vts[0];
+      } catch (e) { vtrack = null; }
     }
     var actx = new (global.AudioContext || global.webkitAudioContext)();
     if (actx.state === 'suspended') { try { await actx.resume(); } catch (e) { } }
@@ -1501,7 +1564,7 @@
     /* ── هدر: پخش‌کنندهٔ گوشی باید طولِ درست را ببیند ──
        MediaRecorder طول را در هدر نمی‌نویسد (یا صفر می‌گذارد)؛ نتیجه‌اش
        «۴ ثانیه» در گالری و پخشِ نیمه‌کاره بود. این‌جا خودمان می‌نویسیم. */
-    var outBlob = blob;
+    var outBlob = blob, fixedBuf = null;
     var vfyR = null;
     try {
       var raw = await blob.arrayBuffer();
@@ -1520,9 +1583,14 @@
           if (vfyR2.parsed) vfyR = vfyR2;
         }
       }
+      fixedBuf = fixed;
       outBlob = new Blob([fixed], { type: mime || 'video/webm' });
-    } catch (e) { outBlob = blob; }
+    } catch (e) { outBlob = blob; fixedBuf = null; }
 
+    var timing = null;
+    try {
+      timing = (mime.indexOf('webm') >= 0) ? null : frameTimingStats(fixedBuf || outBlob);
+    } catch (e) { timing = null; }
     var probed = await probeDuration(outBlob, 4000);
     var durOk = (probed == null) ? null : Math.abs(probed - duration) <= 0.4;
     if (onProgress) onProgress(1.0);
@@ -1537,7 +1605,10 @@
       duration: duration,
       probed_duration: probed,
       duration_ok: durOk,
-      verify: vfyR
+      verify: vfyR,
+      timing: timing,
+      cfr: cfr,
+      path: 'realtime'
     };
   }
 
@@ -2016,6 +2087,7 @@
     patchWebmDuration: patchWebmDuration,
     mp4Timeline: mp4Timeline,
     verifyMp4: verifyMp4,
+    frameTimingStats: frameTimingStats,
     ensureMp4FragmentDuration: ensureMp4FragmentDuration,
     repairMp4Duration: repairMp4Duration,
     bitrateFor: bitrateFor,

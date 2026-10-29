@@ -82,6 +82,19 @@ function installStubs(w) {
     });
   }
 
+  /* jsdom متدِ استانداردِ Blob#arrayBuffer را ندارد (در WebView هست) */
+  if (typeof w.Blob.prototype.arrayBuffer !== 'function') {
+    w.Blob.prototype.arrayBuffer = function () {
+      const blob = this;
+      return new Promise((resolve, reject) => {
+        const fr = new w.FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(fr.error || new Error('خواندنِ بلاب ناموفق'));
+        fr.readAsArrayBuffer(blob);
+      });
+    };
+  }
+
   const canvasProto = w.HTMLCanvasElement.prototype;
   canvasProto.getContext = function () { return makeCtx(this); };
 

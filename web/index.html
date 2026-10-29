@@ -671,7 +671,7 @@ function switchTab(name) {
 /* ═══════════════════════════════════════════════════════════════════
    وضعیت
    ═══════════════════════════════════════════════════════════════════ */
-const STATE = { file: null, jobId: null, report: null };
+const STATE = { file: null, jobId: null, report: null, videoSeconds: 0 };
 
 /* ═══════════════════════════════════════════════════════════════════
    انتخاب فایل
@@ -1015,13 +1015,17 @@ function nameForBlob(blob, base, fallbackExt) {
   return b + '-radde-seda' + ext;
 }
 
-function gallerySaveViaApp(blob, name) {
-  /* مسیر مطمئن در اپ: بلاب خوانده می‌شود و بومی در گالری نوشته می‌شود */
+function gallerySaveViaApp(blob, name, durationMs) {
+  /* مسیر مطمئن در اپ: بلاب خوانده می‌شود و بومی در گالری نوشته می‌شود.
+     طولِ ویدیو هم فرستاده می‌شود تا در MediaStore نوشته شود؛ بعضی گالری‌ها
+     طول را فقط از متادیتای رسانه می‌خوانند. */
   return new Promise((resolve) => {
     const NB = window.NativeBridge;
     if (!NB || !NB.available) { resolve({ ok: false, offline: true }); return; }
     if (typeof NB.saveBlobToGallery !== 'function') { resolve({ ok: false, msg: 'نسخهٔ اپ قدیمی است' }); return; }
-    NB.saveBlobToGallery(blob, name, (ok, msg) => resolve({ ok: !!ok, msg: msg || '' }));
+    NB.saveBlobToGallery(blob, name,
+      (ok, msg) => resolve({ ok: !!ok, msg: msg || '' }),
+      (durationMs && durationMs > 0) ? durationMs : 0);
   });
 }
 
@@ -1056,7 +1060,7 @@ async function saveVideoToGallery() {
       }
       const name = nameForBlob(blob, base || 'radde-seda', '.mp4');
       galleryMessage('⏳ در حال ذخیره در گالری…');
-      const r = await gallerySaveViaApp(blob, name);
+      const r = await gallerySaveViaApp(blob, name, (STATE.videoSeconds || 0) * 1000);
       if (r.ok) galleryMessage('✅ ' + (r.msg || ('در گالری ذخیره شد: ' + name)));
       else galleryMessage('❌ ' + (r.msg || 'ذخیره در گالری ناموفق بود') , true);
       return;
@@ -1168,6 +1172,7 @@ $('videoBtn').onclick = async () => {
     dl.href = `${API}/api/download/${STATE.jobId}/video`;
     dl.setAttribute('download', res.video_name || 'radde-seda.mp4');
     STATE.videoName = res.video_name || 'radde-seda.mp4';
+    STATE.videoSeconds = Number(res.duration) || 0;
     dl.style.display = 'inline-flex';
     $('galleryBox').style.display = 'block';
     if ($('saveVideoBtn')) $('saveVideoBtn').style.display = 'inline-flex';
@@ -1195,8 +1200,15 @@ $('videoBtn').onclick = async () => {
       note += ` ⚠️ بازبینیِ فایل: ${vf.problems.join(' · ')}`;
     }
     const quality = qParts.length ? `\n🎞 ${qParts.join(' · ')}` : '';
+    /* زمان‌بندیِ واقعیِ فریم‌ها در فایل: باید یکنواخت باشد، وگرنه پخش می‌لرزد */
+    const tm = res && res.timing;
+    const tmTxt = (tm && tm.ok)
+      ? (tm.constant
+        ? `\n⏱ گامِ فریم‌ها: ${faN(tm.meanMs)}ms ثابت (بدونِ پرش)`
+        : `\n⏱ گامِ فریم‌ها نامنظم: ${faN(tm.minMs)}–${faN(tm.maxMs)}ms`)
+      : '';
     $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' +
-      speed + note + quality;
+      speed + note + quality + tmTxt;
     $('videoStatus').className = 'status ok';
   } catch (e) {
     hideProgress('vProg');
@@ -1767,7 +1779,7 @@ function deleteTake(id) {
   LIVE.takes.splice(i, 1);
   /* اگر تحلیلِ همین ضبط روی صفحه باز است، پاکش کن تا داده‌ای جا نماند */
   if (t.jobId && STATE.jobId === t.jobId) {
-    STATE.jobId = null; STATE.report = null; STATE.videoName = null;
+    STATE.jobId = null; STATE.report = null; STATE.videoName = null; STATE.videoSeconds = 0;
     const vb = $('videoBox'); if (vb) vb.style.display = 'none';
     const vp = $('videoPlayer'); if (vp) { try { vp.pause(); } catch (e) {} vp.removeAttribute('src'); }
     const gb = $('galleryBox'); if (gb) gb.style.display = 'none';

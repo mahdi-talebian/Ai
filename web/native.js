@@ -89,7 +89,7 @@
   };
 
   /* ذخیرهٔ یک Blob با ارسال تکه‌تکه (پایدار برای فایل‌های چند ده مگابایتی) */
-  function saveBlob(blob, name, target, done) {
+  function saveBlob(blob, name, target, done, durationMs) {
     var token;
     if (!blob || !blob.size) {
       toast('فایل خالی است');
@@ -99,9 +99,15 @@
     var fit = fitName(name, blob.type);
     if (target === 'gallery') fit.name = galleryName(fit.name, fit.mime);
     try {
-      token = (target === 'gallery' && typeof NA.beginSaveTo === 'function')
-        ? NA.beginSaveTo(fit.name, fit.mime, 'gallery')
-        : NA.beginSave(fit.name, fit.mime);
+      /* طولِ ویدیو را هم به اندروید می‌دهیم تا در MediaStore نوشته شود؛
+         بعضی گالری‌ها طول را فقط از متادیتای رسانه می‌خوانند، نه از فایل. */
+      var dur = (durationMs && isFinite(durationMs) && durationMs > 0)
+        ? String(Math.round(durationMs)) : '';
+      token = (target === 'gallery' && typeof NA.beginSaveToEx === 'function')
+        ? NA.beginSaveToEx(fit.name, fit.mime, 'gallery', dur)
+        : (target === 'gallery' && typeof NA.beginSaveTo === 'function')
+          ? NA.beginSaveTo(fit.name, fit.mime, 'gallery')
+          : NA.beginSave(fit.name, fit.mime);
     } catch (e) {
       toast('شروع ذخیره ناموفق بود: ' + e);
       if (typeof done === 'function') done(false, 'شروع ذخیره ناموفق بود: ' + e);
@@ -243,8 +249,8 @@
     },
 
     /** ذخیرهٔ مستقیم یک Blob در گالری (ویدیو → Movies، عکس → Pictures) */
-    saveBlobToGallery: function (blob, name, done) {
-      saveBlob(blob, safeName(name), 'gallery', done);
+    saveBlobToGallery: function (blob, name, done, durationMs) {
+      saveBlob(blob, safeName(name), 'gallery', done, durationMs);
     },
 
     /** ذخیرهٔ Blob در پوشهٔ دانلودها */

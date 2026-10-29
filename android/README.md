@@ -102,7 +102,7 @@ bash android/build_apk.sh                 # خروجی: release/radde-seda-<vers
 متغیرهای اختیاری:
 
 ```bash
-VERSION_NAME=1.3.9 VERSION_CODE=19 APP_VERSION=1.3.9 bash android/build_apk.sh
+VERSION_NAME=1.3.12 VERSION_CODE=23 APP_VERSION=1.3.12 bash android/build_apk.sh
 ANDROID_TOOLS=/path/to/tools JAVA_HOME=/path/to/jdk bash android/build_apk.sh
 ```
 
