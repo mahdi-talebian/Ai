@@ -5,6 +5,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.DownloadManager;
 import android.content.ContentValues;
+import android.database.Cursor;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -114,6 +115,16 @@ public class MainActivity extends Activity {
         st.setSupportMultipleWindows(false);
         st.setJavaScriptCanOpenWindowsAutomatically(false);
         st.setCacheMode(WebSettings.LOAD_DEFAULT);
+        /* ── رفتارِ اپِ بومی: هیچ زومی وجود ندارد ────────────────────────
+           قبلاً با دو‌انگشت می‌شد صفحه را مثلِ یک وب‌سایت زوم کرد. این‌جا
+           هم زومِ داخلیِ WebView و هم کنترل‌هایش خاموش می‌شود و اندازهٔ متن
+           روی ۱۰۰٪ ثابت می‌ماند (مستقل از تنظیمِ «اندازهٔ متن» گوشی). */
+        st.setSupportZoom(false);
+        st.setBuiltInZoomControls(false);
+        st.setDisplayZoomControls(false);
+        st.setTextZoom(100);
+        st.setUseWideViewPort(true);
+        st.setLoadWithOverviewMode(false);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             // سرور تحلیل ممکن است http باشد؛ اجازهٔ درخواست‌های مخلوط را می‌دهیم
             st.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
@@ -503,6 +514,11 @@ public class MainActivity extends Activity {
      * @return مسیر/جای readable برای نمایش به کاربر
      */
     private String finishSave(File src, String name, String mime, boolean gallery) throws IOException {
+        return finishSave(src, name, mime, gallery, 0L);
+    }
+
+    private String finishSave(File src, String name, String mime, boolean gallery,
+                              long durationMs) throws IOException {
         if (src == null || !src.exists()) throw new IOException("فایل موقت ساخته نشد");
         if (src.length() <= 0) throw new IOException("فایل خالی است");
 
@@ -518,7 +534,7 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             Exception first = null;
             try {
-                return QStorage.save(this, src, safe, m);
+                return QStorage.save(this, src, safe, m, durationMs);
             } catch (Exception e) {
                 first = e;
             }
@@ -530,7 +546,7 @@ public class MainActivity extends Activity {
                     copyStream(new FileInputStream(src), new FileOutputStream(out));
                     MediaScannerConnection.scanFile(this, new String[]{out.getAbsolutePath()},
                             new String[]{m}, null);
-                    return out.getAbsolutePath();
+                    return "⚠️ گالری پاسخ نداد؛ فایل این‌جا ذخیره شد: " + out.getAbsolutePath();
                 }
             } catch (Exception ignored) {
             }
@@ -547,7 +563,8 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {
             }
             String why = (first != null && first.getMessage() != null) ? first.getMessage() : "";
-            return out.getAbsolutePath() + (why.isEmpty() ? "" : "  (" + why + ")");
+            return "⚠️ در گالری ذخیره نشد" + (why.isEmpty() ? "" : " (" + why + ")")
+                    + "؛ فایل در حافظهٔ اپ است: " + out.getAbsolutePath();
         }
 
         /* اندروید ۹ و پایین‌تر */
@@ -577,6 +594,11 @@ public class MainActivity extends Activity {
     /** ذخیره با MediaStore — فقط روی اندروید ۱۰ (API 29) و بالاتر اجرا می‌شود. */
     private static class QStorage {
         static String save(Context ctx, File src, String name, String mime) throws IOException {
+            return save(ctx, src, name, mime, 0L);
+        }
+
+        static String save(Context ctx, File src, String name, String mime,
+                           long durationMs) throws IOException {
             boolean video = mime.startsWith("video/");
             boolean image = mime.startsWith("image/");
             String dirName = video ? Environment.DIRECTORY_MOVIES
@@ -593,6 +615,14 @@ public class MainActivity extends Activity {
             v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
             v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
             v.put(MediaStore.MediaColumns.RELATIVE_PATH, rel);
+            /* طولِ ویدیو از همان اول در ردیفِ رسانه نوشته می‌شود؛ گالری‌ها
+               پیش از ایندکسِ کاملِ فایل همین را نشان می‌دهند. */
+            if (video && durationMs > 0) {
+                try {
+                    v.put(MediaStore.Video.Media.DURATION, durationMs);
+                } catch (Exception ignored) {
+                }
+            }
 
             Uri item = null;
             Exception lastErr = null;
@@ -618,31 +648,69 @@ public class MainActivity extends Activity {
                         + (lastErr != null && lastErr.getMessage() != null ? ": " + lastErr.getMessage() : ""));
             }
 
+            long written = 0;
+            OutputStream os = null;
             try {
-                OutputStream os = ctx.getContentResolver().openOutputStream(item, "w");
+                os = ctx.getContentResolver().openOutputStream(item, "w");
                 if (os == null) os = ctx.getContentResolver().openOutputStream(item);
                 if (os == null) throw new IOException("MediaStore open failed");
-                boolean ok = false;
-                try {
-                    copyStream(new FileInputStream(src), os);
-                    ok = true;
-                } finally {
-                    if (!ok) try { os.close(); } catch (Exception ignored) {}
+                InputStream in = new FileInputStream(src);
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    os.write(buf, 0, n);
+                    written += n;
                 }
+                in.close();
+                os.flush();
+                os.close();
+                os = null;
             } catch (Exception e) {
+                try { if (os != null) os.close(); } catch (Exception ignored) {}
                 try { ctx.getContentResolver().delete(item, null, null); } catch (Exception ignored) {}
                 throw new IOException("نوشتن در گالری ناموفق بود"
                         + (e.getMessage() != null ? ": " + e.getMessage() : ""));
             }
+            if (written <= 0) {
+                try { ctx.getContentResolver().delete(item, null, null); } catch (Exception ignored) {}
+                throw new IOException("فایلِ خالی نوشته شد");
+            }
 
-            /* پایان کار: IS_PENDING=0 تا فایل در گالری دیده شود */
+            /* پایان کار: طول + IS_PENDING=0 تا فایل در گالری دیده و کامل خوانده شود */
             try {
                 ContentValues done = new ContentValues();
                 done.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                if (video && durationMs > 0) {
+                    done.put(MediaStore.Video.Media.DURATION, durationMs);
+                }
                 ctx.getContentResolver().update(item, done, null, null);
             } catch (Exception ignored) {
             }
-            return rel + name;
+
+            /* تأییدِ واقعی: ردیف باید موجود و اندازه‌اش > ۰ باشد.
+               «ذخیره شد»ی که پشتش فایلی در گالری نباشد، همان مشکلِ قبلی است. */
+            if (querySize(ctx, item) <= 0) {
+                try { ctx.getContentResolver().delete(item, null, null); } catch (Exception ignored) {}
+                throw new IOException("ردیفِ رسانه تأیید نشد");
+            }
+            return "✅ در گالری ذخیره شد: " + rel + name;
+        }
+
+        /** اندازهٔ واقعیِ ردیفِ MediaStore (۰ = ردیف نیست یا خالی است) */
+        static long querySize(Context ctx, Uri item) {
+            Cursor c = null;
+            try {
+                c = ctx.getContentResolver().query(item,
+                        new String[]{MediaStore.MediaColumns.SIZE}, null, null, null);
+                if (c != null && c.moveToFirst()) {
+                    int i = c.getColumnIndex(MediaStore.MediaColumns.SIZE);
+                    if (i >= 0 && !c.isNull(i)) return c.getLong(i);
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (c != null) try { c.close(); } catch (Exception ignored) {}
+            }
+            return 0L;
         }
     }
 
@@ -834,6 +902,23 @@ public class MainActivity extends Activity {
             return beginSaveInternal(name, mime, target);
         }
 
+        /**
+         * همان beginSaveTo، به‌همراهِ طولِ ویدیو (میلی‌ثانیه) تا در
+         * MediaStore.Video.Media.DURATION نوشته شود — بعضی گالری‌ها طول را
+         * فقط از متادیتای رسانه می‌خوانند.
+         */
+        @JavascriptInterface
+        public String beginSaveToEx(String name, String mime, String target, String durationMs) {
+            long d = 0L;
+            try {
+                if (durationMs != null && durationMs.trim().length() > 0) {
+                    d = (long) Double.parseDouble(durationMs.trim());
+                }
+            } catch (Exception ignored) {
+            }
+            return beginSaveInternal(name, mime, target, d);
+        }
+
         @JavascriptInterface
         public boolean appendSave(String token, String base64Chunk) {
             File f = pendingSaves.get(token);
@@ -864,15 +949,21 @@ public class MainActivity extends Activity {
             final String name = (meta != null && meta[0] != null) ? meta[0] : "output";
             final String mime = (meta != null && meta[1] != null) ? meta[1] : guessMimeFromName(name);
             final boolean gallery = meta != null && meta.length > 2 && "gallery".equals(meta[2]);
+            long durTmp = 0L;
+            if (meta != null && meta.length > 3 && meta[3] != null) {
+                try { durTmp = Long.parseLong(meta[3]); } catch (Exception ignored) {}
+            }
+            final long durationMs = durTmp;
             new Thread(new Runnable() {
                 @Override
                 public void run() {
                     String msg;
                     try {
-                        String where = finishSave(f, name, mime, gallery);
-                        msg = "✅ ذخیره شد: " + where;
+                        String where = finishSave(f, name, mime, gallery, durationMs);
+                        boolean okSaved = where.startsWith("✅");
+                        msg = where;
                         toastUi(msg);
-                        notifySave(token, true, msg);
+                        notifySave(token, okSaved, msg);
                     } catch (Exception e) {
                         msg = "❌ ذخیره ناموفق بود: " + (e.getMessage() == null ? e.toString() : e.getMessage());
                         toastUi(msg);
@@ -892,6 +983,10 @@ public class MainActivity extends Activity {
         }
 
         private String beginSaveInternal(String name, String mime, String target) {
+            return beginSaveInternal(name, mime, target, 0L);
+        }
+
+        private String beginSaveInternal(String name, String mime, String target, long durationMs) {
             try {
                 File f = File.createTempFile("save_", ".part", getCacheDir());
                 String token = UUID.randomUUID().toString();
@@ -900,7 +995,8 @@ public class MainActivity extends Activity {
                 pendingMeta.put(token, new String[]{
                         sanitize(fitName(name, m)),
                         m,
-                        "gallery".equals(target) ? "gallery" : "downloads"});
+                        "gallery".equals(target) ? "gallery" : "downloads",
+                        String.valueOf(durationMs)});
                 return token;
             } catch (Exception e) {
                 toastUi("شروع ذخیره ناموفق بود: " + e.getMessage());
