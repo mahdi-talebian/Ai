@@ -97,6 +97,40 @@ object PitchMath {
         return faDigits(s)
     }
 
+
+    /* ═══════════ درجه‌ها: قرارِ نسخهٔ وب، هر اکتاو = ۸ درجه ═══════════ */
+    const val DEG_PER_OCTAVE = 8.0
+
+    class SpanDegrees(val total: Double, val octaves: Int, val degrees: Double, val text: String)
+
+    /** نیم‌پرده → درجه و متنِ «۱ اکتاو و ۳ درجه» */
+    fun spanInDegrees(semitones: Double): SpanDegrees {
+        if (!semitones.isFinite()) return SpanDegrees(0.0, 0, 0.0, "—")
+        val total = semitones * (DEG_PER_OCTAVE / 12.0)
+        var octaves = kotlin.math.floor(total / DEG_PER_OCTAVE + 1e-9).toInt()
+        var rest = Math.round((total - octaves * DEG_PER_OCTAVE) * 10) / 10.0
+        if (rest >= DEG_PER_OCTAVE - 1e-9) { octaves += 1; rest = 0.0 }
+        val text = when {
+            octaves <= 0 -> faFixed(rest, 1) + " درجه"
+            rest < 0.05 -> faDigits(octaves) + " اکتاو"
+            else -> faDigits(octaves) + " اکتاو و " + faFixed(rest, 1) + " درجه"
+        }
+        return SpanDegrees(total, octaves, rest, text)
+    }
+
+    /** شمارهٔ درجهٔ یک نت نسبت به پایین‌ترین نتِ اجرا (۱ = پایین‌ترین) */
+    fun degreeFromLow(midi: Int, lowMidi: Int): Int {
+        if (lowMidi < 0 || midi < 0) return 0
+        return Math.round((midi - lowMidi) * (DEG_PER_OCTAVE / 12.0)).toInt() + 1
+    }
+
+    /** سل‌فژ با اکتاو، مثل «سل۴» */
+    fun solfegeWithOctave(midi: Int): String {
+        if (midi < 0) return "—"
+        val pc = ((midi % 12) + 12) % 12
+        return SOLFEGE[pc] + faDigits((floor(midi / 12.0).toInt() - 1).toString())
+    }
+
     fun clamp(v: Double, lo: Double, hi: Double): Double = if (v < lo) lo else if (v > hi) hi else v
 
     fun median(values: DoubleArray): Double {

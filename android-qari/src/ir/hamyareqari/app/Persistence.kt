@@ -97,6 +97,56 @@ object Persistence {
         }
     }
 
+
+    /** ویدیوی MP4 → گالری (Movies) یا پوشهٔ دانلود */
+    fun saveVideo(ctx: Context, file: java.io.File, name: String): Saved {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/$APP_DIR")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val uri = ctx.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) {
+                    ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                        file.inputStream().use { it.copyTo(out) }
+                    }
+                    val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                    ctx.contentResolver.update(uri, done, null, null)
+                    Saved(uri, "${Environment.DIRECTORY_MOVIES}/$APP_DIR/$name", name)
+                } else {
+                    copyFallback(ctx, file, name)
+                }
+            } else {
+                copyFallback(ctx, file, name)
+            }
+        } catch (e: Exception) {
+            copyFallback(ctx, file, name)
+        }
+    }
+
+    /** کپی فایل اصلیِ کاربر در پوشهٔ دانلودها */
+    fun saveOriginal(ctx: Context, uri: Uri, name: String): Saved {
+        val bytes = try {
+            ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        } catch (e: Exception) {
+            null
+        } ?: throw java.io.IOException("خواندن فایل اصلی ممکن نشد")
+        val mime = ctx.contentResolver.getType(uri) ?: "application/octet-stream"
+        return saveBytes(ctx, bytes, name, mime, KIND_DOWNLOAD, Environment.DIRECTORY_DOWNLOADS)
+    }
+
+    private fun copyFallback(ctx: Context, file: java.io.File, name: String): Saved {
+        @Suppress("DEPRECATION")
+        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), APP_DIR)
+        if (!dir.exists()) dir.mkdirs()
+        val target = File(dir, name)
+        file.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
+        return Saved(null, target.absolutePath, name)
+    }
+
     fun share(ctx: Context, saved: Saved) {
         try {
             val uri = saved.uri

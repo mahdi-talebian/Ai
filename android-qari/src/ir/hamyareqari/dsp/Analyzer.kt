@@ -169,7 +169,7 @@ object Analyzer {
     ): Report {
         progress?.invoke("preprocess", 0.02)
         val prepared = preprocess(rawInput, sampleRate)
-        return analyzeSignal(DoubleSignal(prepared, sampleRate), progress)
+        return analyzeSignal(DoubleSignal(prepared, sampleRate), false, progress)
     }
 
     /**
@@ -177,9 +177,21 @@ object Analyzer {
      * این مسیر حافظهٔ کمتری می‌خواهد و برای فایل‌های بلند استفاده می‌شود.
      */
     fun analyzeSignal(
-        sig: Signal,
+        sigInput: Signal,
+        denoise: Boolean = false,
         progress: ((String, Double) -> Unit)? = null
     ): Report {
+        var sig = sigInput
+        if (denoise) {
+            progress?.invoke("preprocess", 0.01)
+            // کاهش نویز فقط برای فایل‌های تا ۲۵ دقیقه (حافظهٔ بافر double)
+            if (sig.size <= 25 * 60 * 22050) {
+                val raw = DoubleArray(sig.size)
+                sig.read(0, sig.size, raw)
+                val clean = Denoise.process(raw, sig.sampleRate)
+                sig = DoubleSignal(clean, sig.sampleRate)
+            }
+        }
         val sampleRate = sig.sampleRate
         val duration = sig.size.toDouble() / sampleRate
 

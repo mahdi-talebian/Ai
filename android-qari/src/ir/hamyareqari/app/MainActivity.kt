@@ -42,7 +42,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.0.0"
+        const val VERSION = "1.1.0"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -65,6 +65,11 @@ class MainActivity : Activity() {
     private lateinit var panelFile: View
     private lateinit var panelLive: View
     private lateinit var resultBox: LinearLayout
+    private lateinit var denoiseCheck: CheckBox
+    private var pickUri: Uri? = null
+    private var videoFile: java.io.File? = null
+    private var lastElapsedMs = 0L
+    private var chartRef: ChartView? = null
     private lateinit var fileLabel: TextView
     private lateinit var analyzeBtn: TextView
     private lateinit var progressBar: android.widget.ProgressBar
@@ -86,6 +91,13 @@ class MainActivity : Activity() {
     private var live: LiveEngine? = null
     private var liveRecording: ShortGrow? = null
     private var ticker: Runnable? = null
+    private var recordTicker: Runnable? = null
+    private lateinit var recBar: LinearLayout
+    private lateinit var recTime: TextView
+    private var recordStartAt = 0L
+    private lateinit var liveSpanLabel: TextView
+    private lateinit var liveDurLabel: TextView
+    private var liveEngineReset: (() -> Unit)? = null
 
     // ───────────────────────────── چرخهٔ عمر ─────────────────────────────
 
@@ -239,14 +251,29 @@ class MainActivity : Activity() {
         )
         pick.addView(Theme.space(this, 10f))
 
+        val chooseRow = Theme.row(this)
         val chooseBtn = Theme.button(this, "📂 انتخاب فایل", false)
         chooseBtn.setOnClickListener { pickFile() }
-        pick.addView(chooseBtn)
+        val demoBtn = Theme.button(this, "▶ نمونهٔ آزمایشی", false)
+        demoBtn.setOnClickListener { loadDemo(demoBtn) }
+        chooseRow.addView(chooseBtn, weight(1f))
+        chooseRow.addView(Theme.space(this, 8f))
+        chooseRow.addView(demoBtn, weight(1f))
+        pick.addView(chooseRow)
         pick.addView(Theme.space(this, 8f))
 
         fileLabel = Theme.text(this, "فایلی انتخاب نشده", 12.5f, Theme.DIM)
         pick.addView(fileLabel)
-        pick.addView(Theme.space(this, 10f))
+        pick.addView(Theme.space(this, 8f))
+
+        denoiseCheck = CheckBox(this)
+        denoiseCheck.text = "کاهش نویز پس‌زمینه (کمی کندتر)"
+        denoiseCheck.setTextColor(Theme.TXT)
+        denoiseCheck.typeface = Theme.font(this, false)
+        denoiseCheck.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 12.5f)
+        denoiseCheck.buttonTintList = android.content.res.ColorStateList.valueOf(Theme.GOLD)
+        pick.addView(denoiseCheck)
+        pick.addView(Theme.space(this, 6f))
 
         analyzeBtn = Theme.button(this, "شروع تحلیل", true)
         analyzeBtn.isEnabled = false
@@ -350,6 +377,7 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_PICK && resultCode == Activity.RESULT_OK) {
             val uri = data?.data ?: return
+            pickUri = uri
             sourceName = displayName(uri)
             fileLabel.text = sourceName
             fileLabel.setTextColor(Theme.TXT)
@@ -359,6 +387,44 @@ class MainActivity : Activity() {
             // رمزگشایی از همین حالا تا کاربر منتظر نماند
             loadUri(uri, autoAnalyze = false)
         }
+    }
+
+    private fun loadDemo(btn: TextView) {
+        if (busy) {
+            toast("یک تحلیل در جریان است؛ چند لحظه صبر کنید")
+            return
+        }
+        busy = true
+        btn.isEnabled = false
+        sourceName = "نمونهٔ آزمایشی"
+        pickUri = null
+        playerToken++
+        player?.release(); player = null
+        sharePcm = null
+        resultBox.removeAllViews()
+        showProgress(0.0, "خواندن نمونهٔ آزمایشی…")
+        Thread {
+            try {
+                val dec = AudioIo.decodeAsset(this, "demo.wav")
+                decoded = dec
+                sharePcm = dec.pcm
+                ui.post {
+                    busy = false
+                    btn.isEnabled = true
+                    hideProgress()
+                    fileLabel.text = "نمونهٔ آزمایشی · ${PitchMath.faFixed(dec.durationSec, 1)} ثانیه"
+                    fileLabel.setTextColor(Theme.TXT)
+                    startAnalysis()
+                }
+            } catch (e: Exception) {
+                ui.post {
+                    busy = false
+                    btn.isEnabled = true
+                    hideProgress()
+                    resultBox.addView(errorCard("نمونهٔ آزمایشی خوانده نشد", e.message ?: ""))
+                }
+            }
+        }.start()
     }
 
     private fun displayName(uri: Uri): String {
@@ -452,7 +518,7 @@ class MainActivity : Activity() {
         Thread {
             try {
                 val sig = ShortSignal(dec.pcm, dec.sampleRate)
-                val rep = Analyzer.analyzeSignal(sig) { stage, p ->
+                val rep = Analyzer.analyzeSignal(sig, denoiseCheck.isChecked) { stage, p ->
                     ui.post {
                         val (label, base, span) = stageInfo(stage)
                         showProgress(base + span * p, label)
@@ -461,6 +527,7 @@ class MainActivity : Activity() {
                 val elapsed = System.currentTimeMillis() - started
                 ui.post {
                     report = rep
+                    lastElapsedMs = elapsed
                     busy = false
                     hideProgress()
                     renderReport(rep, elapsed)
@@ -564,10 +631,28 @@ class MainActivity : Activity() {
         grid.addView(statLine("سنت", PitchMath.faFixed(r.spanCents, 0)))
         grid.addView(statLine("ربع‌پرده", PitchMath.faFixed(r.quarterTones, 1)))
         grid.addView(statLine("درصد از یک اکتاو", PitchMath.faFixed(r.ofOctavePct, 0) + "٪"))
+        grid.addView(statLine("درجه (اکتاو = ۸ درجه)", PitchMath.spanInDegrees(r.spanSemitones).text))
         grid.addView(statLine("نت‌های خوانده‌شده", PitchMath.faDigits(r.noteCount)))
         grid.addView(statLine("مدت خواندن", PitchMath.faFixed(r.sungSec, 0) + " از " + PitchMath.faFixed(r.durationSec, 0) + " ثانیه"))
         grid.addView(statLine("مکث‌ها (≥۰٫۳ ثانیه)", PitchMath.faDigits(r.pauseCount) + " · بلندترین " + PitchMath.faFixed(r.longestPause, 1) + " ثانیه"))
         stats.addView(grid)
+
+        // نت‌های لحظه‌ای خام: جدا از گسترهٔ واقعی گزارش می‌شوند
+        val rh = r.rawHighest
+        val rl = r.rawLowest
+        if (rh != null && rl != null && (rh.name != (r.highest?.name ?: "") || rl.name != (r.lowest?.name ?: ""))) {
+            stats.addView(Theme.space(this, 6f))
+            stats.addView(Theme.divider(this))
+            stats.addView(
+                Theme.text(
+                    this,
+                    "بدون فیلتر: بالاترین ${rh.name} (${PitchMath.faFixed(rh.duration, 2)} ثانیه) · " +
+                        "پایین‌ترین ${rl.name} (${PitchMath.faFixed(rl.duration, 2)} ثانیه) — " +
+                        "این‌ها جیغ/لغزش لحظه‌ای‌اند و در گستره شمرده نشدند.",
+                    10.5f, 0x88FFFFFF.toInt()
+                )
+            )
+        }
         resultBox.addView(stats)
         resultBox.addView(Theme.space(this, 12f))
 
@@ -595,7 +680,58 @@ class MainActivity : Activity() {
         lpPlay.topMargin = Theme.dp(this, 8f)
         playRow.layoutParams = lpPlay
         chartCard.addView(playRow)
+
+        // زوم زمانی و ارتفاع (مثل نسخهٔ وب)
+        val zoomRow = Theme.row(this)
+        val zoomOutT = Theme.button(this, "⏱ −", false, true)
+        val zoomInT = Theme.button(this, "⏱ +", false, true)
+        val zoomOutP = Theme.button(this, "↕ −", false, true)
+        val zoomInP = Theme.button(this, "↕ +", false, true)
+        val zoomReset = Theme.button(this, "↺", false, true)
+        val zoomLabel = Theme.text(this, chart.zoomLabel(), 10.5f, Theme.DIM, false, Gravity.END)
+        zoomRow.addView(zoomOutT)
+        zoomRow.addView(Theme.space(this, 6f))
+        zoomRow.addView(zoomInT)
+        zoomRow.addView(Theme.space(this, 6f))
+        zoomRow.addView(zoomOutP)
+        zoomRow.addView(Theme.space(this, 6f))
+        zoomRow.addView(zoomInP)
+        zoomRow.addView(Theme.space(this, 6f))
+        zoomRow.addView(zoomReset)
+        zoomRow.addView(zoomLabel, weight(1f))
+        val lpZoom = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lpZoom.topMargin = Theme.dp(this, 6f)
+        zoomRow.layoutParams = lpZoom
+        chartCard.addView(zoomRow)
+
+        zoomInT.setOnClickListener {
+            chart.zoomTime(2.0)
+            chart.setViewCenter(player?.positionSec() ?: (r.durationSec / 2))
+            zoomLabel.text = chart.zoomLabel()
+        }
+        zoomOutT.setOnClickListener {
+            chart.zoomTime(0.5)
+            zoomLabel.text = chart.zoomLabel()
+        }
+        zoomInP.setOnClickListener {
+            chart.zoomPitch(1.4)
+            zoomLabel.text = chart.zoomLabel()
+        }
+        zoomOutP.setOnClickListener {
+            chart.zoomPitch(1 / 1.4)
+            zoomLabel.text = chart.zoomLabel()
+        }
+        zoomReset.setOnClickListener {
+            chart.zoomReset()
+            zoomLabel.text = chart.zoomLabel()
+        }
+
+        chartRef = chart
         resultBox.addView(chartCard)
+        resultBox.addView(Theme.space(this, 12f))
+
+        // ══ کارت ویدیوی ردِّ صدا ══
+        resultBox.addView(buildVideoCard(r, chart))
         resultBox.addView(Theme.space(this, 12f))
 
         playBtn.setOnClickListener {
@@ -652,8 +788,32 @@ class MainActivity : Activity() {
         row1.addView(jsonBtn, weight(1f))
         export.addView(row1)
         export.addView(Theme.space(this, 8f))
+        val row2 = Theme.row(this)
+        val originalBtn = Theme.button(this, "🎵 فایل اصلی", false, true)
         val shareBtn = Theme.button(this, "🔗 اشتراک‌گذاری گزارش", false, true)
-        export.addView(shareBtn)
+        row2.addView(originalBtn, weight(1f))
+        row2.addView(Theme.space(this, 8f))
+        row2.addView(shareBtn, weight(1f))
+        val lpRow2 = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lpRow2.topMargin = Theme.dp(this, 8f)
+        row2.layoutParams = lpRow2
+        export.addView(row2)
+
+        originalBtn.setOnClickListener {
+            val uri = pickUri
+            if (uri == null) {
+                toast("فایل اصلی در دسترس نیست (این تحلیل از ضبط زنده است)")
+            } else {
+                withWrite {
+                    try {
+                        val saved = Persistence.saveOriginal(this, uri, sourceName)
+                        toast("✅ کپی شد: ${saved.displayPath}")
+                    } catch (e: Exception) {
+                        toast("ذخیرهٔ فایل اصلی ممکن نشد: ${e.message}")
+                    }
+                }
+            }
+        }
 
         pngBtn.setOnClickListener { exportPng(r, chart) }
         jsonBtn.setOnClickListener { exportJson(r) }
@@ -821,6 +981,187 @@ class MainActivity : Activity() {
     private fun weight(f: Float): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, f)
 
+
+    // ───────────────────────────── ویدیوی ردِّ صدا ─────────────────────────
+
+    private var videoQuality = VideoMaker.Quality.SD
+    private var videoBusy = false
+
+    private fun buildVideoCard(r: Report, chart: ChartView): View {
+        val card = Theme.card(this)
+        card.addView(Theme.text(this, "🎬 ویدیوی ردِّ صدا", 13.5f, Theme.TXT, true))
+        card.addView(
+            Theme.text(
+                this,
+                "همان نمودار، ضبط‌شده در یک فایل MP4 هم‌گام با صدا — کاملاً روی همین گوشی",
+                11f, Theme.DIM
+            )
+        )
+        card.addView(Theme.space(this, 8f))
+
+        val qualityRow = Theme.row(this)
+        val sdBtn = Theme.button(this, VideoMaker.Quality.SD.label, true, true)
+        val hdBtn = Theme.button(this, VideoMaker.Quality.HD.label, false, true)
+        qualityRow.addView(sdBtn, weight(1f))
+        qualityRow.addView(Theme.space(this, 8f))
+        qualityRow.addView(hdBtn, weight(1f))
+        card.addView(qualityRow)
+        card.addView(Theme.space(this, 8f))
+
+        val pickQuality = { q: VideoMaker.Quality ->
+            videoQuality = q
+            sdBtn.background = if (q == VideoMaker.Quality.SD) Theme.primaryButtonBg(this)
+            else Theme.rounded(0x0DFFFFFF, Theme.dpF(this, 15f), 1, Theme.LINE)
+            sdBtn.setTextColor(if (q == VideoMaker.Quality.SD) Theme.INK else Theme.TXT)
+            hdBtn.background = if (q == VideoMaker.Quality.HD) Theme.primaryButtonBg(this)
+            else Theme.rounded(0x0DFFFFFF, Theme.dpF(this, 15f), 1, Theme.LINE)
+            hdBtn.setTextColor(if (q == VideoMaker.Quality.HD) Theme.INK else Theme.TXT)
+        }
+        sdBtn.setOnClickListener { pickQuality(VideoMaker.Quality.SD) }
+        hdBtn.setOnClickListener { pickQuality(VideoMaker.Quality.HD) }
+
+        val buildBtn = Theme.button(this, "🎬 ساخت ویدیو", true)
+        card.addView(buildBtn)
+
+        val vProgress = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
+        vProgress.max = 1000
+        vProgress.visibility = View.GONE
+        val lpBar = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(this, 6f))
+        lpBar.topMargin = Theme.dp(this, 10f)
+        vProgress.layoutParams = lpBar
+        card.addView(vProgress)
+
+        val vStage = Theme.text(this, "", 11.5f, Theme.GOLD)
+        vStage.visibility = View.GONE
+        card.addView(vStage)
+
+        val videoBox = LinearLayout(this)
+        videoBox.orientation = LinearLayout.VERTICAL
+        videoBox.visibility = View.GONE
+        val lpBox = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lpBox.topMargin = Theme.dp(this, 10f)
+        videoBox.layoutParams = lpBox
+        card.addView(videoBox)
+
+        buildBtn.setOnClickListener {
+            if (videoBusy) {
+                toast("ساخت ویدیو در جریان است")
+                return@setOnClickListener
+            }
+            val pcm = sharePcm
+            if (pcm == null) {
+                toast("اول فایل را تحلیل کنید")
+                return@setOnClickListener
+            }
+            videoBusy = true
+            buildBtn.isEnabled = false
+            buildBtn.alpha = 0.5f
+            vProgress.visibility = View.VISIBLE
+            vProgress.progress = 0
+            vStage.visibility = View.VISIBLE
+            vStage.text = "آماده‌سازی کدگذار…"
+            videoBox.visibility = View.GONE
+            videoBox.removeAllViews()
+
+            Thread {
+                try {
+                    val maker = VideoMaker(this)
+                    val res = maker.build(r, pcm, chart, sourceName, videoQuality) { p, label ->
+                        ui.post {
+                            vProgress.progress = (p.coerceIn(0.0, 1.0) * 1000).toInt()
+                            vStage.text = label
+                        }
+                    }
+                    ui.post {
+                        videoBusy = false
+                        buildBtn.isEnabled = true
+                        buildBtn.alpha = 1f
+                        vProgress.visibility = View.GONE
+                        vStage.visibility = View.GONE
+                        videoFile = res.file
+                        showVideoResult(videoBox, res, r)
+                    }
+                } catch (e: OutOfMemoryError) {
+                    ui.post { videoFailed(buildBtn, vProgress, vStage, "حافظه کافی نبود") }
+                } catch (e: Exception) {
+                    ui.post {
+                        videoFailed(
+                            buildBtn, vProgress, vStage,
+                            e.message ?: "کدگذار این دستگاه ویدیو نساخت"
+                        )
+                    }
+                }
+            }.start()
+        }
+        return card
+    }
+
+    private fun videoFailed(btn: TextView, bar: android.widget.ProgressBar, stage: TextView, msg: String) {
+        videoBusy = false
+        btn.isEnabled = true
+        btn.alpha = 1f
+        bar.visibility = View.GONE
+        stage.visibility = View.VISIBLE
+        stage.setTextColor(Theme.RED)
+        stage.text = "ویدیو ساخته نشد: $msg"
+    }
+
+    private fun showVideoResult(box: LinearLayout, res: VideoMaker.Result, r: Report) {
+        box.removeAllViews()
+        box.visibility = View.VISIBLE
+        val vv = android.widget.VideoView(this)
+        vv.setVideoPath(res.file.absolutePath)
+        val media = android.widget.MediaController(this)
+        media.setAnchorView(vv)
+        vv.setMediaController(media)
+        vv.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(this, 210f))
+        box.addView(vv)
+        vv.start()
+
+        box.addView(Theme.space(this, 6f))
+        box.addView(
+            Theme.text(
+                this,
+                "ساخته شد: ${res.frames} فریم · ${PitchMath.faFixed(res.ms / 1000.0, 1)} ثانیه رندر · " +
+                    (if (res.withAudio) "با صدا" else "بدون صدا (کدگذار صدا نبود)") +
+                    " · ${PitchMath.faFixed(res.file.length() / 1_048_576.0, 1)} مگابایت",
+                10.5f, Theme.DIM
+            )
+        )
+        box.addView(Theme.space(this, 8f))
+
+        val row = Theme.row(this)
+        val save = Theme.button(this, "💾 ذخیره در گالری", true, true)
+        val share = Theme.button(this, "🔗 اشتراک‌گذاری", false, true)
+        row.addView(save, weight(1f))
+        row.addView(Theme.space(this, 8f))
+        row.addView(share, weight(1f))
+        box.addView(row)
+
+        save.setOnClickListener {
+            withWrite {
+                try {
+                    val saved = VideoMaker(this).saveToGallery(
+                        res.file, Persistence.safeName("همیار-قاری-${baseName()}", "mp4")
+                    )
+                    toast("✅ ویدیو ذخیره شد: ${saved.displayPath}")
+                } catch (e: Exception) {
+                    toast("ذخیرهٔ ویدیو ممکن نشد: ${e.message}")
+                }
+            }
+        }
+        share.setOnClickListener {
+            try {
+                val saved = VideoMaker(this).saveToGallery(
+                    res.file, Persistence.safeName("همیار-قاری-${baseName()}", "mp4")
+                )
+                Persistence.share(this, saved)
+            } catch (e: Exception) {
+                toast("اشتراک‌گذاری ممکن نشد: ${e.message}")
+            }
+        }
+    }
+
     // ───────────────────────────── خروجی‌ها ─────────────────────────────
 
     private var pendingWrite: (() -> Unit)? = null
@@ -907,8 +1248,23 @@ class MainActivity : Activity() {
         highCol.addView(Theme.text(this, "بالاترین", 11f, Theme.DIM, false, Gravity.CENTER))
         liveHighLabel = Theme.text(this, "—", 22f, Theme.GOLD, true, Gravity.CENTER)
         highCol.addView(liveHighLabel)
+        val spanCol = LinearLayout(this)
+        spanCol.orientation = LinearLayout.VERTICAL
+        spanCol.gravity = Gravity.CENTER_HORIZONTAL
+        spanCol.addView(Theme.text(this, "گستره", 11f, Theme.DIM, false, Gravity.CENTER))
+        liveSpanLabel = Theme.text(this, "—", 16f, Theme.GOLD2, true, Gravity.CENTER)
+        spanCol.addView(liveSpanLabel)
+        val durCol = LinearLayout(this)
+        durCol.orientation = LinearLayout.VERTICAL
+        durCol.gravity = Gravity.CENTER_HORIZONTAL
+        durCol.addView(Theme.text(this, "مدت", 11f, Theme.DIM, false, Gravity.CENTER))
+        liveDurLabel = Theme.text(this, "—", 16f, Theme.TXT, true, Gravity.CENTER)
+        durCol.addView(liveDurLabel)
+
         rangeRow.addView(highCol, weight(1f))
         rangeRow.addView(lowCol, weight(1f))
+        rangeRow.addView(spanCol, weight(1f))
+        rangeRow.addView(durCol, weight(1f))
         rangeCard.addView(rangeRow)
         col.addView(rangeCard)
         col.addView(Theme.space(this, 12f))
@@ -932,6 +1288,30 @@ class MainActivity : Activity() {
         controls.addView(recordCheck)
         controls.addView(Theme.space(this, 8f))
 
+        recBar = LinearLayout(this)
+        recBar.orientation = LinearLayout.HORIZONTAL
+        recBar.gravity = Gravity.CENTER_VERTICAL
+        recBar.background = Theme.rounded(0x22FF7B7B, Theme.dpF(this, 12f), 1, 0x55FF7B7B.toInt())
+        val padRec = Theme.dp(this, 10f)
+        recBar.setPadding(padRec, Theme.dp(this, 6f), padRec, Theme.dp(this, 6f))
+        val dot = View(this)
+        dot.background = Theme.rounded(Theme.RED, Theme.dpF(this, 6f))
+        dot.layoutParams = LinearLayout.LayoutParams(Theme.dp(this, 10f), Theme.dp(this, 10f))
+        recBar.addView(dot)
+        recBar.addView(Theme.space(this, 8f))
+        recTime = Theme.text(this, "۰۰:۰۰", 12f, Theme.RED, true)
+        recTime.width = Theme.dp(this, 58f)
+        recBar.addView(recTime)
+        recBar.addView(
+            Theme.text(this, "در حال ضبط… هر چه می‌خوانی ذخیره می‌شود", 10.5f, Theme.DIM),
+            weight(1f)
+        )
+        recBar.visibility = View.GONE
+        val lpRec = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lpRec.bottomMargin = Theme.dp(this, 8f)
+        recBar.layoutParams = lpRec
+        controls.addView(recBar)
+
         liveStartBtn = Theme.button(this, "🎙  شروع خواندن", true)
         liveStartBtn.setOnClickListener {
             if (live == null) startLive() else stopLive()
@@ -941,6 +1321,21 @@ class MainActivity : Activity() {
 
         liveStatus = Theme.text(this, "میکروفون خاموش است", 11.5f, Theme.DIM, false, Gravity.CENTER)
         controls.addView(liveStatus)
+
+        val resetLive = Theme.button(this, "↺ صفر کردن رکورد", false, true)
+        resetLive.setOnClickListener {
+            liveEngineReset?.invoke()
+            liveHighLabel.text = "—"
+            liveLowLabel.text = "—"
+            liveSpanLabel.text = "—"
+            liveDurLabel.text = "—"
+            liveChart.setData(DoubleArray(0), DoubleArray(0), 12.0)
+            toast("رکورد زنده صفر شد")
+        }
+        val lpReset = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lpReset.topMargin = Theme.dp(this, 8f)
+        resetLive.layoutParams = lpReset
+        controls.addView(resetLive)
 
         liveExportRow = LinearLayout(this)
         liveExportRow.orientation = LinearLayout.VERTICAL
@@ -984,10 +1379,36 @@ class MainActivity : Activity() {
         liveStartBtn.text = "⏹  توقف"
         liveStartBtn.background = Theme.rounded(0x33FF7B7B, Theme.dpF(this, 15f), 1, 0x88FF7B7B.toInt())
         liveStartBtn.setTextColor(Theme.RED)
+        liveEngineReset = { engine.resetRecord() }
         liveStatus.text = if (recordCheck.isChecked) "در حال گوش دادن و ضبط…" else "در حال گوش دادن…"
+        recordStartAt = System.currentTimeMillis()
+        recBar.visibility = if (recordCheck.isChecked) View.VISIBLE else View.GONE
+        startRecordTicker()
+    }
+
+    private fun startRecordTicker() {
+        stopRecordTicker()
+        if (!recordCheck.isChecked) return
+        val r = object : Runnable {
+            override fun run() {
+                if (live == null) return
+                val sec = (System.currentTimeMillis() - recordStartAt) / 1000
+                recTime.text = PitchMath.faDigits(String.format(java.util.Locale.US, "%02d:%02d", sec / 60, sec % 60))
+                ui.postDelayed(this, 500)
+            }
+        }
+        recordTicker = r
+        ui.post(r)
+    }
+
+    private fun stopRecordTicker() {
+        recordTicker?.let { ui.removeCallbacks(it) }
+        recordTicker = null
+        recBar.visibility = View.GONE
     }
 
     private fun stopLive() {
+        stopRecordTicker()
         val engine = live ?: return
         live = null
         val recorded = engine.stop()
@@ -1001,25 +1422,87 @@ class MainActivity : Activity() {
         liveGauge.cents = 0f
         liveGauge.invalidate()
 
-        if (recorded != null && recorded.size > AudioIo.TARGET_RATE) {
-            liveStatus.text = "ضبط ${PitchMath.faFixed(recorded.size.toDouble() / AudioIo.TARGET_RATE, 1)} ثانیه — آمادهٔ تحلیل"
-            liveExportRow.visibility = View.VISIBLE
-            liveExportRow.removeAllViews()
-            val analyze = Theme.button(this, "📊 تحلیل همین ضبط", true)
-            val saveWav = Theme.button(this, "💾 ذخیرهٔ صدا (WAV)", false)
-            analyze.setOnClickListener { analyzeRecording(recorded) }
-            saveWav.setOnClickListener {
+        if (recorded != null && recorded.size > AudioIo.TARGET_RATE / 2) {
+            takes.add(0, Take(recorded, System.currentTimeMillis()))
+            liveStatus.text = "${PitchMath.faDigits(takes.size)} ضبط در این جلسه"
+            renderTakes()
+        }
+    }
+
+    // ── ضبط‌های این جلسه (مثل «⏺ ضبط‌های این جلسه» نسخهٔ وب) ──
+
+    private class Take(val pcm: ShortArray, val at: Long) {
+        val seconds: Double get() = pcm.size.toDouble() / AudioIo.TARGET_RATE
+    }
+
+    private val takes = ArrayList<Take>()
+
+    private fun renderTakes() {
+        liveExportRow.removeAllViews()
+        if (takes.isEmpty()) {
+            liveExportRow.visibility = View.GONE
+            return
+        }
+        liveExportRow.visibility = View.VISIBLE
+
+        val head = Theme.row(this)
+        head.addView(Theme.text(this, "⏺ ضبط‌های این جلسه", 13f, Theme.TXT, true), weight(1f))
+        val clear = Theme.button(this, "🗑 حذف همه", false, true)
+        clear.setOnClickListener {
+            takes.clear()
+            renderTakes()
+            toast("همهٔ ضبط‌های این جلسه پاک شد")
+        }
+        head.addView(clear)
+        liveExportRow.addView(head)
+        liveExportRow.addView(Theme.space(this, 6f))
+
+        for ((index, take) in takes.withIndex()) {
+            val card = LinearLayout(this)
+            card.orientation = LinearLayout.VERTICAL
+            card.background = Theme.rounded(0x0DFFFFFF, Theme.dpF(this, 14f), 1, Theme.LINE)
+            val pad = Theme.dp(this, 10f)
+            card.setPadding(pad, pad, pad, pad)
+            val lpCard = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lpCard.bottomMargin = Theme.dp(this, 8f)
+            card.layoutParams = lpCard
+
+            val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(take.at))
+            card.addView(
+                Theme.text(
+                    this,
+                    "ضبط ${PitchMath.faDigits(takes.size - index)} · ${PitchMath.faFixed(take.seconds, 1)} ثانیه · ساعت ${PitchMath.faDigits(time)}",
+                    12f, Theme.TXT, true
+                )
+            )
+            card.addView(Theme.space(this, 6f))
+            val rowA = Theme.row(this)
+            val analyze = Theme.button(this, "📊 تحلیل", true, true)
+            val save = Theme.button(this, "💾 ذخیره صدا", false, true)
+            val del = Theme.button(this, "🗑", false, true)
+            analyze.setOnClickListener { analyzeRecording(take.pcm) }
+            save.setOnClickListener {
                 withWrite {
                     val saved = Persistence.saveWav(
-                        this, recorded, AudioIo.TARGET_RATE,
-                        Persistence.safeName("همیار-قاری-ضبط", "wav")
+                        this, take.pcm, AudioIo.TARGET_RATE,
+                        Persistence.safeName("همیار-قاری-ضبط-${takes.size - index}", "wav")
                     )
                     toast("✅ ذخیره شد: ${saved.displayPath}")
                 }
             }
-            liveExportRow.addView(analyze)
-            liveExportRow.addView(Theme.space(this, 8f))
-            liveExportRow.addView(saveWav)
+            del.setOnClickListener {
+                if (index in takes.indices) {
+                    takes.removeAt(index)
+                    renderTakes()
+                }
+            }
+            rowA.addView(analyze, weight(1f))
+            rowA.addView(Theme.space(this, 6f))
+            rowA.addView(save, weight(1f))
+            rowA.addView(Theme.space(this, 6f))
+            rowA.addView(del)
+            card.addView(rowA)
+            liveExportRow.addView(card)
         }
     }
 
@@ -1064,7 +1547,7 @@ class MainActivity : Activity() {
                     truncated = false
                 )
                 sharePcm = prepared
-                val rep = Analyzer.analyzeSignal(ShortSignal(prepared, AudioIo.TARGET_RATE)) { stage, p ->
+                val rep = Analyzer.analyzeSignal(ShortSignal(prepared, AudioIo.TARGET_RATE), denoiseCheck.isChecked) { stage, p ->
                     ui.post {
                         val info = stageInfo(stage)
                         showProgress(info.second + info.third * p, info.first)
@@ -1122,6 +1605,17 @@ class MainActivity : Activity() {
         private var highHz = 0.0
         private var lowHz = 0.0
         private val recording get() = liveRecording
+
+        fun resetRecord() {
+            highHz = 0.0
+            lowHz = 0.0
+            lastMidi = -1
+            stableCount = 0
+            synchronized(lock) {
+                traceT.clear()
+                traceHz.clear()
+            }
+        }
 
         fun start(): Boolean {
             startedAt = System.currentTimeMillis()
@@ -1216,7 +1710,12 @@ class MainActivity : Activity() {
                         lowHz = f0
                         liveLowLabel.text = PitchMath.noteName(f0)
                     }
+                    if (highHz > 0 && lowHz > 0) {
+                        val semis = PitchMath.cents(highHz, lowHz) / 100.0
+                        liveSpanLabel.text = PitchMath.faFixed(semis, 1)
+                    }
                 }
+                liveDurLabel.text = PitchMath.faFixed(t, 0) + " ث"
             } else {
                 liveNoteName.setTextColor(Theme.DIM)
                 if (liveNoteName.text != "—") {

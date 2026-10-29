@@ -255,6 +255,40 @@ object AudioIo {
         return cnt
     }
 
+    /** نمونهٔ آزمایشی داخل بستهٔ اپ (خروجی: همان قالب یکسان‌شده) */
+    @Throws(IOException::class)
+    fun decodeAsset(ctx: Context, name: String): Decoded {
+        val bytes = try {
+            ctx.assets.open(name).use { it.readBytes() }
+        } catch (e: Exception) {
+            throw IOException("نمونهٔ آزمایشی در بستهٔ اپ نیست")
+        }
+        val wav = Wav.decode(bytes) ?: throw IOException("نمونهٔ آزمایشی خوانده نشد")
+        val pcm: ShortArray
+        val rate: Int
+        if (wav.sampleRate == TARGET_RATE) {
+            pcm = ShortArray(wav.samples.size) { i ->
+                (wav.samples[i] * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
+            }
+            rate = TARGET_RATE
+        } else {
+            val res = Wav.resample(wav.samples, wav.sampleRate, TARGET_RATE)
+            pcm = ShortArray(res.size) { i ->
+                (res[i] * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
+            }
+            rate = TARGET_RATE
+        }
+        Analyzer.prepareShort(pcm, TARGET_RATE)
+        return Decoded(
+            pcm = pcm,
+            sampleRate = rate,
+            durationSec = pcm.size.toDouble() / TARGET_RATE,
+            sourceRate = wav.sampleRate,
+            channels = 1,
+            truncated = false
+        )
+    }
+
     /** سیگنال آماده برای تحلیل (بدون کپی اضافه) */
     fun signal(decoded: Decoded): ShortSignal = ShortSignal(decoded.pcm, decoded.sampleRate)
 

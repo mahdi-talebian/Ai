@@ -45,6 +45,7 @@ class ChartView(context: Context) : View(context) {
 
     private var minMidi = 48.0
     private var maxMidi = 72.0
+    private var lowMidiRef = -1
 
     init {
         setLayerType(LAYER_TYPE_HARDWARE, null)
@@ -68,6 +69,11 @@ class ChartView(context: Context) : View(context) {
                 if (b > maxMidi) maxMidi = ceil(b)
             }
         }
+        invalidate()
+    }
+
+    fun setRangeNotes(lowMidi: Int, highMidi: Int) {
+        lowMidiRef = lowMidi
         invalidate()
     }
 
@@ -143,13 +149,13 @@ class ChartView(context: Context) : View(context) {
             val y = yForMidi(midi.toDouble(), top, bottom)
             val isC = ((midi % 12) + 12) % 12 == 0
             canvas.drawLine(left, y, right, y, if (isC) paintGridStrong else paintGrid)
-            if (isC) {
-                canvas.drawText(
-                    PitchMath.latinNameAscii(midi),
-                    3f * unit,
-                    y + 3.2f * unit,
-                    paintLabel
-                )
+            // نام همهٔ خطوط نت (مثل نسخهٔ وب) — اکتاو فقط روی «دو» نوشته می‌شود
+            if (y > top + 2f * unit && y < bottom - 1f * unit) {
+                paintLabel.textSize = (if (isC) 9.5f else 8.0f) * unit
+                paintLabel.color = if (isC) 0xA6FFFFFF.toInt() else 0x66FFFFFF
+                val name = if (isC) PitchMath.latinNameAscii(midi)
+                else PitchMath.latinNameAscii(midi).filter { !it.isDigit() }
+                canvas.drawText(name, 2f * unit, y + 3.0f * unit, paintLabel)
             }
             midi++
         }
@@ -166,8 +172,12 @@ class ChartView(context: Context) : View(context) {
             return
         }
 
-        val span = max(0.5, totalSec)
-        val startSec = if (live) max(0.0, t[t.size - 1] - span) else 0.0
+        val span = if (live) max(0.5, totalSec) else shownWindow()
+        val startSec = when {
+            live -> max(0.0, t[t.size - 1] - span)
+            timeZoom <= 1.001 -> 0.0
+            else -> (viewCenter - span / 2).coerceIn(0.0, max(0.0, totalSec - span))
+        }
         val xScale = (right - left) / span
 
         path.reset()
@@ -218,10 +228,59 @@ class ChartView(context: Context) : View(context) {
         paintGrid.strokeWidth = 1f * unit
         canvas.drawRoundRect(rect, 10f * unit, 10f * unit, paintGrid)
         paintGrid.color = 0x16FFFFFF
+
+        // نشانِ «نتِ لحظه» (همان چیزی که نسخهٔ وب بالای نمودار نشان می‌دهد)
+        val at = if (playheadSec >= 0) playheadSec else lastSec
+        if (at >= 0) {
+            val now = hzAt(at)
+            if (now > 0) {
+                val midi = PitchMath.nearestMidi(now)
+                val text = "${PitchMath.latinNameAscii(midi)}  ·  ${PitchMath.solfegeWithOctave(midi)}" +
+                    if (lowMidiRef >= 0) "  ·  درجهٔ ${PitchMath.faDigits(PitchMath.degreeFromLow(midi, lowMidiRef))}" else ""
+                val pill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = 0xCC0B1224.toInt()
+                    style = Paint.Style.FILL
+                }
+                val pillText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Theme.GOLD2
+                    textSize = 10f * unit
+                    typeface = Theme.font(context, true)
+                    textAlign = Paint.Align.RIGHT
+                }
+                val tw = pillText.measureText(text)
+                val pw = tw + 14f * unit
+                val ph = 18f * unit
+                val px = right - pw - 4f * unit
+                val py = top + 4f * unit
+                canvas.drawRoundRect(px, py, px + pw, py + ph, ph / 2, ph / 2, pill)
+                canvas.drawText(text, px + pw - 7f * unit, py + ph * 0.68f, pillText)
+            }
+        }
+    }
+
+    private fun hzAt(sec: Double): Double {
+        if (t.isEmpty()) return 0.0
+        var lo = 0
+        var hi = t.size - 1
+        if (sec <= t[0]) return hz[0]
+        if (sec >= t[hi]) return hz[hi]
+        while (lo < hi) {
+            val mid = (lo + hi) / 2
+            if (t[mid] < sec) lo = mid + 1 else hi = mid
+        }
+        return hz[lo]
     }
 
     private fun yForMidi(midi: Double, top: Float, bottom: Float): Float {
-        val frac = (midi - minMidi) / max(0.5, maxMidi - minMidi)
+        var lo = minMidi
+        var hi = maxMidi
+        if (pitchZoom > 1.001) {
+            val center = (lo + hi) / 2.0
+            val half = (hi - lo) / 2.0 / pitchZoom
+            lo = center - half
+            hi = center + half
+        }
+        val frac = (midi - lo) / max(0.5, hi - lo)
         return (bottom - frac * (bottom - top)).toFloat()
     }
 
@@ -243,6 +302,57 @@ class ChartView(context: Context) : View(context) {
     override fun performClick(): Boolean {
         super.performClick()
         return true
+    }
+
+    // ── زوم (مانند نسخهٔ وب: زوم زمانی و زوم ارتفاع) ──────────────────
+    var timeZoom = 1.0
+        private set
+    var pitchZoom = 1.0
+        private set
+    private var viewCenter = 0.0
+
+    fun zoomTime(factor: Double) {
+        timeZoom = (timeZoom * factor).coerceIn(1.0, 16.0)
+        invalidate()
+    }
+
+    fun zoomPitch(factor: Double) {
+        pitchZoom = (pitchZoom * factor).coerceIn(1.0, 4.0)
+        invalidate()
+    }
+
+    fun zoomReset() {
+        timeZoom = 1.0
+        pitchZoom = 1.0
+        viewCenter = totalSec / 2
+        invalidate()
+    }
+
+    fun zoomLabel(): String {
+        val shown = shownWindow()
+        return if (timeZoom <= 1.001) "کل اجرا · ارتفاع ×${PitchMath.faFixed(pitchZoom, 0)}"
+        else "پنجرهٔ ${PitchMath.faFixed(shown, 0)} ثانیه‌ای · ارتفاع ×${PitchMath.faFixed(pitchZoom, 0)}"
+    }
+
+    private fun shownWindow(): Double = max(0.5, totalSec / timeZoom)
+
+    fun setViewCenter(sec: Double) {
+        viewCenter = sec.coerceIn(0.0, max(0.0, totalSec))
+        invalidate()
+    }
+
+    /** رسم یک فریم برای ویدیو: بدون تغییر وضعیت داخلی، با خط پخش در ثانیهٔ t */
+    fun drawFrameForVideo(c: Canvas, w: Float, h: Float, unit: Float, t: Double) {
+        val savedPlayhead = playheadSec
+        val savedCenter = viewCenter
+        val savedTimeZoom = timeZoom
+        playheadSec = t
+        viewCenter = t
+        timeZoom = 1.0
+        drawChart(c, w, h, unit, 34f, 8f, 8f, 14f)
+        playheadSec = savedPlayhead
+        viewCenter = savedCenter
+        timeZoom = savedTimeZoom
     }
 
     /** خروجی تصویر: کارت تحلیل با نمودار و اعداد */

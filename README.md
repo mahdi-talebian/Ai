@@ -21,7 +21,7 @@
 `android-qari/`): Kotlin خالص، بدون WebView، بدون HTML، بدون سرور و **بدون
 مجوز اینترنت**. همان موتور تحلیل، این‌بار به زبان Kotlin و روی خود گوشی.
 
-- بستهٔ نصبی: `release/hamyar-qari-1.0.0.apk` (اندروید ۸+، ≈۱٫۰۵ مگابایت)
+- بستهٔ نصبی: `release/hamyar-qari-1.1.0.apk` (اندروید ۸+، ≈۲٫۳ مگابایت)
 - نام بسته: `ir.hamyareqari.app` — مستقل و کنار «ردِّ صدا» نصب می‌شود
 - مستندات کامل، روش ساخت، و اعداد دقت: [`android-qari/README.md`](android-qari/README.md)
 
