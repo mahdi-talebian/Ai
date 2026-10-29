@@ -69,7 +69,11 @@ global.VideoEncoder = class VideoEncoder {
   encode(frame, o) {
     const keyFrame = !!(o && o.keyFrame);
     this.encodeQueueSize++;
-    const chunk = { timestamp: frame.timestamp, type: keyFrame ? 'key' : 'delta', byteLength: 100, copyTo() { } };
+    const chunk = {
+      timestamp: frame.timestamp, duration: frame.duration,
+      type: keyFrame ? 'key' : 'delta', byteLength: 100,
+      copyTo(dst) { if (dst && dst.fill) dst.fill(7); }
+    };
     enc.videoChunks.push({ ts: frame.timestamp, keyFrame });
     this._out(chunk, { decoderConfig: { codec: this.cfg.codec } });
     this.encodeQueueSize--;
@@ -83,7 +87,12 @@ global.AudioEncoder = class AudioEncoder {
   configure(cfg) { this.cfg = cfg; enc.configs.push(cfg); }
   encode(ad) {
     this.encodeQueueSize++;
-    const chunk = { timestamp: ad.timestamp, byteLength: 50, copyTo() { } };
+    /* مثل مرورگرهای واقعی: برای بعضی چانک‌ها duration نمی‌دهد */
+    const chunk = {
+      timestamp: ad.timestamp, duration: (enc.audioChunks.length % 3 === 0 ? undefined : 46439),
+      type: 'key', byteLength: 50,
+      copyTo(dst) { if (dst && dst.fill) dst.fill(9); }
+    };
     enc.audioChunks.push({ ts: ad.timestamp });
     this._out(chunk, { decoderConfig: { codec: this.cfg.codec } });
     this.encodeQueueSize--;
@@ -95,8 +104,14 @@ global.Mp4Muxer = {
   ArrayBufferTarget: class { constructor() { this.buffer = new ArrayBuffer(2048); } },
   Muxer: class {
     constructor(opts) { this.opts = opts; this.target = opts.target; }
-    addVideoChunk(c, m) { enc.added.push({ kind: 'v', ts: c.timestamp }); }
-    addAudioChunk(c, m) { enc.added.push({ kind: 'a', ts: c.timestamp }); }
+    addVideoChunkRaw(data, type, ts, dur, meta) {
+      enc.added.push({ kind: 'v', ts: ts, dur: dur, type: type, bytes: data.byteLength });
+    }
+    addAudioChunkRaw(data, type, ts, dur, meta) {
+      enc.added.push({ kind: 'a', ts: ts, dur: dur, type: type, bytes: data.byteLength });
+    }
+    addVideoChunk(c, m) { enc.added.push({ kind: 'v', ts: c.timestamp, dur: c.duration }); }
+    addAudioChunk(c, m) { enc.added.push({ kind: 'a', ts: c.timestamp, dur: c.duration }); }
     finalize() { enc.finalized++; }
   }
 };

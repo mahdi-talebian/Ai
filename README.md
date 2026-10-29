@@ -355,13 +355,14 @@ python3 trace_video.py recitation.mp3 --png trace.png
 رابط از ابتدا موبایل‌فرست نوشته شده (یک‌ستونه، دکمه‌های بزرگ، نوار تب چسبان،
 نمودار با مقیاس `devicePixelRatio`) و فونت محلی `Estedad` دارد.
 
-### 📱 APK آمادهٔ نصب (۱٫۳٫۳ — نوارِ ضخیم برای نت‌های کشیده)
+### 📱 APK آمادهٔ نصب (۱٫۳٫۴ — هم‌زمانیِ دقیق صدا/تصویر، طولِ درست ویدیو)
 
-**⬇ دانلود:** [radde-seda-1.3.3.apk](https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.3.3/release/radde-seda-1.3.3.apk)
-— صفحهٔ انتشار: [Releases · v1.3.3](https://github.com/mahdi-talebian/Ai/releases/tag/v1.3.3)
+**⬇ دانلود:** [radde-seda-1.3.4.apk](https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.3.4/release/radde-seda-1.3.4.apk)
+— صفحهٔ انتشار: [Releases · v1.3.4](https://github.com/mahdi-talebian/Ai/releases/tag/v1.3.4)
 
 ```
-release/radde-seda-1.3.3.apk    ← نسخهٔ جاری (نت‌های کشیده با نوارِ ضخیم طلایی)
+release/radde-seda-1.3.4.apk    ← نسخهٔ جاری (هم‌زمانی دقیق صدا/تصویر + طولِ درست ویدیو)
+release/radde-seda-1.3.3.apk    ← نت‌های کشیده با نوارِ ضخیم طلایی
 release/radde-seda-1.3.2.apk    ← همه‌چیز آفلاین، تأییدشده با apk_test
 release/radde-seda-1.3.1.apk    ← نمودار پهن‌تر + ویدیوی ۱۰۸۰p۶۰ بدون لگ
 release/radde-seda-1.3.0.apk    ← زوم + رندر سریع ۷۲۰p۶۰

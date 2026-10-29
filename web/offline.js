@@ -582,7 +582,11 @@
     for (var i = 0; i < cands.length; i++) {
       var cfg = {
         codec: cands[i], width: w, height: h, framerate: fps,
-        bitrate: bitrate || VIDEO.bitrate, latencyMode: 'quality',
+        bitrate: bitrate || VIDEO.bitrate,
+        /* 'realtime' ⇒ کدگذار B-frame نمی‌سازد. با B-frame ترتیبِ زمانی
+           فایل MP4 می‌شکند؛ همان چیزی که باعث «قفل‌کردن» و طولِ غلط در
+           پخش‌کننده‌های گوشی می‌شد. */
+        latencyMode: 'realtime',
         hardwareAcceleration: 'prefer-hardware', avc: { format: 'avc' }
       };
       try {
@@ -609,6 +613,218 @@
 
   function yieldTick() {
     return new Promise(function (r) { setTimeout(r, 0); });
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     اصلاح «طولِ فایل» در هدر خروجی
+     ----------------------------------------------------------------------
+     بعضی پخش‌کننده‌های گوشی طول را فقط از هدر می‌خوانند. اگر هدر ناقص
+     باشد، گالری عددی مثل «۴ ثانیه» نشان می‌دهد و پخش را نصفه رها می‌کند.
+     این‌جا طولِ درست را در mvhd / tkhd / mdhd (MP4) و Info/Duration (WebM)
+     می‌نویسیم تا برچسب و رفتارِ پخش‌کننده با واقعیت یکی باشد.
+     ══════════════════════════════════════════════════════════════════════ */
+  function fourcc(dv, off) {
+    return String.fromCharCode(dv.getUint8(off), dv.getUint8(off + 1),
+      dv.getUint8(off + 2), dv.getUint8(off + 3));
+  }
+
+  /* پیمایش جعبه‌های MP4 (هر عمق) */
+  function walkBoxes(dv, start, end, visit, depth) {
+    var off = start;
+    while (off + 8 <= end) {
+      var size = dv.getUint32(off);
+      var type = fourcc(dv, off + 4);
+      var hdr = 8;
+      if (size === 1) {
+        if (off + 16 > end) break;
+        size = Number(dv.getBigUint64(off + 8));
+        hdr = 16;
+      } else if (size === 0) {
+        size = end - off;
+      }
+      if (size < hdr || off + size > end) break;
+      visit(type, off, size, hdr);
+      off += size;
+    }
+  }
+
+  function patchMp4Duration(buffer, seconds) {
+    if (!(seconds > 0) || !buffer || !buffer.byteLength) return buffer;
+    var copy = buffer.slice(0);                    /* دست‌نخوردنی بماند */
+    var dv = new DataView(copy);
+    var patched = 0;
+    function writeDur(bodyOff, ver, tsOff, durOff, w64) {
+      var ts = dv.getUint32(bodyOff + tsOff);
+      if (!ts) return;
+      var units = Math.round(seconds * ts);
+      if (w64) {
+        if (units > 0xFFFFFFFF) dv.setBigUint64(bodyOff + durOff, BigInt(units));
+        else dv.setUint32(bodyOff + durOff, units);
+        if (dv.getUint32(bodyOff + durOff) === units) return;
+      }
+      dv.setUint32(bodyOff + durOff, Math.min(0xFFFFFFFF, units));
+      patched++;
+    }
+    walkBoxes(dv, 0, copy.byteLength, function (type, off, size, hdr) {
+      if (type === 'moov') {
+        walkBoxes(dv, off + hdr, off + size, function (t2, o2, s2, h2) {
+          var body = o2 + h2;
+          var ver = dv.getUint8(body);
+          if (t2 === 'mvhd') {
+            if (ver === 0) writeDur(body, 0, 12, 16, false);
+            else writeDur(body, 1, 20, 24, true);
+          } else if (t2 === 'trak') {
+            walkBoxes(dv, o2 + h2, o2 + s2, function (t3, o3, s3, h3) {
+              var b3 = o3 + h3, v3 = dv.getUint8(b3);
+              if (t3 === 'tkhd') {
+                if (v3 === 0) writeDur(b3, 0, 12, 20, false);
+                else writeDur(b3, 1, 20, 28, true);
+              } else if (t3 === 'mdia') {
+                walkBoxes(dv, o3 + h3, o3 + s3, function (t4, o4, s4, h4) {
+                  if (t4 !== 'mdhd') return;
+                  var b4 = o4 + h4, v4 = dv.getUint8(b4);
+                  if (v4 === 0) writeDur(b4, 0, 12, 16, false);
+                  else writeDur(b4, 1, 20, 24, true);
+                });
+              }
+            });
+          }
+        });
+      }
+    });
+    return patched ? copy : buffer;
+  }
+
+  /* ── WebM (خروجی MediaRecorder): نوشتن Duration در Segment/Info ──
+     اگر عنصر Duration باشد بازنویسی می‌شود، وگرنه به‌صورت معتبر درست
+     می‌شود (با اصلاح اندازهٔ Info). */
+  var ID_SEGMENT = 0x18538067, ID_INFO = 0x1549A966,
+    ID_DURATION = 0x4489, ID_VOID = 0xEC;
+
+  function readVint(b, off, keepMarker) {
+    var first = b[off];
+    if (first === undefined) return null;
+    var len = 1, mask = 0x80;
+    while (len <= 8 && !(first & mask)) { mask >>= 1; len++; }
+    if (len > 8) return null;
+    var value = keepMarker ? first : (first & (mask - 1));
+    var unknown = (first & (mask - 1)) === mask - 1;
+    for (var i = 1; i < len; i++) {
+      var v = b[off + i];
+      if (v === undefined) return null;
+      if (unknown && v !== 0xFF) unknown = false;
+      value = value * 256 + v;
+    }
+    return { value: value, len: len, unknown: unknown };
+  }
+
+  function writeVint(b, off, value) {
+    /* کدگذاری کوتاه‌ترین طولِ ممکن (بدون all-ones) */
+    var len = 1;
+    while (value >= Math.pow(2, 7 * len) - 1 && len < 8) len++;
+    for (var i = len - 1; i >= 0; i--) { b[off + i] = value & 0xFF; value = Math.floor(value / 256); }
+    b[off] |= (0x80 >> (len - 1));
+    return len;
+  }
+
+  function readId(b, off) {
+    var first = b[off];
+    if (first === undefined) return null;
+    var len = 1, mask = 0x80;
+    while (len <= 4 && !(first & mask)) { mask >>= 1; len++; }
+    if (len > 4) return null;
+    var id = first;
+    for (var i = 1; i < len; i++) id = id * 256 + b[off + i];
+    return { id: id, len: len };
+  }
+
+  function patchWebmDuration(buffer, seconds) {
+    if (!(seconds > 0) || !buffer) return buffer;
+    var src = new Uint8Array(buffer);
+    var out = new Uint8Array(src);                     /* نسخهٔ دست‌کاری‌شدنی */
+    var i = 0, id, size;
+    function scan(off, end, wantId) {
+      while (off < end) {
+        id = readId(out, off);
+        if (!id) return null;
+        var s = readVint(out, off + id.len);
+        if (!s) return null;
+        var bodyOff = off + id.len + s.len;
+        var bodyEnd = s.unknown ? end : bodyOff + s.value;
+        if (id.id === wantId) return { idOff: off, bodyOff: bodyOff, bodyEnd: Math.min(bodyEnd, end), sizeOff: off + id.len, sizeLen: s.len, unknown: s.unknown, headerLen: id.len + s.len };
+        off = bodyEnd;
+      }
+      return null;
+    }
+    var seg = scan(0, out.length, ID_SEGMENT);
+    if (!seg) return buffer;
+    var info = scan(seg.bodyOff, seg.bodyEnd, ID_INFO);
+    if (!info) return buffer;
+    var dur = scan(info.bodyOff, info.bodyEnd, ID_DURATION);
+    if (dur) {
+      /* Duration = float ۸ بایتی (یا ۴ بایتی) */
+      var dlen = dur.bodyEnd - dur.bodyOff;
+      var dv2 = new DataView(out.buffer);
+      if (dlen === 8) dv2.setFloat64(dur.bodyOff, seconds);
+      else if (dlen === 4) dv2.setFloat32(dur.bodyOff, seconds);
+      else return buffer;
+      return out.buffer;
+    }
+    /* نبود ⇒ درست کردن: ۰x۴۴۸۹ + ۸ + float64 در انتهای Info */
+    var elem = new Uint8Array(11);
+    elem[0] = 0x44; elem[1] = 0x89;
+    elem[2] = 0x88;                                    /* اندازه = ۸ */
+    new DataView(elem.buffer).setFloat64(3, seconds);
+    var need = elem.length;
+    var infoEnd = info.bodyEnd;
+    var newLen = out.length + need;
+    var res = new Uint8Array(newLen);
+    res.set(out.subarray(0, infoEnd), 0);
+    res.set(elem, infoEnd);
+    res.set(out.subarray(infoEnd), infoEnd + need);
+    /* اندازهٔ Info را اصلاح کن (اگر نامعلوم نبود) */
+    if (!info.unknown) {
+      var newSize = info.bodyEnd - info.bodyOff + need;
+      if (info.sizeLen >= 8) {
+        res[info.sizeOff] = 0x01;                      /* هشت‌بایتی */
+        for (var k = 0; k < 7; k++) res[info.sizeOff + 1 + k] = 0;
+        writeVint(res, info.sizeOff, newSize);
+      } else {
+        writeVint(res, info.sizeOff, newSize);
+      }
+    }
+    return res.buffer;
+  }
+
+  /* طولِ واقعیِ فایلی که ساختیم، از نگاه خود پخش‌کننده */
+  function probeDuration(blob, timeoutMs) {
+    return new Promise(function (resolve) {
+      var v = null;
+      try { v = document.createElement('video'); } catch (e) { v = null; }
+      /* فقط جایی که یک <video> واقعی و createObjectURL هست (مرورگر/WebView) */
+      if (!v || typeof v.load !== 'function' || typeof v.addEventListener !== 'function' ||
+        !global.URL || typeof URL.createObjectURL !== 'function') {
+        resolve(null); return;
+      }
+      var url = URL.createObjectURL(blob);
+      var done = false;
+      function finish(val) {
+        if (done) return;
+        done = true;
+        try { v.removeAttribute('src'); v.load(); } catch (e) { }
+        try { URL.revokeObjectURL(url); } catch (e) { }
+        resolve(val);
+      }
+      v.preload = 'metadata';
+      v.muted = true;
+      v.onloadedmetadata = function () {
+        var d = v.duration;
+        finish ((isFinite(d) && d > 0) ? d : null);
+      };
+      v.onerror = function () { finish(null); };
+      setTimeout(function () { finish(null); }, timeoutMs || 4000);
+      v.src = url;
+    });
   }
 
   async function renderVideoFast(pitch, notes, wav, sr, onProgress, opts) {
@@ -649,14 +865,26 @@
       fastStart: 'in-memory'
     });
 
+    var frameUs = Math.round(1e6 / fps);
     var vChunks = [], aChunks = [], encError = null;
+    function takeChunk(list, chunk, meta, fallbackDur) {
+      var data = new Uint8Array(chunk.byteLength);
+      try { chunk.copyTo(data); } catch (e) { data = null; }
+      if (!data) return;
+      var dur = chunk.duration;
+      if (!(dur > 0)) dur = fallbackDur;
+      list.push({
+        data: data, type: chunk.type || 'delta',
+        ts: chunk.timestamp || 0, dur: dur, meta: meta || null
+      });
+    }
     var venc = new global.VideoEncoder({
-      output: function (chunk, meta) { vChunks.push({ c: chunk, m: meta, ts: chunk.timestamp }); },
+      output: function (chunk, meta) { takeChunk(vChunks, chunk, meta, frameUs); },
       error: function (e) { encError = e; }
     });
     venc.configure(vcfg);
     var aenc = new global.AudioEncoder({
-      output: function (chunk, meta) { aChunks.push({ c: chunk, m: meta, ts: chunk.timestamp }); },
+      output: function (chunk, meta) { takeChunk(aChunks, chunk, meta, Math.round(1024 / sr * 1e6)); },
       error: function (e) { encError = e; }
     });
     aenc.configure(acfg);
@@ -703,26 +931,55 @@
     await aenc.flush();
     if (encError) throw encError;
 
-    /* ── نوشتن در MP4 به ترتیب زمان ── */
+    /* ── نوشتن در MP4 به ترتیب زمان، با طولِ صریح ──────────────────────
+       طولِ هر چانک را خودمان می‌دهیم (نه از سازندهٔ کدک) تا نمونه‌های آخر هم
+       طول داشته باشند؛ همین دو چیز است که طولِ فایل و پایانِ پخش را در
+       پخش‌کننده‌های گوشی درست می‌کند. */
+    var endUs = Math.round((totalFrames / fps) * 1e6);
+    if (vChunks.length) {
+      var lastV = vChunks[vChunks.length - 1];
+      lastV.dur = Math.max(1, endUs - lastV.ts);
+    }
+    /* صدا: دقیقاً تا انتهای تصویر (نه بیشتر، نه کمتر) */
+    aChunks = aChunks.filter(function (c) { return c.ts < endUs; });
+    if (aChunks.length) {
+      var lastA = aChunks[aChunks.length - 1];
+      lastA.dur = Math.max(1, endUs - lastA.ts);
+    }
+
     var all = [];
-    for (var v = 0; v < vChunks.length; v++) { var vv = vChunks[v]; vv.kind = 'v'; all.push(vv); }
-    for (var a = 0; a < aChunks.length; a++) { var aa = aChunks[a]; aa.kind = 'a'; all.push(aa); }
-    all.sort(function (x, y) { return x.ts - y.ts; });
+    for (var v = 0; v < vChunks.length; v++) { vChunks[v].kind = 'v'; all.push(vChunks[v]); }
+    for (var a = 0; a < aChunks.length; a++) { aChunks[a].kind = 'a'; all.push(aChunks[a]); }
+    all.sort(function (x, y) { return (x.ts - y.ts) || (x.kind === 'v' ? -1 : 1); });
     for (var z = 0; z < all.length; z++) {
-      if (all[z].kind === 'v') muxer.addVideoChunk(all[z].c, all[z].m);
-      else muxer.addAudioChunk(all[z].c, all[z].m);
+      var ch = all[z];
+      if (ch.kind === 'v') muxer.addVideoChunkRaw(ch.data, ch.type, ch.ts, ch.dur, ch.meta || undefined);
+      else muxer.addAudioChunkRaw(ch.data, ch.type, ch.ts, ch.dur, ch.meta || undefined);
     }
     muxer.finalize();
     try { venc.close(); aenc.close(); } catch (e) { }
+    if (onProgress) onProgress(0.97);
+
+    /* ── اصلاح هدر: طولِ فایل باید همان طولِ واقعی باشد ── */
+    var exactSec = totalFrames / fps;
+    var outBuf = patchMp4Duration(muxer.target.buffer, exactSec);
+    var blob = new Blob([outBuf], { type: 'video/mp4' });
+
+    /* ── سنجشِ نتیجه با خودِ پخش‌کننده (اگر ممکن باشد) ── */
+    var probed = await probeDuration(blob, 4000);
+    var durOk = (probed == null) ? null : Math.abs(probed - exactSec) <= 0.35;
     if (onProgress) onProgress(0.99);
 
     return {
-      blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }),
+      blob: blob,
       mime: 'video/mp4',
       name: 'radde-seda.mp4',
       fast: true,
       width: W, height: H, fps: fps,
       frames: totalFrames,
+      duration: exactSec,
+      probed_duration: probed,
+      duration_ok: durOk,
       seconds: Math.round((Date.now() - t0) / 100) / 10
     };
   }
@@ -742,7 +999,20 @@
     var fps = Math.min(opts.fps > 0 ? opts.fps : VIDEO.fps, 60);
     var duration = Math.max(renderer.duration, 0.2);
 
-    var stream = canvas.captureStream(fps);
+    /* فریم‌ها را خودمان با ساعتِ صدا می‌فرستیم (captureStream(0) +
+       requestFrame). قبلاً مرورگر با نرخ ثابت از بوم عکس می‌گرفت و اگر
+       کشیدنِ یک فریم طول می‌کشید، تصویر از صدا عقب می‌افتاد؛ حالا هر فریم
+       دقیقاً «همان لحظه‌ای» است که صدا در آن است. */
+    var stream = canvas.captureStream(0);
+    var vtrack = null;
+    try {
+      var vts = stream.getVideoTracks ? stream.getVideoTracks() : [];
+      vtrack = vts && vts[0];
+    } catch (e) { vtrack = null; }
+    if (!vtrack || typeof vtrack.requestFrame !== 'function') {
+      stream = canvas.captureStream(fps);          /* پشتیبان: رفتار قبلی */
+      vtrack = null;
+    }
     var actx = new (global.AudioContext || global.webkitAudioContext)();
     if (actx.state === 'suspended') { try { await actx.resume(); } catch (e) { } }
     var abuf = actx.createBuffer(1, wav.length, sr);
@@ -769,11 +1039,18 @@
     rec.start(250);
     var t0 = actx.currentTime;
     src.start();
+    if (vtrack) { try { vtrack.requestFrame(); } catch (e) { } }
 
+    var frameGap = 1 / fps;
+    var lastSent = -1;
     await new Promise(function (resolve) {
       function step() {
-        var el = actx.currentTime - t0;
-        renderer.draw(el);
+        var el = Math.max(0, actx.currentTime - t0);
+        if (el - lastSent >= frameGap - 0.002 || lastSent < 0) {
+          renderer.draw(Math.min(el, duration));
+          if (vtrack) { try { vtrack.requestFrame(); } catch (e) { } }
+          lastSent = el;
+        }
         if (onProgress) onProgress(Math.min(0.99, el / duration));
         if (el >= duration) { resolve(); return; }
         requestAnimationFrame(step);
@@ -789,12 +1066,30 @@
       : [].concat(stream.getAudioTracks ? stream.getAudioTracks() : [],
                   stream.getVideoTracks ? stream.getVideoTracks() : []);
     allTracks.forEach(function (t2) { try { t2.stop(); } catch (e) { } });
+    /* ── هدر: پخش‌کنندهٔ گوشی باید طولِ درست را ببیند ──
+       MediaRecorder طول را در هدر نمی‌نویسد (یا صفر می‌گذارد)؛ نتیجه‌اش
+       «۴ ثانیه» در گالری و پخشِ نیمه‌کاره بود. این‌جا خودمان می‌نویسیم. */
+    var outBlob = blob;
+    try {
+      var raw = await blob.arrayBuffer();
+      var fixed = (mime.indexOf('webm') >= 0)
+        ? patchWebmDuration(raw, duration)
+        : patchMp4Duration(raw, duration);
+      outBlob = new Blob([fixed], { type: mime || 'video/webm' });
+    } catch (e) { outBlob = blob; }
+
+    var probed = await probeDuration(outBlob, 4000);
+    var durOk = (probed == null) ? null : Math.abs(probed - duration) <= 0.4;
     if (onProgress) onProgress(1.0);
     return {
-      blob: blob,
+      blob: outBlob,
       mime: mime || 'video/webm',
       name: (mime.indexOf('mp4') >= 0 ? 'radde-seda.mp4' : 'radde-seda.webm'),
-      fast: false
+      fast: false,
+      width: VIDEO.W, height: VIDEO.H, fps: fps,
+      duration: duration,
+      probed_duration: probed,
+      duration_ok: durOk
     };
   }
 
@@ -917,13 +1212,23 @@
       job.report.meta.video_render_sec = out.seconds != null ? out.seconds : null;
       job.report.meta.video_window_sec = (job.videoOpts && job.videoOpts.windowSec) || 0;
       job.report.meta.video_tightness = (job.videoOpts && job.videoOpts.tightness) || 1;
+      job.report.meta.video_duration_sec = out.duration != null ? out.duration : null;
+      job.report.meta.video_probed_duration_sec = out.probed_duration != null ? out.probed_duration : null;
+      job.report.meta.video_duration_ok = out.duration_ok;
+      job.report.meta.video_size = (out.width || 0) + 'x' + (out.height || 0);
       job.result = {
         video_url: job.videoUrl,
         video_name: out.name,
         video_type: out.mime,
         fast: !!out.fast,
         frames: out.frames || null,
-        render_sec: out.seconds != null ? out.seconds : null
+        render_sec: out.seconds != null ? out.seconds : null,
+        duration: out.duration != null ? out.duration : null,
+        probed_duration: out.probed_duration != null ? out.probed_duration : null,
+        duration_ok: out.duration_ok,
+        width: out.width || null,
+        height: out.height || null,
+        fps: out.fps || null
       };
       if (job.report.meta.downloads) job.report.meta.downloads.video = job.videoUrl;
       job.status = 'done'; job.stage = 'done'; job.progress = 1; jobUpdate(job);
@@ -1249,7 +1554,14 @@
     report: CORE.buildReport,
     TraceRenderer: TraceRenderer,
     renderVideo: renderVideoBlob,
+    /* ابزارهای هدر/طول فایل (برای تست و استفاده در گزارش) */
+    patchMp4Duration: patchMp4Duration,
+    patchWebmDuration: patchWebmDuration,
+    probeDuration: probeDuration,
+    videoProfile: videoProfile,
+    videoSize: videoSize,
     VIDEO: VIDEO,
+    VIDEO_HD: VIDEO_HD,
     webCodecsReady: webCodecsReady,
     jobs: jobs,
     version: '1.0.0'

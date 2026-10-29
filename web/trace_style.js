@@ -276,19 +276,25 @@
       for (m = loI; m <= hiI; m++) drawGridLine(g, spec, L, m, false);
     }
 
-    /* منحنی محو (آینده) */
-    g.lineWidth = 2.7 * k;
-    g.strokeStyle = THEME.dimCurve;
-    if ('shadowColor' in g) { g.shadowColor = THEME.dimShadow; g.shadowBlur = 4 * k; }
+    /* منحنی محو (آینده) — به‌جای shadowBlur (که روی گوشی هر فریم را بسیار
+       کند می‌کند و تصویر را از صدا عقب می‌انداخت) یک لایهٔ پهنِ کم‌رنگ. */
     for (var s = 0; s < segs.length; s++) {
       var seg = segs[s];
+      g.strokeStyle = THEME.dimShadow;
+      g.lineWidth = 3.8 * k;
       g.beginPath();
       for (var i = 0; i < seg.length; i++) {
         if (i === 0) g.moveTo(seg[i].x, seg[i].y); else g.lineTo(seg[i].x, seg[i].y);
       }
       g.stroke();
+      g.strokeStyle = THEME.dimCurve;
+      g.lineWidth = 2.7 * k;
+      g.beginPath();
+      for (i = 0; i < seg.length; i++) {
+        if (i === 0) g.moveTo(seg[i].x, seg[i].y); else g.lineTo(seg[i].x, seg[i].y);
+      }
+      g.stroke();
     }
-    if ('shadowBlur' in g) g.shadowBlur = 0;
 
     /* نت‌های محو: کشیده‌ها نوارِ محو، کوتاه‌ها نقطه */
     (spec.notes || []).forEach(function (n) {

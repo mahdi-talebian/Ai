@@ -244,9 +244,18 @@
         freqs.set(parts[k].res.freqs, parts[k].res.i0);
         strength.set(parts[k].res.strength, parts[k].res.i0);
       }
-      var times = new Float32Array(nFrames);
-      for (var i = 0; i < nFrames; i++) times[i] = i * CORE.TIME_STEP;
-      return { times: times, freqs: freqs, strength: strength, nFrames: nFrames };
+      /* همان زمان‌بندی مسیر سریال: مرکزِ پنجرهٔ تحلیل (نه آغازش) */
+      var times = CORE.frameTimes
+        ? CORE.frameTimes(nFrames, w.winN, sr, y.length)
+        : (function () {
+            var t = new Float32Array(nFrames);
+            for (var i = 0; i < nFrames; i++) t[i] = i * CORE.TIME_STEP;
+            return t;
+          })();
+      return {
+        times: times, freqs: freqs, strength: strength, nFrames: nFrames,
+        centerShift: (w.winN / 2) / sr
+      };
     });
   };
 

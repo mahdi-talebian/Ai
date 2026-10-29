@@ -575,6 +575,21 @@
     return pitchFrameInto(x, sr, fmin, fmax, pitchScratch(L, tauMax, nfft), strict);
   }
 
+  /* زمانِ هر فریم = مرکزِ پنجرهٔ تحلیل (نه آغازش) — تنها منبعِ حقیقت؛
+     هم مسیر سریال و هم موازی از همین استفاده می‌کنند تا نتیجه یکی باشد و
+     نمودار با صدا هم‌زمان بماند. */
+  function frameTimes(nFrames, winN, sr, totalSamples) {
+    var shift = (winN / 2) / sr;
+    var totalSec = (totalSamples != null && totalSamples > 0)
+      ? totalSamples / sr : Infinity;
+    var times = new Float32Array(nFrames);
+    for (var i = 0; i < nFrames; i++) {
+      var tt = i * TIME_STEP + shift;
+      times[i] = tt > totalSec ? totalSec : tt;
+    }
+    return times;
+  }
+
   /* پارامترهای پنجره/گام — یک بار محاسبه، در همهٔ تکه‌ها یکسان */
   function pitchWindow(y, sr, fmin) {
     var winN = Math.max(256, Math.round(WIN_PERIODS / fmin * sr));
@@ -624,8 +639,13 @@
     fmax = fmax || MAX_F0;
     var w = pitchWindow(y, sr, fmin);
     var nFrames = w.nFrames;
-    var times = new Float32Array(nFrames);
-    for (var i = 0; i < nFrames; i++) times[i] = i * TIME_STEP;
+    /* ── هم‌زمانی دقیق: زمانِ هر فریم = مرکزِ پنجرهٔ تحلیل ──────────────
+       پنجرهٔ تحلیل از i*hop شروع می‌شود و winN نمونه طول دارد؛ تخمینِ f0 به
+       کلِ همین پنجره مربوط است، پس زمانش مرکز پنجره است، نه آغازش. قبلاً
+       زمانِ آغاز نوشته می‌شد و همهٔ نمودارها (اپ، تصویر، ویدیو) به‌اندازهٔ
+       نصفِ پنجره «زودتر» از صدا بودند — همان اختلافِ شنیده‌شده. */
+    var centerShift = (w.winN / 2) / sr;
+    var times = frameTimes(nFrames, w.winN, sr, y.length);
 
     var freqs = new Float32Array(nFrames);
     var strength = new Float32Array(nFrames);
@@ -641,7 +661,10 @@
       if (onProgress) onProgress(b / nFrames);
     }
     if (onProgress) onProgress(1.0);
-    return { times: times, freqs: freqs, strength: strength, winN: w.winN, hopN: w.hopN, nFrames: nFrames };
+    return {
+      times: times, freqs: freqs, strength: strength,
+      winN: w.winN, hopN: w.hopN, nFrames: nFrames, centerShift: centerShift
+    };
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -1914,6 +1937,7 @@
     prepareAudio: prepareAudio, safeDownmix: safeDownmix,
     pitchTrack: pitchTrack, pitchFrame: pitchFrame,
     pitchWindow: pitchWindow, pitchTrackRange: pitchTrackRange,
+    frameTimes: frameTimes,
     yinParams: yinParams, yinTrackRange: yinTrackRange,
     refineNotesRange: refineNotesRange, applyRefinements: applyRefinements,
     spectralOctaveFix: spectralOctaveFix, frameScores: frameScores,

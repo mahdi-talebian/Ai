@@ -1086,8 +1086,13 @@ $('videoBtn').onclick = async () => {
     const audioSec = (STATE.report && STATE.report.basic && STATE.report.basic.duration_sec) || 0;
     const speed = (res && res.fast && res.render_sec != null)
       ? ` ⚡ رندر سریع: ${faN(res.render_sec)}s برای ${faN(audioSec)}s صدا`
-      : '';
-    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' + speed;
+      : ' 🐢 ضبط زمان‌واقعی (این دستگاه WebCodecs ندارد)';
+    let note = '';
+    if (res && res.duration_ok === false && res.probed_duration != null && res.duration != null) {
+      note = ` ⚠️ طولِ فایل ${faN(res.probed_duration.toFixed(1))}s گزارش شد ولی باید ` +
+        `${faN(res.duration.toFixed(1))}s باشد — فایل با این حال تا آخر پخش می‌شود.`;
+    }
+    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' + speed + note;
     $('videoStatus').className = 'status ok';
   } catch (e) {
     hideProgress('vProg');
