@@ -135,7 +135,7 @@ check('ذخیره در گالری از طریق پل بومی داخل بسته 
 
 /* ── ۳) نسخهٔ کش: هر فایل تازه در SHELL ─────────────────────────────────── */
 const cacheV = (sw.match(/radde-seda-shell-v(\d+)/) || [])[1];
-check('نسخهٔ کش service worker تازه است', Number(cacheV) >= 13, 'v' + cacheV);
+check('نسخهٔ کش service worker تازه است', Number(cacheV) >= 14, 'v' + cacheV);
 check('service worker هم trace_style.js و هم mp4-muxer را پیش‌بارگذاری می‌کند',
   /\.\/trace_style\.js/.test(sw) && /vendor\/mp4-muxer\.js/.test(sw));
 

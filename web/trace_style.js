@@ -37,6 +37,9 @@
                  [4.6, 'rgba(255,212,120,.34)'],
                  [2.7, '#f7d171']],
     noteGold: '#ffe6a6',
+    noteFuture: 'rgba(140,168,205,.55)',
+    noteBar: '#f7d57f',
+    noteBarGlow: 'rgba(255,198,92,.30)',
     high: 'rgba(255,226,160,',
     low: 'rgba(169,214,255,',
     border: 'rgba(120,152,205,.28)',
@@ -287,12 +290,17 @@
     }
     if ('shadowBlur' in g) g.shadowBlur = 0;
 
-    /* نقطه‌های محو نت‌ها */
+    /* نت‌های محو: کشیده‌ها نوارِ محو، کوتاه‌ها نقطه */
     (spec.notes || []).forEach(function (n) {
       var mm = midiOf(n.f0_hz);
       if (mm == null) return;
       var tc = (n.start || 0) + (n.duration || 0) / 2;
       if (spec.view && (tc < spec.view.t0 || tc > spec.view.t1)) return;
+      if ((n.duration || 0) >= BAR_MIN_SEC) {
+        /* آینده: نوارِ نازک و محو (کپسولِ طلایی مالِ گذشته است) */
+        drawNoteBar(g, L, n, null, THEME.noteFuture, null, 0.42);
+        return;
+      }
       var x = L.xOf(tc), y = L.yOf(mm);
       g.fillStyle = THEME.noteDim;
       g.beginPath();
@@ -333,6 +341,54 @@
     return names[((r % 12) + 12) % 12] + (Math.floor(r / 12) - 1);
   }
 
+  /* ── نوارِ نت‌های کشیده ────────────────────────────────────────────────
+     نتی که «امتداد» دارد (≥ ۰٫۳۴ ثانیه) به‌جای نقطهٔ ریز، یک نوارِ ضخیمِ
+     دو-سرگرد در همان ارتفاعِ خودش می‌گیرد — مثل نُت‌های کشیدهٔ عکس‌ها.
+     هرچه نت طولانی‌تر، نوار کلفت‌تر؛ نتِ کوتاه همان نقطهٔ ریز می‌ماند. */
+  var BAR_MIN_SEC = 0.34;
+
+  function barWidth(dur, k) {
+    var d = (dur > 0 ? dur : 0);
+    if (d > 4.0) d = 4.0;                      /* بعد از ۴ ثانیه دیگر کلفت‌تر نمی‌شود */
+    var w = 5.4 + 3.2 * d;                     /* ~۵٫۴px تا ~۱۸px در مقیاس k=۱ */
+    if (w > 16.0) w = 16.0;
+    return w * k;
+  }
+  function clampX(L, x) {
+    var lo = L.ML, hi = L.W - L.MR;
+    return x < lo ? lo : (x > hi ? hi : x);
+  }
+
+  /* tLimit = لحظهٔ جاری (نوارِ نتِ در حال اجرا تا همین‌جا کشیده می‌شود) */
+  function drawNoteBar(g, L, note, tLimit, color, glowColor, widthScale) {
+    var dur = note.duration || 0;
+    if (dur < BAR_MIN_SEC) return false;
+    var mm = midiOf(note.f0_hz);
+    if (mm == null) return false;
+    var start = note.start || 0;
+    var end = start + dur;
+    var growing = (tLimit != null && tLimit < end);
+    if (growing) end = Math.max(start, tLimit);
+    var inset = Math.min(dur * 0.18, 0.10);
+    var x0 = clampX(L, L.xOf(start + inset));
+    var x1 = clampX(L, L.xOf(end - (growing ? 0 : inset)));
+    var y = L.yOf(mm);
+    if (!isFinite(y) || !isFinite(x0) || !isFinite(x1)) return false;
+    if (x1 < x0) { var tmp = x0; x0 = x1; x1 = tmp; }
+    var w = barWidth(dur, L.k) * (widthScale > 0 ? widthScale : 1);
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    if (glowColor) {                       /* هالهٔ نرم، مثل خط طلایی */
+      g.strokeStyle = glowColor;
+      g.lineWidth = w * 1.55;
+      g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
+    }
+    g.strokeStyle = color;
+    g.lineWidth = w;
+    g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
+    return true;
+  }
+
   /* ── لایهٔ متحرک: منحنی طلایی تا لحظهٔ t، نقطه‌ها، راهنماها، خط پخش ─── */
   function drawDynamic(g, spec, L, segs) {
     var k = L.k, t = spec.t, W = spec.W, H = spec.H;
@@ -365,16 +421,21 @@
       }
     }
 
-    /* نقطه‌های طلایی نت‌های خوانده‌شده */
+    /* نت‌های خوانده‌شده: کشیده‌ها نوارِ طلایی (تا لحظهٔ جاری کشیده می‌شوند)،
+       کوتاه‌ها همان نقطهٔ ریز */
     (spec.notes || []).forEach(function (n) {
       if ((n.start || 0) > t) return;
       if (spec.view && (n.start < spec.view.t0 || n.start > spec.view.t1)) return;
+      if ((n.duration || 0) >= BAR_MIN_SEC) {
+        drawNoteBar(g, L, n, endT, THEME.noteBar, THEME.noteBarGlow);
+        return;
+      }
       var mm = midiOf(n.f0_hz);
       if (mm == null) return;
       var x = L.xOf((n.start || 0) + (n.duration || 0) / 2);
       var y = L.yOf(mm);
       g.fillStyle = THEME.noteGold;
-      var r = ((n.duration || 0) < 0.35 ? 2.6 : 3.5) * k;
+      var r = 2.6 * k;
       g.beginPath();
       if (g.ellipse) g.ellipse(x, y, r * 1.5, r, 0, 0, Math.PI * 2);
       else g.arc(x, y, r, 0, Math.PI * 2);
@@ -513,6 +574,8 @@
     drawDynamic: drawDynamic,
     pitchLimits: pitchLimits,
     buildSegments: buildSegments,
+    barWidth: barWidth,
+    BAR_MIN_SEC: BAR_MIN_SEC,
     currentMidi: currentMidiOf,
     midiOf: midiOf,
     nameOf: nameOf,

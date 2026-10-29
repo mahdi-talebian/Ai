@@ -96,6 +96,9 @@ shot('zoom-time', { windowSec: 6 }, mid);
 shot('zoom-pitch', { windowSec: 6, tightness: 2 }, mid);
 shot('zoom-max', { windowSec: 6, tightness: 3.5 }, mid);
 
+/* ۳٫۵) نوارِ ضخیم نت‌های کشیده */
+shot('notes-bar', {}, mid);
+
 /* ۴) رشتهٔ خام در برابر سخت‌گیرانه (برای مستند «فقط نت‌ها») */
 ['raw', 'strict'].forEach((tag) => {
   const canvas = makeCanvas(1280, 720);
