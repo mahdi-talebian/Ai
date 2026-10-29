@@ -42,8 +42,11 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
     var onRestart: (() -> Unit)? = null
     var onSpeed: ((Float) -> Unit)? = null
     var onFollowToggle: ((Boolean) -> Unit)? = null
+    var onSkip: ((Double) -> Unit)? = null
 
     private val playBtn = PlayButton(context)
+    private val skipBackBtn = Theme.chip(context, "−۱۰ث", Theme.DIM)
+    private val skipForwardBtn = Theme.chip(context, "+۱۰ث", Theme.DIM)
     private val timeNow = Theme.text(context, "۰:۰۰٫۰", 12f, Theme.GOLD, true, Gravity.START or Gravity.CENTER_VERTICAL)
     private val timeTotal = Theme.text(context, "۰:۰۰٫۰", 12f, Theme.DIM, false, Gravity.END or Gravity.CENTER_VERTICAL)
     private val bar = GoldSeekBar(context)
@@ -69,6 +72,15 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         val size = Theme.dp(context, 54f)
         playBtn.layoutParams = LayoutParams(size, size)
         row1.addView(playBtn)
+        val skipSize = Theme.dp(context, 38f)
+        skipBackBtn.layoutParams = LayoutParams(skipSize, Theme.dp(context, 42f))
+        skipForwardBtn.layoutParams = LayoutParams(skipSize, Theme.dp(context, 42f))
+        skipBackBtn.setOnClickListener { onSkip?.invoke(-10.0) }
+        skipForwardBtn.setOnClickListener { onSkip?.invoke(10.0) }
+        row1.addView(Theme.space(context, 4f))
+        row1.addView(skipBackBtn)
+        row1.addView(Theme.space(context, 4f))
+        row1.addView(skipForwardBtn)
 
         val mid = LinearLayout(context)
         mid.orientation = VERTICAL
@@ -150,6 +162,28 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         totalSec = max(0.1, sec)
         timeTotal.text = fmt(totalSec)
         bar.setProgress(0.0)
+    }
+
+    /** خلاصهٔ موج صدا؛ نمونه‌برداری محدود برای جلوگیری از مکث روی فایل‌های بلند */
+    fun setWaveform(pcm: ShortArray?) {
+        if (pcm == null || pcm.isEmpty()) {
+            bar.setWaveform(FloatArray(0))
+            return
+        }
+        val bins = 104
+        val values = FloatArray(bins)
+        for (i in 0 until bins) {
+            val from = (i.toLong() * pcm.size / bins).toInt()
+            val to = (((i + 1).toLong() * pcm.size / bins).toInt()).coerceAtLeast(from + 1).coerceAtMost(pcm.size)
+            var peak = 0
+            val samples = 28
+            for (j in 0 until samples) {
+                val index = (from.toLong() + (to - from - 1L) * j / (samples - 1)).toInt().coerceIn(0, pcm.lastIndex)
+                peak = max(peak, kotlin.math.abs(pcm[index].toInt()))
+            }
+            values[i] = (peak / 32768f).coerceIn(0.06f, 1f)
+        }
+        bar.setWaveform(values)
     }
 
     /** هر تیکِ پخش (≈۶۰ بار در ثانیه) */
@@ -289,6 +323,7 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         private var frac = 0.0
         private var preview = -1.0
         private var active = false
+        private var waveform = FloatArray(0)
 
         private val track = Paint(Paint.ANTI_ALIAS_FLAG)
         private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Theme.GOLD }
@@ -305,6 +340,11 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         }
 
         fun progressFraction(): Double = frac
+
+        fun setWaveform(values: FloatArray) {
+            waveform = values.copyOf()
+            invalidate()
+        }
 
         private fun fracAt(x: Float): Double {
             val pad = Theme.dp(context, 12f).toFloat()
@@ -372,6 +412,19 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
                 fillPaint.shader = g
                 canvas.drawRoundRect(left, cy - thickness / 2, x, cy + thickness / 2, thickness / 2, thickness / 2, fillPaint)
                 fillPaint.shader = null
+            }
+
+            // موجِ واقعیِ صوت با رنگ متفاوت برای بخش پخش‌شده و باقی‌مانده
+            if (waveform.isNotEmpty()) {
+                val step = (right - left) / waveform.size
+                val barW = max(Theme.dp(context, 1.4f).toFloat(), step * 0.42f)
+                for (i in waveform.indices) {
+                    val bx = left + (i + 0.5f) * step
+                    val amp = waveform[i]
+                    val bh = max(Theme.dp(context, 2f).toFloat(), amp * Theme.dp(context, 18f).toFloat())
+                    track.color = if (i.toDouble() / waveform.size <= f) Theme.GOLD2 else Theme.withAlpha(Theme.DIM, 0.58f)
+                    canvas.drawRoundRect(bx - barW / 2, cy - bh / 2, bx + barW / 2, cy + bh / 2, barW / 2, barW / 2, track)
+                }
             }
 
             // هالهٔ نورانی + دستگیره
