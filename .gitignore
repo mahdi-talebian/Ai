@@ -15,6 +15,11 @@ server/jobs/
 # نمونهٔ آزمایشی رابط وب (برای دکمهٔ «نمونهٔ آزمایشی» لازم است)
 !web/demo_bayati.wav
 
+# نمونهٔ آزمایشی داخل اپ اندروید (دکمهٔ «نمونهٔ آزمایشی» و تست‌ها)
+!android-qari/assets/demo.wav
+# خروجی تست‌های شبیه‌سازی
+android-qari/test/sim/build-test/
+
 # کش منحنی‌های تحلیل (md5 → npz)
 server/cache/
 

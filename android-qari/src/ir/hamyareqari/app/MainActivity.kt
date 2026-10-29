@@ -42,7 +42,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.1.1"
+        const val VERSION = "1.1.2"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -1081,10 +1081,17 @@ class MainActivity : Activity() {
             videoBox.visibility = View.GONE
             videoBox.removeAllViews()
 
+            // نمودارِ اختصاصیِ رندر: رسم در ترد پس‌زمینه نباید با نمودارِ روی
+            // صفحه (که ترد رابط کاربری هم آن را می‌کشد) قاطی شود.
+            val renderChart = ChartView(this).apply {
+                setReport(r)
+                setPlayhead(0.0)
+            }
+
             Thread {
                 try {
                     val maker = VideoMaker(this)
-                    val res = maker.build(r, pcm, chart, sourceName, videoQuality) { p, label ->
+                    val res = maker.build(r, pcm, renderChart, sourceName, videoQuality) { p, label ->
                         ui.post {
                             vProgress.progress = (p.coerceIn(0.0, 1.0) * 1000).toInt()
                             vStage.text = label
@@ -1101,13 +1108,12 @@ class MainActivity : Activity() {
                     }
                 } catch (e: OutOfMemoryError) {
                     ui.post { videoFailed(buildBtn, vProgress, vStage, "حافظه کافی نبود") }
-                } catch (e: Exception) {
-                    ui.post {
-                        videoFailed(
-                            buildBtn, vProgress, vStage,
-                            e.message ?: "کدگذار این دستگاه ویدیو نساخت"
-                        )
-                    }
+                } catch (e: Throwable) {
+                    // هر خطایی (حتی خطای بومیِ کدگذار) به پیام تبدیل می‌شود تا
+                    // اپ بسته نشود.
+                    val msg = e.message?.takeIf { it.isNotBlank() }
+                        ?: e.javaClass.simpleName
+                    ui.post { videoFailed(buildBtn, vProgress, vStage, msg) }
                 }
             }.start()
         }
@@ -1140,9 +1146,10 @@ class MainActivity : Activity() {
         box.addView(
             Theme.text(
                 this,
-                "ساخته شد: ${res.frames} فریم · ${PitchMath.faFixed(res.ms / 1000.0, 1)} ثانیه رندر · " +
-                    (if (res.withAudio) "با صدا" else "بدون صدا (کدگذار صدا نبود)") +
-                    " · ${PitchMath.faFixed(res.file.length() / 1_048_576.0, 1)} مگابایت",
+                "ساخته شد: ${PitchMath.faDigits(res.frames)} فریم · ${PitchMath.faFixed(res.ms / 1000.0, 1)} ثانیه رندر · " +
+                    (if (res.withAudio) "با صدا" else "بدون صدا") +
+                    " · ${PitchMath.faFixed(res.file.length() / 1_048_576.0, 1)} مگابایت\n" +
+                    "کدگذار: ${res.codecName} · ${res.colorFormat}",
                 10.5f, Theme.DIM
             )
         )

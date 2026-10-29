@@ -667,6 +667,7 @@ class ChartView(context: Context) : View(context) {
     }
 
     /** رسم کامل یک فریم. tNow = لحظهٔ جاری (NaN یعنی انتهای داده) */
+    @Synchronized
     fun drawTrace(canvas: Canvas, w: Float, h: Float, tNow: Double) {
         val sp = spec
         val bg = LinearGradient(0f, 0f, 0f, h, C.BG_TOP, C.BG_BOTTOM, Shader.TileMode.CLAMP)
@@ -1166,6 +1167,7 @@ class ChartView(context: Context) : View(context) {
     }
 
     /** رسم فریم ویدیو با همان رندرر (خروجی ویدیو = همان چیزی که می‌بینی) */
+    @Synchronized
     fun drawFrameForVideo(c: Canvas, w: Float, h: Float, unit: Float, t: Double) {
         drawTrace(c, w, h, t)
     }
