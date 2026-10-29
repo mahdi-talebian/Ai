@@ -58,6 +58,16 @@ class MainActivity : Activity() {
     private var player: AudioIo.Player? = null
 
     // نمای‌ها
+    private lateinit var pageHost: FrameLayout
+    private lateinit var homePanel: View
+    private lateinit var analysisScreen: View
+    private lateinit var settingsPanel: View
+    private lateinit var aboutPanel: View
+    private lateinit var navHome: TextView
+    private lateinit var navFiles: TextView
+    private lateinit var navSettings: TextView
+    private var currentPage: String = "home"
+
     private lateinit var root: LinearLayout
     private lateinit var content: FrameLayout
     private lateinit var tabFile: TextView
@@ -126,75 +136,87 @@ class MainActivity : Activity() {
     // ───────────────────────────── ساخت رابط ─────────────────────────────
 
     private fun buildUi() {
-        root = LinearLayout(this)
-        root.orientation = LinearLayout.VERTICAL
-        root.background = Theme.screenBackground(this)
-        root.layoutDirection = View.LAYOUT_DIRECTION_RTL
-
-        val scrollHolder = FrameLayout(this)
-        content = FrameLayout(this)
-
-        val inner = LinearLayout(this)
-        inner.orientation = LinearLayout.VERTICAL
-        val padH = Theme.dp(this, 14f)
-        inner.setPadding(padH, Theme.dp(this, 10f), padH, Theme.dp(this, 20f))
-
-        // سربرگ
-        val head = LinearLayout(this)
-        head.orientation = LinearLayout.VERTICAL
-        head.gravity = Gravity.CENTER_HORIZONTAL
-        val title = Theme.text(this, "همیار قاری", 22f, Theme.GOLD, true, Gravity.CENTER)
-        val sub = Theme.text(
-            this,
-            "تحلیل گستره و زیر و بمی تلاوت",
-            12f, Theme.DIM, false, Gravity.CENTER
+        root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Theme.screenBackground(this@MainActivity)
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        pageHost = FrameLayout(this)
+        pageHost.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         )
-        head.addView(title)
-        head.addView(Theme.space(this, 2f))
-        head.addView(sub)
-        head.addView(Theme.space(this, 4f))
-        val privacy = Theme.text(this, "🔒 پردازش روی گوشی · بدون اینترنت", 10.5f, Theme.DIM, false, Gravity.CENTER)
-        val privacyRow = Theme.row(this)
-        privacyRow.gravity = Gravity.CENTER_HORIZONTAL
-        privacyRow.addView(privacy)
-        head.addView(privacyRow)
-        inner.addView(head)
-        inner.addView(Theme.space(this, 12f))
 
-        // تب‌ها
+        // Existing analysis panels remain intact; the new shell only changes navigation and presentation.
+        panelFile = buildFilePanel()
+        panelLive = buildLivePanel()
+        val analysisColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        val analysisScroll = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
+        val inner = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            val p = Theme.dp(this@MainActivity, 16f)
+            setPadding(p, Theme.dp(this@MainActivity, 10f), p, Theme.dp(this@MainActivity, 22f))
+        }
+        val header = Theme.row(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val back = Theme.text(this, "‹", 28f, Theme.TXT, false, Gravity.CENTER).apply {
+            background = Theme.rounded(0x0DFFFFFF, Theme.dpF(this@MainActivity, 12f), 1, Theme.LINE)
+            minWidth = Theme.dp(this@MainActivity, 42f)
+            minHeight = Theme.dp(this@MainActivity, 42f)
+            setOnClickListener { setPage("home") }
+        }
+        val headerTitle = Theme.text(this, "تحلیل صوت", 18f, Theme.TXT, true, Gravity.CENTER)
+        header.addView(back)
+        header.addView(Theme.space(this, 12f))
+        header.addView(headerTitle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        inner.addView(header)
+        inner.addView(Theme.space(this, 14f))
+
         val tabs = Theme.row(this)
         tabFile = tabButton("تحلیل فایل", true)
         tabLive = tabButton("اجرای زنده", false)
         tabFile.setOnClickListener { showTab(0) }
         tabLive.setOnClickListener { showTab(1) }
-        val lpFile = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        lpFile.marginEnd = Theme.dp(this, 6f)
+        val lpFile = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = Theme.dp(this@MainActivity, 5f)
+        }
+        val lpLive = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = Theme.dp(this@MainActivity, 5f)
+        }
         tabFile.layoutParams = lpFile
-        val lpLive = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        lpLive.marginStart = Theme.dp(this, 6f)
         tabLive.layoutParams = lpLive
         tabs.addView(tabFile)
         tabs.addView(tabLive)
         inner.addView(tabs)
         inner.addView(Theme.space(this, 12f))
 
-        // پنل فایل
-        panelFile = buildFilePanel()
-        panelLive = buildLivePanel()
-        val holder = FrameLayout(this)
-        holder.addView(panelFile)
-        holder.addView(panelLive)
-        inner.addView(holder)
+        val panels = FrameLayout(this)
+        panels.addView(panelFile)
+        panels.addView(panelLive)
+        inner.addView(panels)
+        analysisScroll.addView(inner)
+        analysisColumn.addView(analysisScroll)
+        analysisScreen = analysisColumn
 
-        val sv = ScrollView(this)
-        sv.isFillViewport = true
-        sv.overScrollMode = View.OVER_SCROLL_NEVER
-        sv.addView(inner)
-        scrollHolder.addView(sv)
-        root.addView(scrollHolder, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        homePanel = buildHomePanel()
+        settingsPanel = buildSettingsPanel()
+        aboutPanel = buildAboutPanel()
+        pageHost.addView(homePanel, FrameLayout.LayoutParams(-1, -1))
+        pageHost.addView(analysisScreen, FrameLayout.LayoutParams(-1, -1))
+        pageHost.addView(settingsPanel, FrameLayout.LayoutParams(-1, -1))
+        pageHost.addView(aboutPanel, FrameLayout.LayoutParams(-1, -1))
+
+        root.addView(pageHost)
+        root.addView(buildBottomNavigation())
         setContentView(root)
 
-        // فاصلهٔ نوار وضعیت
         root.setOnApplyWindowInsetsListener { v, insets ->
             @Suppress("DEPRECATION")
             val top = insets.systemWindowInsetTop
@@ -203,6 +225,214 @@ class MainActivity : Activity() {
             v.setPadding(0, top, 0, bottom)
             insets
         }
+        setPage("home")
+    }
+
+    private fun buildHomePanel(): View {
+        val scroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            val p = Theme.dp(this@MainActivity, 20f)
+            setPadding(p, Theme.dp(this@MainActivity, 24f), p, Theme.dp(this@MainActivity, 22f))
+        }
+        val settingsTop = Theme.row(this).apply { gravity = Gravity.END }
+        val settings = Theme.text(this, "⚙", 23f, Theme.DIM, false, Gravity.CENTER).apply {
+            background = Theme.rounded(0x0DFFFFFF, Theme.dpF(this@MainActivity, 12f), 1, Theme.LINE)
+            minWidth = Theme.dp(this@MainActivity, 42f)
+            minHeight = Theme.dp(this@MainActivity, 42f)
+            setOnClickListener { setPage("settings") }
+        }
+        settingsTop.addView(settings)
+        col.addView(settingsTop)
+
+        col.addView(Theme.space(this, 28f))
+        val emblem = Theme.text(this, "۞", 78f, Theme.GOLD, true, Gravity.CENTER).apply {
+            shadowLayer = 20f, 0f, 0f, Theme.withAlpha(Theme.GOLD, 0.22f)
+        }
+        col.addView(emblem)
+        col.addView(Theme.space(this, 4f))
+        col.addView(Theme.text(this, "همیار قاری", 30f, Theme.GOLD, true, Gravity.CENTER))
+        col.addView(Theme.space(this, 5f))
+        col.addView(Theme.text(this, "تحلیل و همراهی در مسیر تلاوت", 13f, Theme.DIM, false, Gravity.CENTER))
+        col.addView(Theme.space(this, 30f))
+
+        col.addView(homeActionCard("تحلیل فایل صوتی", "انتخاب فایل و مشاهدهٔ نمودار و نتایج", "♫") {
+            setPage("files")
+            showTab(0)
+        })
+        col.addView(Theme.space(this, 12f))
+        col.addView(homeActionCard("اجرای زنده", "تحلیل زیر و بمی صدا با میکروفون", "♩") {
+            setPage("files")
+            showTab(1)
+        })
+        col.addView(Theme.space(this, 12f))
+        col.addView(homeActionCard("تنظیمات", "گزینه‌های تحلیل و اطلاعات برنامه", "⚙") {
+            setPage("settings")
+        })
+        col.addView(Theme.space(this, 24f))
+        col.addView(Theme.text(this, "♢  پردازش روی گوشی · بدون نیاز به اینترنت", 10.5f, Theme.DIM, false, Gravity.CENTER))
+        scroll.addView(col)
+        return scroll
+    }
+
+    private fun homeActionCard(title: String, subtitle: String, icon: String, action: () -> Unit): View {
+        val card = Theme.card(this, 16f).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            isFocusable = true
+            background = Theme.rounded(Theme.CARD, Theme.dpF(this@MainActivity, 18f), 1, 0x294C6288)
+            setOnClickListener { action() }
+        }
+        val badge = Theme.text(this, icon, 28f, Theme.GOLD, false, Gravity.CENTER).apply {
+            background = Theme.rounded(0x16F7D171, Theme.dpF(this@MainActivity, 24f), 1, 0x557F6A38)
+            layoutParams = LinearLayout.LayoutParams(Theme.dp(this@MainActivity, 56f), Theme.dp(this@MainActivity, 56f))
+        }
+        val texts = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        texts.addView(Theme.text(this, title, 15f, Theme.TXT, true))
+        texts.addView(Theme.space(this, 4f))
+        texts.addView(Theme.text(this, subtitle, 11.5f, Theme.DIM))
+        card.addView(badge)
+        card.addView(Theme.space(this, 12f))
+        card.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(Theme.text(this, "‹", 25f, Theme.GOLD, false, Gravity.CENTER))
+        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        card.layoutParams = lp
+        return card
+    }
+
+    private fun buildSettingsPanel(): View {
+        val scroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            val p = Theme.dp(this@MainActivity, 18f)
+            setPadding(p, Theme.dp(this@MainActivity, 18f), p, Theme.dp(this@MainActivity, 24f))
+        }
+        col.addView(pageHeader("تنظیمات"))
+        col.addView(Theme.space(this, 16f))
+        col.addView(Theme.text(this, "تحلیل صوت", 12f, Theme.GOLD, true))
+        col.addView(Theme.space(this, 8f))
+        val engine = Theme.card(this, 15f)
+        engine.addView(Theme.text(this, "موتور تحلیل صوت", 14f, Theme.TXT, true))
+        engine.addView(Theme.space(this, 5f))
+        engine.addView(Theme.text(this, "موتور موجود برنامه به همراه مسیر سازگاری قبلی حفظ شده است.", 11.5f, Theme.DIM))
+        engine.addView(Theme.space(this, 10f))
+        val openAnalysis = Theme.button(this, "رفتن به تحلیل فایل", false, true)
+        openAnalysis.setOnClickListener { setPage("files"); showTab(0) }
+        engine.addView(openAnalysis)
+        col.addView(engine)
+        col.addView(Theme.space(this, 16f))
+
+        col.addView(Theme.text(this, "تنظیمات پخش", 12f, Theme.GOLD, true))
+        col.addView(Theme.space(this, 8f))
+        val playback = Theme.card(this, 15f)
+        playback.addView(Theme.text(this, "سرعت و کنترل پخش", 14f, Theme.TXT, true))
+        playback.addView(Theme.space(this, 5f))
+        playback.addView(Theme.text(this, "سرعت پخش، پرش زمانی و دنبال‌کردن نمودار از داخل پخش‌کننده قابل تنظیم است.", 11.5f, Theme.DIM))
+        col.addView(playback)
+        col.addView(Theme.space(this, 16f))
+
+        col.addView(Theme.text(this, "درباره", 12f, Theme.GOLD, true))
+        val about = Theme.card(this, 15f)
+        val aboutRow = Theme.row(this)
+        aboutRow.addView(Theme.text(this, "دربارهٔ برنامه", 13f, Theme.TXT, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        aboutRow.addView(Theme.text(this, "‹", 22f, Theme.DIM, false, Gravity.CENTER))
+        about.setOnClickListener { setPage("about") }
+        about.addView(aboutRow)
+        col.addView(about)
+        scroll.addView(col)
+        return scroll
+    }
+
+    private fun buildAboutPanel(): View {
+        val scroll = ScrollView(this).apply { overScrollMode = View.OVER_SCROLL_NEVER }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            val p = Theme.dp(this@MainActivity, 22f)
+            setPadding(p, Theme.dp(this@MainActivity, 34f), p, Theme.dp(this@MainActivity, 26f))
+        }
+        col.addView(pageHeader("دربارهٔ برنامه"))
+        col.addView(Theme.space(this, 38f))
+        col.addView(Theme.text(this, "۞", 76f, Theme.GOLD, true, Gravity.CENTER))
+        col.addView(Theme.space(this, 8f))
+        col.addView(Theme.text(this, "همیار قاری", 28f, Theme.GOLD, true, Gravity.CENTER))
+        col.addView(Theme.space(this, 6f))
+        col.addView(Theme.text(this, "نسخهٔ $VERSION", 12f, Theme.DIM, false, Gravity.CENTER))
+        col.addView(Theme.space(this, 28f))
+        col.addView(Theme.text(this, "تحلیل گستره و زیر و بمی تلاوت قرآن کریم", 14f, Theme.TXT, true, Gravity.CENTER))
+        col.addView(Theme.space(this, 10f))
+        col.addView(Theme.text(this, "با همیار قاری، صدای تلاوت را تحلیل کنید و تغییرات زیر و بمی را روی نمودار ببینید.", 12f, Theme.DIM, false, Gravity.CENTER))
+        col.addView(Theme.space(this, 24f))
+        val privacy = Theme.card(this, 15f)
+        privacy.addView(Theme.text(this, "♢  حریم خصوصی", 13f, Theme.TXT, true))
+        privacy.addView(Theme.space(this, 5f))
+        privacy.addView(Theme.text(this, "پردازش صوت در خود برنامه انجام می‌شود و اپ برای تحلیل به اینترنت نیاز ندارد.", 11.5f, Theme.DIM))
+        col.addView(privacy)
+        col.addView(Theme.space(this, 12f))
+        val back = Theme.button(this, "بازگشت به خانه", true)
+        back.setOnClickListener { setPage("home") }
+        col.addView(back)
+        scroll.addView(col)
+        return scroll
+    }
+
+    private fun pageHeader(title: String): View {
+        val row = Theme.row(this)
+        val back = Theme.text(this, "‹", 28f, Theme.TXT, false, Gravity.CENTER).apply {
+            background = Theme.rounded(0x0DFFFFFF, Theme.dpF(this@MainActivity, 12f), 1, Theme.LINE)
+            minWidth = Theme.dp(this@MainActivity, 42f)
+            minHeight = Theme.dp(this@MainActivity, 42f)
+            setOnClickListener { setPage("home") }
+        }
+        row.addView(back)
+        row.addView(Theme.space(this, 12f))
+        row.addView(Theme.text(this, title, 18f, Theme.TXT, true, Gravity.CENTER))
+        return row
+    }
+
+    private fun buildBottomNavigation(): View {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = Theme.rounded(0xFF080F1F.toInt(), 0f, 1, 0x223B4B6A)
+            setPadding(Theme.dp(this@MainActivity, 8f), Theme.dp(this@MainActivity, 5f),
+                Theme.dp(this@MainActivity, 8f), Theme.dp(this@MainActivity, 5f))
+        }
+        navSettings = navItem("⚙", "تنظیمات") { setPage("settings") }
+        navFiles = navItem("▣", "فایل‌ها") { setPage("files") }
+        navHome = navItem("⌂", "خانه") { setPage("home") }
+        bar.addView(navSettings, LinearLayout.LayoutParams(0, Theme.dp(this, 52f), 1f))
+        bar.addView(navFiles, LinearLayout.LayoutParams(0, Theme.dp(this, 52f), 1f))
+        bar.addView(navHome, LinearLayout.LayoutParams(0, Theme.dp(this, 52f), 1f))
+        return bar
+    }
+
+    private fun navItem(icon: String, label: String, action: () -> Unit): TextView {
+        return Theme.text(this, "$icon\n$label", 10.5f, Theme.DIM, false, Gravity.CENTER).apply {
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { action() }
+        }
+    }
+
+    private fun setPage(page: String) {
+        currentPage = page
+        homePanel.visibility = if (page == "home") View.VISIBLE else View.GONE
+        analysisScreen.visibility = if (page == "files") View.VISIBLE else View.GONE
+        settingsPanel.visibility = if (page == "settings") View.VISIBLE else View.GONE
+        aboutPanel.visibility = if (page == "about") View.VISIBLE else View.GONE
+        val active = Theme.GOLD
+        navHome.setTextColor(if (page == "home") active else Theme.DIM)
+        navFiles.setTextColor(if (page == "files") active else Theme.DIM)
+        navSettings.setTextColor(if (page == "settings" || page == "about") active else Theme.DIM)
     }
 
     private fun tabButton(label: String, active: Boolean): TextView {
