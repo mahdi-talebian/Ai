@@ -2,13 +2,66 @@
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5" />
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#0b1224" />
 <meta name="color-scheme" content="dark" />
 <meta name="mobile-web-app-capable" content="yes" />
+<meta name="format-detection" content="telephone=no" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>ردِّ صدا — بالاترین و پایین‌ترین نت</title>
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   قفلِ زوم — رفتارِ اپِ بومی، نه وب‌سایت
+   ----------------------------------------------------------------------
+   viewport به‌تنهایی در بعضی WebViewها کافی نیست؛ زومِ دو‌انگشتی و
+   دابل‌تپ هنوز کار می‌کند. این‌جا هر سه مسیر بسته می‌شود:
+     ۱) gesturestart/change/end (زومِ دو‌انگشتیِ WebKit)
+     ۲) لمسِ چند‌انگشتی + دابل‌تپ
+     ۳) Ctrl+wheel (فقط دسکتاپ؛ در اپ بی‌اثر است)
+   ══════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+  function block(e) { if (e && e.cancelable !== false) { e.preventDefault(); } return false; }
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (t) {
+    document.addEventListener(t, block, { passive: false });
+  });
+  /* لمسِ دو‌انگشتی = زوم */
+  document.addEventListener('touchmove', function (e) {
+    if (e.touches && e.touches.length > 1) block(e);
+  }, { passive: false });
+  document.addEventListener('touchstart', function (e) {
+    if (e.touches && e.touches.length > 1) block(e);
+  }, { passive: false });
+  /* دابل‌تپ */
+  var lastTap = 0;
+  document.addEventListener('touchend', function (e) {
+    var now = Date.now();
+    if (now - lastTap < 320) block(e);
+    lastTap = now;
+  }, { passive: false });
+  /* Ctrl+wheel / Safari */
+  document.addEventListener('wheel', function (e) {
+    if (e.ctrlKey) block(e);
+  }, { passive: false });
+  /* اگر مرورگر با کلیدهای میان‌بر زوم کرد، فوراً به ۱ برگردان */
+  var lock = function () {
+    try {
+      if (document.documentElement) document.documentElement.style.zoom = '';
+      if (window.visualViewport && window.visualViewport.scale !== 1) {
+        /* WebView زوم را نگه می‌دارد؛ مقداردهیِ دوبارهٔ viewport آن را صفر می‌کند */
+        var m = document.querySelector('meta[name=viewport]');
+        if (m) m.setAttribute('content',
+          'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+      }
+    } catch (err) { }
+  };
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', lock);
+    window.visualViewport.addEventListener('scroll', lock);
+  }
+})();
+</script>
 
 <!-- آیکون‌ها و مانیفست نصب (پایهٔ PWA/APK) -->
 <link rel="manifest" href="manifest.webmanifest" />
@@ -37,7 +90,11 @@
     --font:"Estedad","Vazirmatn","Segoe UI",Tahoma,system-ui,sans-serif;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
-  html{-webkit-text-size-adjust:100%}
+  html{-webkit-text-size-adjust:100%;touch-action:manipulation}
+  /* مثلِ اپِ بومی: زومِ دو‌انگشتی، دابل‌تپ و کشیدنِ افقیِ صفحه غیرفعال است */
+  html,body{overscroll-behavior:none;touch-action:manipulation}
+  *{-webkit-tap-highlight-color:transparent}
+  canvas{touch-action:none}
   body{
     margin:0; min-height:100vh; min-height:100dvh; color:var(--txt);
     font-family:var(--font); font-size:15px; line-height:1.7;
@@ -182,10 +239,6 @@
   /* ═══════════ نمودار ═══════════ */
   canvas.trace{width:100%;border-radius:16px;display:block;background:#0d1729;border:1px solid var(--line);touch-action:manipulation}
   .canvasWrap{position:relative;margin-top:10px}
-  .canvasWrap .badge{
-    position:absolute;top:8px;left:10px;font-size:.7rem;color:#0e1728;
-    background:var(--gold);padding:2px 9px;border-radius:99px;font-weight:800;display:none
-  }
   audio{width:100%;margin-top:10px;accent-color:var(--gold)}
   video{width:100%;border-radius:14px;background:#000;margin-top:10px}
 
@@ -394,7 +447,6 @@
         </div>
         <div class="canvasWrap">
           <canvas class="trace" id="traceCanvas" width="1280" height="720"></canvas>
-          <div class="badge" id="liveBadge">● در حال پخش</div>
         </div>
 
         <div class="zoomBar" role="group" aria-label="زوم نمودار">
@@ -430,6 +482,20 @@
           <div class="bar"><div class="fill" id="vProgFill"></div></div>
         </div>
         <div class="status" id="videoStatus"></div>
+        <details id="capsBox" style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:.76rem;color:var(--dim)">
+            🔧 تشخیصِ دستگاه (اگر رندر کند بود، این را باز کن)
+          </summary>
+          <pre id="capsText" style="white-space:pre-wrap;direction:ltr;text-align:left;font-size:.7rem;
+               background:rgba(255,255,255,.04);border-radius:10px;padding:8px;margin:6px 0 0;
+               color:var(--dim);overflow:auto"></pre>
+          <button class="secondary block" id="capsCopyBtn" style="margin-top:6px;font-size:.78rem">
+            📋 کپیِ متنِ تشخیص
+          </button>
+          <button class="secondary block" id="nativeCodecBtn" style="margin-top:6px;font-size:.78rem">
+            🔬 آزمونِ کدگذارِ بومی (MediaCodec)
+          </button>
+        </details>
         <div id="videoBox" style="display:none">
           <video id="videoPlayer" controls preload="metadata" playsinline></video>
           <!-- نُتِ همین لحظه، هم‌گام با ویدیو -->
@@ -671,7 +737,7 @@ function switchTab(name) {
 /* ═══════════════════════════════════════════════════════════════════
    وضعیت
    ═══════════════════════════════════════════════════════════════════ */
-const STATE = { file: null, jobId: null, report: null };
+const STATE = { file: null, jobId: null, report: null, videoSeconds: 0 };
 
 /* ═══════════════════════════════════════════════════════════════════
    انتخاب فایل
@@ -881,10 +947,10 @@ function renderReport(r) {
 
   buildTraceData(r);
   drawTrace();
-  audio.onplay = () => { $('liveBadge').style.display = 'block'; loopTrace(); };
-  audio.onpause = () => { $('liveBadge').style.display = 'none'; drawTrace(); };
+  audio.onplay = () => { loopTrace(); };
+  audio.onpause = () => { drawTrace(); };
   audio.onseeked = drawTrace;
-  audio.onended = () => { $('liveBadge').style.display = 'none'; drawTrace(); };
+  audio.onended = () => { drawTrace(); };
 
   setTimeout(() => $('results').scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
 }
@@ -1015,13 +1081,17 @@ function nameForBlob(blob, base, fallbackExt) {
   return b + '-radde-seda' + ext;
 }
 
-function gallerySaveViaApp(blob, name) {
-  /* مسیر مطمئن در اپ: بلاب خوانده می‌شود و بومی در گالری نوشته می‌شود */
+function gallerySaveViaApp(blob, name, durationMs) {
+  /* مسیر مطمئن در اپ: بلاب خوانده می‌شود، بومی در MediaStore نوشته می‌شود و
+     همان‌جا تأیید می‌شود که ردیفِ رسانه واقعاً ساخته شده است. طولِ ویدیو هم
+     فرستاده می‌شود تا در MediaStore ثبت شود (گالری طول را از همین می‌خواند). */
   return new Promise((resolve) => {
     const NB = window.NativeBridge;
     if (!NB || !NB.available) { resolve({ ok: false, offline: true }); return; }
     if (typeof NB.saveBlobToGallery !== 'function') { resolve({ ok: false, msg: 'نسخهٔ اپ قدیمی است' }); return; }
-    NB.saveBlobToGallery(blob, name, (ok, msg) => resolve({ ok: !!ok, msg: msg || '' }));
+    NB.saveBlobToGallery(blob, name,
+      (ok, msg) => resolve({ ok: !!ok, msg: msg || '' }),
+      (durationMs && durationMs > 0) ? durationMs : 0);
   });
 }
 
@@ -1056,9 +1126,10 @@ async function saveVideoToGallery() {
       }
       const name = nameForBlob(blob, base || 'radde-seda', '.mp4');
       galleryMessage('⏳ در حال ذخیره در گالری…');
-      const r = await gallerySaveViaApp(blob, name);
-      if (r.ok) galleryMessage('✅ ' + (r.msg || ('در گالری ذخیره شد: ' + name)));
-      else galleryMessage('❌ ' + (r.msg || 'ذخیره در گالری ناموفق بود') , true);
+      const r = await gallerySaveViaApp(blob, name, (STATE.videoSeconds || 0) * 1000);
+      /* پیامِ بومی خودش با ✅ یا ⚠️ شروع می‌شود؛ دوباره برچسب نمی‌زنیم */
+      if (r.ok) galleryMessage(r.msg || ('✅ در گالری ذخیره شد: ' + name));
+      else galleryMessage((r.msg || '❌ ذخیره در گالری ناموفق بود'), true);
       return;
     }
 
@@ -1136,6 +1207,122 @@ async function saveImageToGallery() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   🔧 پنلِ تشخیصِ دستگاه
+   -------------------------------------------------------------------
+   WebCodecs بخشی از WebView است، نه فایلی که در برنامه جا شود. اگر
+   WebView قدیمی باشد یا کدگذارِ سخت‌افزاری نداشته باشد، رندر به مسیرِ
+   «ضبطِ زمان‌واقعی» می‌افتد. این پنل می‌گوید کدام قطعه دقیقاً غایب است
+   تا بشود کارِ مشخصی کرد (به‌روزرسانیِ WebView از پلی‌استور).
+   ═══════════════════════════════════════════════════════════════════ */
+function capsReport(caps, codec) {
+  if (!caps) return '';
+  const L = [];
+  L.push('Radde Seda — device report');
+  L.push('UA: ' + (caps.ua || '—'));
+  L.push('Chrome/WebView: ' + (caps.chrome || '؟'));
+  L.push('VideoEncoder: ' + (caps.videoEncoder ? 'yes' : 'no'));
+  L.push('AudioEncoder: ' + (caps.audioEncoder ? 'yes' : 'no'));
+  L.push('VideoFrame: ' + (caps.videoFrame ? 'yes' : 'no'));
+  L.push('AudioData: ' + (caps.audioData ? 'yes' : 'no'));
+  L.push('mp4-muxer: ' + (caps.muxer ? 'yes' : 'no'));
+  L.push('MediaRecorder mp4: ' + (caps.mp4Recording ? 'yes' : 'no'));
+  if (codec) {
+    L.push('H.264 supported: ' + (codec.avc == null ? '?' : (codec.avc ? 'yes' : 'no')));
+    L.push('AAC supported: ' + (codec.aac == null ? '?' : (codec.aac ? 'yes' : 'no')));
+    if (codec.error) L.push('encoder error: ' + codec.error);
+  }
+  if (caps.missing && caps.missing.length) L.push('missing: ' + caps.missing.join(', '));
+  return L.join('\n');
+}
+
+async function updateCapsPanel(caps) {
+  const box = $('capsText');
+  if (!box) return;
+  const c = caps || (window.LocalOffline && LocalOffline.capabilities && LocalOffline.capabilities()) || null;
+  if (!c) { box.textContent = '—'; return; }
+  box.textContent = capsReport(c);
+  try {
+    if (window.LocalOffline && LocalOffline.probeCodecs) {
+      const codec = await LocalOffline.probeCodecs();
+      if (box.textContent === capsReport(c)) box.textContent = capsReport(c, codec);
+    }
+  } catch (e) { }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   🔬 آزمونِ کدگذارِ بومی (MediaCodec)
+   -------------------------------------------------------------------
+   این آزمون در خودِ اندروید اجرا می‌شود: ۶۰ فریمِ رنگی را با H.264
+   کدگذاری می‌کند، در MP4 می‌نویسد و بعد طولِ فایل را از خودِ فایل
+   می‌خواند. اگر عددها سالم باشند، مسیرِ «ویدیوی بومی» — مستقل از
+   WebCodecs — روی همین گوشی کار می‌کند.
+   ═══════════════════════════════════════════════════════════════════ */
+if ($('nativeCodecBtn')) {
+  $('nativeCodecBtn').onclick = async () => {
+    const NA = window.NativeApp;
+    const box = $('capsText');
+    if (!NA || typeof NA.videoSelfTest !== 'function') {
+      galleryMessage('این آزمون فقط داخلِ اپِ اندروید کار می‌کند.', true);
+      return;
+    }
+    $('nativeCodecBtn').disabled = true;
+    galleryMessage('⏳ در حال آزمونِ کدگذارِ بومی…');
+    try {
+      let probe = null, test = null;
+      try { probe = JSON.parse(NA.videoProbe()); } catch (e) { probe = { error: String(e) }; }
+      const raw = NA.videoSelfTest(1280, 720, 60, 30);
+      try { test = JSON.parse(raw); } catch (e) { test = { ok: false, error: raw }; }
+      const L = [];
+      L.push('— کدگذارِ بومی (اندروید) —');
+      if (probe) {
+        L.push('H.264 encoders: ' + (probe.encoders != null ? probe.encoders : '?'));
+        if (probe.names) L.push('names: ' + probe.names);
+        L.push('720p: ' + (probe.avc720p ? 'yes' : 'no') +
+               ' · 1080p: ' + (probe.avc1080p ? 'yes' : 'no') +
+               ' · 1080p60: ' + (probe.avc1080p60 ? 'yes' : 'no'));
+        L.push('AAC encoder: ' + (probe.aac ? 'yes' : 'no'));
+        if (probe.error) L.push('probe error: ' + probe.error);
+      }
+      if (test && test.ok) {
+        L.push('encode: ' + test.frames + ' frames @' + test.fps +
+               ' → ' + Math.round(test.bytes / 1024) + ' KB in ' + test.ms + ' ms');
+        L.push('file duration: ' + test.durationMs + ' ms (expected ' +
+               Math.round(test.frames * 1000 / test.fps) + ' ms)');
+        L.push('speed: ' + (test.frames / Math.max(1, test.ms / 1000)).toFixed(1) + ' fps');
+        L.push('file: ' + test.path);
+      } else if (test) {
+        L.push('self-test FAILED: ' + (test.error || '—'));
+      }
+      if (box) box.textContent = (box.textContent ? box.textContent + '\n\n' : '') + L.join('\n');
+      const okDur = test && test.ok &&
+        Math.abs(test.durationMs - Math.round(test.frames * 1000 / test.fps)) <= 120;
+      galleryMessage(test && test.ok && okDur
+        ? '✅ کدگذارِ بومی سالم است — ' + test.frames + ' فریم در ' + test.ms + 'ms، طول ' + test.durationMs + 'ms'
+        : '⚠️ آزمونِ بومی موفق نبود؛ متنِ تشخیص را بفرست.', !(test && test.ok && okDur));
+    } catch (e) {
+      galleryMessage('❌ آزمونِ بومی خطا داد: ' + (e && e.message ? e.message : e), true);
+    } finally {
+      $('nativeCodecBtn').disabled = false;
+    }
+  };
+}
+
+if ($('capsCopyBtn')) {
+  $('capsCopyBtn').onclick = async () => {
+    const txt = ($('capsText') && $('capsText').textContent) || '';
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(txt);
+      else {
+        const ta = document.createElement('textarea');
+        ta.value = txt; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+      }
+      galleryMessage('✅ متنِ تشخیص کپی شد');
+    } catch (e) { galleryMessage('کپی نشد؛ متن را دستی انتخاب کن.', true); }
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    🎬 ساخت ویدیو + لینک ذخیره
    ═══════════════════════════════════════════════════════════════════ */
 $('videoBtn').onclick = async () => {
@@ -1168,6 +1355,7 @@ $('videoBtn').onclick = async () => {
     dl.href = `${API}/api/download/${STATE.jobId}/video`;
     dl.setAttribute('download', res.video_name || 'radde-seda.mp4');
     STATE.videoName = res.video_name || 'radde-seda.mp4';
+    STATE.videoSeconds = Number(res.duration) || 0;
     dl.style.display = 'inline-flex';
     $('galleryBox').style.display = 'block';
     if ($('saveVideoBtn')) $('saveVideoBtn').style.display = 'inline-flex';
@@ -1181,7 +1369,12 @@ $('videoBtn').onclick = async () => {
       note = ` ⚠️ طولِ فایل ${faN(res.probed_duration.toFixed(1))}s گزارش شد ولی باید ` +
         `${faN(res.duration.toFixed(1))}s باشد — فایل با این حال تا آخر پخش می‌شود.`;
     }
-    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' + speed + note;
+    /* مسیرِ رندر و دلیلِ آن — با عدد و نامِ دقیقِ قطعهٔ غایب */
+    const why = (res && res.path === 'realtime' && res.fallback_reason)
+      ? `\nℹ️ مسیرِ ضبطِ زمان‌واقعی: ${res.fallback_reason}` : '';
+    $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' +
+      speed + note + why;
+    updateCapsPanel(res && res.caps);
     $('videoStatus').className = 'status ok';
   } catch (e) {
     hideProgress('vProg');

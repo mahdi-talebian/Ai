@@ -588,6 +588,62 @@
       global.AudioData && global.Mp4Muxer && global.Mp4Muxer.Muxer && global.Mp4Muxer.ArrayBufferTarget);
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     گزارشِ توانمندی‌های دستگاه (فقط خواندن؛ در رندر هیچ تغییری نمی‌دهد)
+     ----------------------------------------------------------------------
+     WebCodecs بخشی از خودِ WebView است و در فایلِ برنامه جا نمی‌شود؛ اگر
+     WebView قدیمی باشد یا کدگذارِ سخت‌افزاری نداشته باشد، مسیرِ سریع ممکن
+     نمی‌شود. این تابع می‌گوید کدام قطعه دقیقاً غایب است، به‌جای حدس‌زدن.
+     ══════════════════════════════════════════════════════════════════════ */
+  function capabilities() {
+    var caps = {
+      ua: (global.navigator && global.navigator.userAgent) || '',
+      chrome: '',
+      videoEncoder: !!global.VideoEncoder,
+      audioEncoder: !!global.AudioEncoder,
+      videoFrame: !!global.VideoFrame,
+      audioData: !!global.AudioData,
+      muxer: !!(global.Mp4Muxer && global.Mp4Muxer.Muxer && global.Mp4Muxer.ArrayBufferTarget),
+      mediaRecorder: !!global.MediaRecorder,
+      mp4Recording: false,
+      missing: []
+    };
+    var m = /Chrome\/(\d+)/.exec(caps.ua);
+    if (m) caps.chrome = m[1];
+    try {
+      caps.mp4Recording = !!(global.MediaRecorder && MediaRecorder.isTypeSupported('video/mp4'));
+    } catch (e) { caps.mp4Recording = false; }
+    if (!caps.videoEncoder) caps.missing.push('VideoEncoder');
+    if (!caps.audioEncoder) caps.missing.push('AudioEncoder');
+    if (!caps.videoFrame) caps.missing.push('VideoFrame');
+    if (!caps.audioData) caps.missing.push('AudioData');
+    if (!caps.muxer) caps.missing.push('mp4-muxer');
+    return caps;
+  }
+
+  /* بررسیِ واقعیِ کدک‌ها: آیا این دستگاه H.264/AAC را می‌کند؟ */
+  async function probeCodecs() {
+    var out = { avc: null, aac: null, error: '' };
+    try {
+      if (global.VideoEncoder && VideoEncoder.isConfigSupported) {
+        var r = await VideoEncoder.isConfigSupported({
+          codec: 'avc1.42E01E', width: 1280, height: 720,
+          bitrate: 4000000, framerate: 30
+        });
+        out.avc = !!(r && r.supported);
+      }
+    } catch (e) { out.error = 'VideoEncoder: ' + ((e && e.message) || e); }
+    try {
+      if (global.AudioEncoder && AudioEncoder.isConfigSupported) {
+        var r2 = await AudioEncoder.isConfigSupported({
+          codec: 'mp4a.40.2', sampleRate: 44100, numberOfChannels: 1, bitrate: 128000
+        });
+        out.aac = !!(r2 && r2.supported);
+      }
+    } catch (e) { out.error += (out.error ? ' | ' : '') + 'AudioEncoder: ' + ((e && e.message) || e); }
+    return out;
+  }
+
   /* کدک H.264: از بهترین به سازگارترین */
   async function pickAvcConfig(w, h, fps, bitrate) {
     /* ۱۰۸۰p@60 به سطح ۴٫۲ نیاز دارد؛ ۷۲۰p@60 با ۴٫۰ هم کار می‌کند */
@@ -855,7 +911,10 @@
       canvas.width = W; canvas.height = H;
       return new TraceRenderer(canvas, pitch.times, trace, notes, {
         windowSec: opts.windowSec || 0,
-        tightness: opts.tightness || 1
+        tightness: opts.tightness || 1,
+        /* گستره (بالاترین/پایین‌ترین/درجه‌ها) از گزارشِ تحلیلگر می‌آید، نه از
+           محاسبهٔ دوباره در ویدیو؛ وگرنه عددهای ویدیو با اپ یکی نمی‌شد. */
+        range: pitch.range || opts.range || null
       });
     }
     var W = size.W, H = size.H;
@@ -1008,7 +1067,8 @@
       ? CORE.strictTraceFreqs(pitch.times, pitch.freqs, notes) : pitch.freqs);
     var renderer = new TraceRenderer(canvas, pitch.times, trace, notes, {
       windowSec: opts.windowSec || 0,
-      tightness: opts.tightness || 1
+      tightness: opts.tightness || 1,
+      range: pitch.range || opts.range || null
     });
 
     var fps = Math.min(opts.fps > 0 ? opts.fps : VIDEO.fps, 60);
@@ -1110,14 +1170,26 @@
 
   async function renderVideoBlob(pitch, notes, wav, sr, onProgress, opts) {
     opts = opts || {};
+    var off = global.LocalOffline || {};
+    off.lastFallbackReason = '';
+    var caps = null;
     if (opts.fast !== false && webCodecsReady()) {
       try {
         return await renderVideoFast(pitch, notes, wav, sr, onProgress, opts);
       } catch (e) {
-        if (global.console) console.warn('رندر سریع ممکن نشد، مسیر پشتیبان:', e && e.message);
+        off.lastFallbackReason = (e && e.message) ? e.message : String(e);
+        if (global.console) console.warn('رندر سریع ممکن نشد، مسیر پشتیبان:', off.lastFallbackReason);
       }
+    } else {
+      caps = capabilities();
+      off.lastFallbackReason = caps.missing.length
+        ? ('این WebView ندارد: ' + caps.missing.join('، '))
+        : 'مسیر سریع خاموش شد';
     }
-    return renderVideoRealtime(pitch, notes, wav, sr, onProgress, opts);
+    var out = await renderVideoRealtime(pitch, notes, wav, sr, onProgress, opts);
+    out.fallback_reason = off.lastFallbackReason;
+    out.caps = caps || capabilities();
+    return out;
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -1172,7 +1244,7 @@
       var canvas = document.createElement('canvas');
       canvas.width = LAYOUT.W; canvas.height = LAYOUT.H;
       var renderer = new TraceRenderer(canvas, res.times,
-        res.trace_freqs || res.freqs, res.notes);
+        res.trace_freqs || res.freqs, res.notes, { range: res.range || null });
       var png = await renderer.toBlob(null);
       job.imageBlob = png;
       job.imageUrl = URL.createObjectURL(png);
@@ -1574,6 +1646,8 @@
     patchWebmDuration: patchWebmDuration,
     probeDuration: probeDuration,
     videoProfile: videoProfile,
+    capabilities: capabilities,
+    probeCodecs: probeCodecs,
     videoSize: videoSize,
     VIDEO: VIDEO,
     VIDEO_HD: VIDEO_HD,
