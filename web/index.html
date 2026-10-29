@@ -1195,8 +1195,19 @@ $('videoBtn').onclick = async () => {
       note += ` ⚠️ بازبینیِ فایل: ${vf.problems.join(' · ')}`;
     }
     const quality = qParts.length ? `\n🎞 ${qParts.join(' · ')}` : '';
+    /* مسیرِ ساخت (سریع/ضبط زنده) + سنجشِ پخش روی همین دستگاه */
+    const pr = res && res.probe;
+    const prTxt = (pr && pr.ok != null)
+      ? (pr.ok ? ' · 🟢 پخشِ آزمایشی روان' :
+        ` · 🔴 پخشِ آزمایشی لگ داشت${pr.max_gap_ms ? ' (بیشترین فاصله ' + faN(pr.max_gap_ms) + 'ms)' : ''}`)
+      : '';
+    const down = (res && res.auto_downgraded)
+      ? `\n🔧 این دستگاه ${res.downgraded_from || ''} را روان پخش نکرد؛ نسخهٔ سبک‌تر (${faN(res.width)}×${faN(res.height)}@${faN(res.fps)}) ساخته شد.`
+      : '';
+    const why = (res && res.path === 'realtime' && res.fallback_reason)
+      ? `\nℹ️ دلیلِ مسیرِ ضبط: ${res.fallback_reason}` : '';
     $('videoStatus').textContent = '✅ ویدیو آماده است — پخش کن یا در گالری ذخیره کن.' +
-      speed + note + quality;
+      speed + note + quality + prTxt + down + why;
     $('videoStatus').className = 'status ok';
   } catch (e) {
     hideProgress('vProg');
