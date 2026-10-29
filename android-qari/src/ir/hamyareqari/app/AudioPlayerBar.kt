@@ -66,7 +66,8 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
 
     init {
         orientation = VERTICAL
-        background = Theme.rounded(Theme.withAlpha(Theme.GOLD, 0.05f), Theme.dpF(context, 16f), 1, Theme.withAlpha(Theme.GOLD, 0.22f))
+        // Deep-navy panel and a quiet blue outline, matching the reference visual theme.
+        background = Theme.rounded(0xFF0C1429.toInt(), Theme.dpF(context, 16f), 1, 0x334A5A7A.toInt())
         val pad = Theme.dp(context, 12f)
         setPadding(pad, pad, pad, pad)
 
@@ -112,7 +113,7 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
         // ── ردّ زیر و بمی: نمودار فشرده و قابل لمس ────────────────────────
         addView(Theme.space(context, 8f))
         addView(Theme.text(context, "ردِّ صدا · برای رفتن به لحظهٔ دلخواه لمس کنید", 10.5f, Theme.DIM))
-        pitchTrace.layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(context, 72f))
+        pitchTrace.layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(context, 88f))
         addView(pitchTrace)
         pitchTrace.onSeek = { onTraceSeek?.invoke(it) }
 
@@ -266,6 +267,8 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
             strokeJoin = Paint.Join.ROUND
         }
         private val grid = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val panel = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val panelBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
         private val cursor = Paint(Paint.ANTI_ALIAS_FLAG)
         private val path = Path()
 
@@ -285,10 +288,19 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
             super.onDraw(canvas)
             val sp = spec ?: return
             if (sp.times.isEmpty() || sp.mids.isEmpty()) return
-            val left = Theme.dp(context, 5f).toFloat()
+            // Framed midnight-blue plot area, like the supplied reference.
+            val outer = Theme.dp(context, 4f).toFloat()
+            panel.color = 0xFF0A1123.toInt()
+            canvas.drawRoundRect(outer, outer, width - outer, height - outer,
+                Theme.dp(context, 9f).toFloat(), Theme.dp(context, 9f).toFloat(), panel)
+            panelBorder.color = 0x334A5A7A.toInt()
+            panelBorder.strokeWidth = Theme.dpF(context, 1f)
+            canvas.drawRoundRect(outer, outer, width - outer, height - outer,
+                Theme.dp(context, 9f).toFloat(), Theme.dp(context, 9f).toFloat(), panelBorder)
+            val left = Theme.dp(context, 12f).toFloat()
             val right = width - left
-            val top = Theme.dp(context, 5f).toFloat()
-            val bottom = height - Theme.dp(context, 6f).toFloat()
+            val top = Theme.dp(context, 10f).toFloat()
+            val bottom = height - Theme.dp(context, 10f).toFloat()
             if (right <= left || bottom <= top) return
             val duration = sp.duration.coerceAtLeast(0.01)
             var minMidi = Double.POSITIVE_INFINITY
@@ -307,14 +319,14 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
                 bottom - ((midi - minMidi) / (maxMidi - minMidi)).coerceIn(0.0, 1.0).toFloat() * (bottom - top)
             }
 
-            grid.color = Theme.withAlpha(Theme.DIM, 0.18f)
+            grid.color = 0x263D5275.toInt()
             grid.strokeWidth = Theme.dpF(context, 1f)
             for (i in 1..3) {
                 val y = top + (bottom - top) * i / 4f
                 canvas.drawLine(left, y, right, y, grid)
             }
 
-            // Full contour in blue; the played portion is overlaid in gold.
+            // The full contour is muted antique gold; the played portion glows brighter gold.
             path.reset()
             var started = false
             for (i in sp.times.indices) {
@@ -328,8 +340,8 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
                 val y = yAt(midi)
                 if (!started) { path.moveTo(x, y); started = true } else path.lineTo(x, y)
             }
-            line.color = 0xD98CA8D8.toInt()
-            line.strokeWidth = Theme.dpF(context, 1.8f)
+            line.color = 0xFFB9A05B.toInt()
+            line.strokeWidth = Theme.dpF(context, 1.9f)
             canvas.drawPath(path, line)
 
             path.reset()
@@ -350,11 +362,11 @@ class AudioPlayerBar(context: Context) : LinearLayout(context) {
             canvas.drawPath(path, line)
 
             val cx = xAt(playhead)
-            cursor.color = Theme.GOLD2
+            cursor.color = 0xFFE5E8F0.toInt()
             cursor.strokeWidth = Theme.dpF(context, 1.2f)
             canvas.drawLine(cx, top, cx, bottom, cursor)
             cursor.style = Paint.Style.FILL
-            canvas.drawCircle(cx, top + Theme.dp(context, 3f), Theme.dp(context, 2.5f).toFloat(), cursor)
+            canvas.drawCircle(cx, top + Theme.dp(context, 3f), Theme.dp(context, 3f).toFloat(), cursor)
             cursor.style = Paint.Style.STROKE
         }
 
