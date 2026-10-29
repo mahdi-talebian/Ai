@@ -357,11 +357,11 @@ python3 trace_video.py recitation.mp3 --png trace.png
 
 ### 📱 APK آمادهٔ نصب (۱٫۳٫۵ — نمودارِ پاک، هم‌زمانی دقیق، طولِ درست ویدیو)
 
-**⬇ دانلود:** [radde-seda-1.3.6.apk](https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.3.6/release/radde-seda-1.3.6.apk)
-— صفحهٔ انتشار: [Releases · v1.3.6](https://github.com/mahdi-talebian/Ai/releases/tag/v1.3.6)
+**⬇ دانلود:** [radde-seda-1.3.7.apk](https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.3.7/release/radde-seda-1.3.7.apk)
+— صفحهٔ انتشار: [Releases · v1.3.7](https://github.com/mahdi-talebian/Ai/releases/tag/v1.3.7)
 
 ```
-release/radde-seda-1.3.6.apk    ← نسخهٔ جاری (بدون پرش‌های عمودیِ نمودار، حتی در قفلِ اکتاوی)
+release/radde-seda-1.3.7.apk    ← نسخهٔ جاری (رَدِّ تیونرمانند + اصلاحِ خطای اکتاو در خودِ نت‌ها)
 release/radde-seda-1.3.4.apk    ← هم‌زمانی دقیق صدا/تصویر + طولِ درست ویدیو
 release/radde-seda-1.3.3.apk    ← نت‌های کشیده با نوارِ ضخیم طلایی
 release/radde-seda-1.3.2.apk    ← همه‌چیز آفلاین، تأییدشده با apk_test

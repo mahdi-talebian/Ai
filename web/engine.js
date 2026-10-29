@@ -960,6 +960,70 @@
     return out;
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     رَدِّ نمایشیِ «تیونرمانند»
+     ----------------------------------------------------------------------
+     منحنیِ فریم‌به‌فریم نویزی است: پرش‌های ۱–۳ نیم‌پرده‌ای بین دو فریمِ
+     ۲۵ms‌ای، در نمای زوم به‌شکلِ «کپسولِ عمودی» دیده می‌شد. این‌جا هر فریمِ
+     داخلِ یک نُت حول گامِ همان نُت بازسازی می‌شود: فقط انحرافِ نرم‌شده
+     (ویبراتو/گلیساندوی داخلِ نت) نگه داشته می‌شود و پرش‌های بزرگ حذف
+     می‌شوند. نتیجه: خطِ پیوستهٔ خوانا که با فهرستِ نت‌ها هم‌خوان است.
+     ══════════════════════════════════════════════════════════════════════ */
+  function lowerBound(times, t) {
+    var lo = 0, hi = times.length;
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1;
+      if (times[mid] < t) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+
+  function noteGuidedTrace(times, freqs, notes) {
+    var n = freqs.length;
+    var out = new Float32Array(n);
+    if (!notes || !notes.length) return out;
+    var CENTS_LIMIT = 130;          /* بیشتر از این، دیگر «داخلِ نت» نیست */
+    for (var k = 0; k < notes.length; k++) {
+      var nt = notes[k];
+      if (!(nt.f0_hz > 0)) continue;
+      /* پنجرهٔ هر فریم مرکز-زمان است؛ نیم‌فریم حاشیه لازم است تا شروع/پایانِ
+         رَد با لبهٔ نُت هم‌زمان بماند (تستِ هم‌زمانی این را می‌سنجد). */
+      var dtF = n > 1 ? (times[1] - times[0]) : 0.01;
+      var i0 = lowerBound(times, nt.start - dtF * 0.5);
+      var i1 = Math.min(n - 1, lowerBound(times, nt.end + dtF * 0.5) - 1);
+      if (i1 < i0) i1 = i0;
+      if (i1 <= i0) continue;
+      /* انحرافِ خام نسبت به گامِ نت */
+      var dev = [];
+      for (var i = i0; i <= i1; i++) {
+        var f = freqs[i];
+        var c = (f > 0) ? 1200 * Math.log2(f / nt.f0_hz) : NaN;
+        if (!isFinite(c)) c = NaN;
+        dev.push(c);
+      }
+      /* میانه به‌عنوان مرکز، سپس میانهٔ ۳ برای خواباندنِ لرزش */
+      var valid = dev.filter(function (v) { return isFinite(v); });
+      if (!valid.length) continue;
+      var center = median(valid);
+      var smoothed = dev.map(function (v) { return isFinite(v) ? v : center; });
+      var pass = smoothed.slice();
+      for (i = 1; i < smoothed.length - 1; i++) {
+        var tri = [pass[i - 1], pass[i], pass[i + 1]].sort(function (a, b) { return a - b; });
+        smoothed[i] = tri[1];
+      }
+      for (i = 0; i < dev.length; i++) {
+        /* فقط جایی که رَدِّ سخت‌گیرانه خودش مقدار دارد نوشته می‌شود؛
+           لبه‌های زمانی (شروع/پایانِ نت) دست‌نخورده می‌مانند. */
+        if (!(freqs[i0 + i] > 0)) continue;
+        var d = smoothed[i] - center;
+        if (d > CENTS_LIMIT) d = CENTS_LIMIT;
+        if (d < -CENTS_LIMIT) d = -CENTS_LIMIT;
+        out[i0 + i] = nt.f0_hz * Math.pow(2, d / 1200);
+      }
+    }
+    return out;
+  }
+
   function segmentNotes(times, freqs, conf, opts) {
     opts = opts || {};
     var minDuration = opts.min_duration || 0.08;
@@ -1176,6 +1240,131 @@
     return refined;
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     اصلاحِ «خطای اکتاو» در سطحِ نت (نه فقط در منحنی)
+     ----------------------------------------------------------------------
+     تخمینِ گام گاهی برای چند دهمِ ثانیه روی هارمونیکِ دوم/سوم قفل می‌کند؛
+     نتیجه نُتی است با گامِ یک اکتاو (یا دوازدهم) بالاتر از آنچه خوانده شده.
+     این‌جا برای هر نُتِ کوتاه، امتیازِ الگویِ هارمونیک در چند نسبت آزمون
+     می‌شود (همان frameScores که برای منحنی استفاده می‌شد) و اگر فرضِ
+     «پایین‌تر» تقریباً هم‌امتیاز باشد، گامِ نت به همان برگردانده می‌شود.
+     ══════════════════════════════════════════════════════════════════════ */
+  function fixNoteOctaves(y, sr, notes) {
+    if (!notes || !notes.length) return 0;
+    var changed = 0;
+    for (var i = 0; i < notes.length; i++) {
+      var nt = notes[i];
+      if (!nt || !(nt.f0_hz > 0)) continue;
+      var dur = nt.duration || (nt.end - nt.start) || 0;
+      if (dur < MIN_NOTE_SEC || dur > 0.7) continue;      /* نتِ کشیده = واقعی */
+      var nf = Math.max(2, Math.min(8, Math.round(dur / 0.02)));
+      var tSel = [], fSel = [];
+      for (var k = 0; k < nf; k++) {
+        var tt = nt.start + dur * (k + 0.5) / nf;
+        tSel.push(tt); fSel.push(nt.f0_hz);
+      }
+      var sc = frameScores(y, sr, tSel, fSel, LADDER, 0.046, 4096, 3600.0, 12);
+      if (!sc || !sc.n) continue;
+      var pooled = new Float64Array(LADDER.length);
+      var best = -Infinity;
+      for (var ri = 0; ri < LADDER.length; ri++) {
+        var col = new Float64Array(sc.n);
+        for (var fI = 0; fI < sc.n; fI++) col[fI] = sc.scores[fI * LADDER.length + ri];
+        pooled[ri] = median(col);
+        if (pooled[ri] > best) best = pooled[ri];
+      }
+      if (best < -0.5) continue;                          /* شواهد کافی نیست */
+      var target = Infinity;
+      for (var q = 0; q < LADDER.length; q++) {
+        if (pooled[q] >= best - 0.10) target = Math.min(target, LADDER[q]);
+      }
+      if (!isFinite(target) || target >= 0.95) continue;  /* اکتاوِ درست است */
+      var nf2 = nt.f0_hz * target;
+      if (!isFinite(nf2) || nf2 < MIN_F0 * 0.95 || nf2 > MAX_F0) continue;
+      if (Math.abs(cents(nf2, nt.f0_hz)) < 100) continue;
+      nt.f0_hz_coarse = nt.f0_hz;
+      nt.f0_hz = Math.round(nf2 * 1000) / 1000;
+      nt.octave_corrected = true;
+      changed++;
+    }
+    return changed;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     اصلاحِ اکتاو با «زمینهٔ ملودی»
+     ----------------------------------------------------------------------
+     صدای خواننده تک‌خطی است: نُتِ کوتاهی که یک اکتاو (یا دوازدهم) بالاتر/پایین‌تر
+     از میانهٔ نُت‌های هم‌سایه‌اش باشد، تقریباً همیشه قفلِ هارمونیک است، نه
+     پرشِ واقعی. اگر ÷۲ یا ×۲ آن را روی میانهٔ همسایه‌ها بنشاند، اصلاح می‌شود.
+     فقط نُت‌های کوتاه (≤۰٫۴۵s) دست‌کاری می‌شوند تا نُت‌های کشیدهٔ واقعی سالم بمانند.
+     ══════════════════════════════════════════════════════════════════════ */
+  function noteSpectrumScores(y, sr, nt) {
+    var dur = nt.duration || (nt.end - nt.start) || 0;
+    if (!(dur > 0) || dur > 0.7) return null;
+    var nf = Math.max(2, Math.min(6, Math.round(dur / 0.03)));
+    var tSel = [], fSel = [];
+    for (var k = 0; k < nf; k++) {
+      tSel.push(nt.start + dur * (k + 0.5) / nf);
+      fSel.push(nt.f0_hz);
+    }
+    var sc = frameScores(y, sr, tSel, fSel, LADDER, 0.046, 4096, 3600.0, 12);
+    if (!sc || !sc.n) return null;
+    var pooled = new Float64Array(LADDER.length);
+    for (var ri = 0; ri < LADDER.length; ri++) {
+      var col = new Float64Array(sc.n);
+      for (var fI = 0; fI < sc.n; fI++) col[fI] = sc.scores[fI * LADDER.length + ri];
+      pooled[ri] = median(col);
+    }
+    return pooled;
+  }
+
+  function fixNoteOctavesByContext(y, sr, notes) {
+    if (!notes || notes.length < 3) return 0;
+    var mids = notes.map(function (n) { return n && n.f0_hz > 0 ? 69 + 12 * Math.log2(n.f0_hz / 440) : null; });
+    var fixed = 0;
+    for (var i = 0; i < notes.length; i++) {
+      var nt = notes[i], m = mids[i];
+      if (m == null) continue;
+      var dur = nt.duration || (nt.end - nt.start) || 0;
+      if (dur < MIN_NOTE_SEC || dur > 0.45) continue;
+      var nb = [];
+      for (var j = 0; j < notes.length; j++) {
+        if (j === i || mids[j] == null) continue;
+        var gap = Math.abs((notes[j].start || 0) - (nt.start || 0));
+        if (gap > 1.6) continue;
+        var reps = Math.min(8, Math.max(1, Math.round((notes[j].duration || 0.1) / 0.1)));
+        for (var w = 0; w < reps; w++) nb.push(mids[j]);
+      }
+      if (nb.length < 4) continue;
+      nb.sort(function (a, b) { return a - b; });
+      var ref = nb[nb.length >> 1];
+      var dev = m - ref;
+      if (Math.abs(dev) < 6) continue;
+      var k = Math.round(dev / 12);
+      if (k === 0) continue;
+      var folded = m - 12 * k;
+      if (Math.abs(folded - ref) > 2) continue;
+      var nf = nt.f0_hz / Math.pow(2, k);
+      if (!isFinite(nf) || nf < MIN_F0 * 0.95 || nf > MAX_F0) continue;
+      /* وتوی طیفی: اگر هارمونیک‌ها آشکارا گامِ فعلی را تأیید کنند، دست نزن */
+      var pooled = noteSpectrumScores(y, sr, nt);
+      if (pooled) {
+        var idxFold = -1, idxKeep = -1, ratio = Math.pow(2, -k);
+        for (var L = 0; L < LADDER.length; L++) {
+          if (Math.abs(cents(LADDER[L], ratio)) <= 60) idxFold = L;
+          if (Math.abs(cents(LADDER[L], 1.0)) <= 60) idxKeep = L;
+        }
+        if (idxFold >= 0 && idxKeep >= 0 && pooled[idxFold] < pooled[idxKeep] - 0.25) continue;
+      }
+      nt.f0_hz_coarse = nt.f0_hz;
+      nt.f0_hz = Math.round(nf * 1000) / 1000;
+      nt.octave_corrected = true;
+      mids[i] = folded;
+      fixed++;
+    }
+    return fixed;
+  }
+
   function refineNotes(y, sr, notes) {
     if (!notes || !notes.length) return { notes: notes, refined: 0 };
     var refined = applyRefinements(notes, refineNotesRange(y, sr, notes, 0, notes.length), 0);
@@ -1252,8 +1441,11 @@
     diag.pyin_engine = 'yin';
 
     ctx.onProgress('clean', 0.86);
+    /* گشت‌های کوتاهِ اکتاوی با زمینهٔ اطراف جای‌گزین می‌شوند (بدونِ حدسِ طیفی) */
+
     var freqs = removeOctaveSpecks(tr.times, fused.freqs);
     freqs = smoothPitchContour(freqs, 3);
+
 
     ctx.onProgress('notes', 0.92);
     var notes = segmentNotes(tr.times, freqs, fused.conf);
@@ -1281,6 +1473,8 @@
     /* ردِّ نمایشی: فقط نمونه‌های داخل نت‌های واقعی (بدون میله‌های الکی) */
     var traceStats = {};
     var traceFreqs = strictTraceFreqs(tr.times, freqs, notes, { stats: traceStats });
+    /* بازسازیِ تیونرمانند: پرش‌های ریزِ فریم‌به‌فریم حذف، ویبراتو حفظ */
+    traceFreqs = noteGuidedTrace(tr.times, traceFreqs, notes);
     diag.trace_kept_pct = traceStats.total
       ? Math.round(1000 * traceStats.kept / traceStats.total) / 10 : 0;
     diag.trace_notes_used = traceStats.notes_used || 0;
@@ -1318,6 +1512,8 @@
 
     ctx.onProgress('refine', 0.95);
     var ref = refineNotes(ctx.y, ctx.sr, mid.notes);
+    ctx.diag.notes_octave_corrected = fixNoteOctaves(ctx.y, ctx.sr, ref.notes) +
+      fixNoteOctavesByContext(ctx.y, ctx.sr, ref.notes);
     return analyzeEnd(ctx, tr, mid, ref.notes, ref.refined);
   }
 
@@ -1350,6 +1546,8 @@
       ctx.onProgress('refine', 0.95);
       var results = await P.refineNotes(ctx.y, ctx.sr, mid.notes);
       var refined = applyRefinements(mid.notes, results, 0);
+      ctx.diag.notes_octave_corrected = fixNoteOctaves(ctx.y, ctx.sr, mid.notes) +
+        fixNoteOctavesByContext(ctx.y, ctx.sr, mid.notes);
 
       return analyzeEnd(ctx, tr, mid, mid.notes, refined);
     } catch (e) {
@@ -1963,6 +2161,7 @@
     yinTrack: yinTrack, fuseWithSecond: fuseWithSecond,
     smoothPitchContour: smoothPitchContour, removeOctaveSpecks: removeOctaveSpecks,
     segmentNotes: segmentNotes, refineNotes: refineNotes, refineNoteF0: refineNoteF0,
+    fixNoteOctaves: fixNoteOctaves, fixNoteOctavesByContext: fixNoteOctavesByContext,
     strictTraceFreqs: strictTraceFreqs, isSungNote: isSungNote,
     dropTraceOutliers: dropTraceOutliers,
     analyzeChannels: analyzeChannels, analyzeChannelsAsync: analyzeChannelsAsync,

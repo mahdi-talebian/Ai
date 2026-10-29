@@ -370,7 +370,35 @@
        صدای انسان نمی‌تواند بیش از ~۶۰ نیم‌پرده در ثانیه تغییر کند؛ هر چیزی
        تندتر از این، پرشِ تخمین است و به‌صورت خطِ عمودی دیده می‌شود. مقدار را
        تا سقفِ مجاز به سمتِ مقدارِ قبلی می‌کشیم (بدون حذفِ داده). */
-    var MAX_RATE = 150;            /* نیم‌پرده در ثانیه (سخاوتمندانه) */
+    /* ── پاس پنجم: صافیِ نمایشی ────────────────────────────────────────────
+       دو کار، فقط برای «رسم» (دادهٔ گزارش دست نمی‌خورد):
+         ۱) میانهٔ سه‌تایی در فضای نیم‌پرده → لرزشِ تک‌فریمی می‌رود، ویبراتو می‌ماند
+         ۲) سقفِ سرعت ۴۵ نیم‌پرده/ثانیه → هیچ «کپسولِ عمودی» روی نمودار نمی‌ماند؛
+            گذرِ تند به یک شیبِ کوتاهِ خوانا تبدیل می‌شود. */
+    /* میانهٔ ۵ (و اگر نشد ۳): دندانه‌های دو-سه‌فریمیِ تخمین را می‌خوابانَد،
+       ولی ویبراتو (۶Hz، دامنهٔ ±۰٫۵) و گذرهای واقعی را نگه می‌دارد. */
+    var win = [];
+    for (i = 1; i < n - 1; i++) {
+      if (out[i] == null) continue;
+      var w5 = [];
+      var ok5 = true;
+      for (j = i - 2; j <= i + 2; j++) {
+        if (j < 0 || j >= n || out[j] == null) { ok5 = false; break; }
+        w5.push(out[j]);
+      }
+      if (ok5) {
+        w5.sort(function (a, b) { return a - b; });
+        win.push([i, w5[2]]);
+        continue;
+      }
+      if (out[i - 1] != null && out[i + 1] != null) {
+        var t3 = [out[i - 1], out[i], out[i + 1]].sort(function (a, b) { return a - b; });
+        win.push([i, t3[1]]);
+      }
+    }
+    for (i = 0; i < win.length; i++) out[win[i][0]] = win[i][1];
+
+    var MAX_RATE = 45;
     var prevI = -1;
     for (i = 0; i < n; i++) {
       if (out[i] == null || !isFinite(out[i])) continue;
@@ -537,7 +565,10 @@
          خطِ عمودیِ بلند می‌سازد؛ همان «موجِ سینوسیِ عمودی» که نباید دیده شود. */
       var prevM = prev[prev.length - 1].m, nextM = run[0].m;
       var leap = (prevM != null && nextM != null) ? Math.abs(nextM - prevM) : 0;
-      if (gap <= GAP_BRIDGE_SEC && leap <= 4) {
+      /* پل‌زدن فقط وقتی «شیبِ معقول» داشته باشد؛ وگرنه خط قطع می‌شود
+         (خطِ عمودیِ کپسولی همان چیزی است که کاربر به‌عنوان ضایعات می‌دید). */
+      var slope = gap > 1e-6 ? leap / gap : 999;
+      if (gap <= GAP_BRIDGE_SEC && leap <= 4 && slope <= 12) {
         var a = prev[prev.length - 1], b = run[0];
         var n = Math.max(2, Math.min(24, Math.round(gap * 40) + 2));
         for (var j = 1; j < n; j++) {
@@ -553,7 +584,36 @@
         segs.push(run.slice());
       }
     }
-    return segs.filter(function (s) { return s.length > 1; });
+    /* ── صاف‌کردنِ هندسیِ مسیر (Chaikin) ──────────────────────────────────
+       خطِ چندضلعی با ضخامتِ زیاد و سرِ گرد، روی هر پرشِ کوتاه یک «کپسولِ
+       عمودی» می‌سازد. با دو مرحله برشِ گوشه‌ها، همان پرش به یک خمِ کوتاهِ
+       طبیعی تبدیل می‌شود؛ طول/ارتفاعِ داده عوض نمی‌شود، فقط گوشه‌ها گرد
+       می‌شوند (۲ ← ۴ ← ۸ نقطه به‌ازای هر جفت). */
+    function chaikin(pts, iters) {
+      var cur = pts;
+      for (var it = 0; it < iters; it++) {
+        if (cur.length < 2) break;
+        var nxt = [cur[0]];
+        for (var k = 1; k < cur.length; k++) {
+          var a0 = cur[k - 1], b0 = cur[k];
+          nxt.push({
+            x: a0.x * 0.75 + b0.x * 0.25, y: a0.y * 0.75 + b0.y * 0.25,
+            t: a0.t + (b0.t - a0.t) * 0.25, m: (a0.m != null && b0.m != null) ? a0.m + (b0.m - a0.m) * 0.25 : (a0.m != null ? a0.m : b0.m)
+          });
+          nxt.push({
+            x: a0.x * 0.25 + b0.x * 0.75, y: a0.y * 0.25 + b0.y * 0.75,
+            t: a0.t + (b0.t - a0.t) * 0.75, m: (a0.m != null && b0.m != null) ? a0.m + (b0.m - a0.m) * 0.75 : (a0.m != null ? a0.m : b0.m)
+          });
+        }
+        nxt.push(cur[cur.length - 1]);
+        cur = nxt;
+      }
+      return cur;
+    }
+
+    var smoothed = [];
+    for (i = 0; i < segs.length; i++) smoothed.push(chaikin(segs[i], 2));
+    return smoothed.filter(function (s) { return s.length > 1; });
   }
 
   /* ── لایهٔ ثابت: پس‌زمینه، خطوط نیم‌پرده، منحنی محو آینده، کادر ──────── */
