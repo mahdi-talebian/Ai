@@ -355,15 +355,13 @@ python3 trace_video.py recitation.mp3 --png trace.png
 رابط از ابتدا موبایل‌فرست نوشته شده (یک‌ستونه، دکمه‌های بزرگ، نوار تب چسبان،
 نمودار با مقیاس `devicePixelRatio`) و فونت محلی `Estedad` دارد.
 
-### 📱 APK آمادهٔ نصب (۱٫۳٫۱۲ — پایهٔ ۱٫۳٫۹ + دو فیکسِ ویدیو: نرخِ ثابتِ فریم و طولِ واقعی در گالری)
+### 📱 APK آمادهٔ نصب (۱٫۳٫۸ — نامِ سل‌فژ، شمارهٔ درجه و خط‌چینِ تمام‌عرضِ بالا/پایین)
 
-**⬇ دانلود:** [radde-seda-1.3.12.apk](https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.3.12/release/radde-seda-1.3.12.apk)
-— صفحهٔ انتشار: [Releases · v1.3.12](https://github.com/mahdi-talebian/Ai/releases/tag/v1.3.12)
+**⬇ دانلود:** [radde-seda-1.3.8.apk](https://github.com/mahdi-talebian/Ai/raw/refs/tags/v1.3.8/release/radde-seda-1.3.8.apk)
+— صفحهٔ انتشار: [Releases · v1.3.8](https://github.com/mahdi-talebian/Ai/releases/tag/v1.3.8)
 
 ```
-release/radde-seda-1.3.12.apk   ← نسخهٔ جاری (پایهٔ ۱٫۳٫۹ + ضبطِ نرخ‌ثابت + طول در MediaStore)
-release/radde-seda-1.3.9.apk    ← پایهٔ ۱٫۳٫۹ (بدونِ فیکسِ ویدیو)
-release/radde-seda-1.3.8.apk    ← نامِ سل‌فژ + شمارهٔ درجه + خط‌چینِ تمام‌عرضِ بالا/پایین
+release/radde-seda-1.3.8.apk    ← نسخهٔ جاری (نامِ سل‌فژ + شمارهٔ درجه + خط‌چینِ تمام‌عرضِ بالا/پایین)
 release/radde-seda-1.3.7.apk    ← رَدِّ تیونرمانند + اصلاحِ خطای اکتاو در خودِ نت‌ها
 release/radde-seda-1.3.4.apk    ← هم‌زمانی دقیق صدا/تصویر + طولِ درست ویدیو
 release/radde-seda-1.3.3.apk    ← نت‌های کشیده با نوارِ ضخیم طلایی

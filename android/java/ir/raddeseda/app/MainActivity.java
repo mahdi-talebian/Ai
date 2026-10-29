@@ -503,11 +503,6 @@ public class MainActivity extends Activity {
      * @return مسیر/جای readable برای نمایش به کاربر
      */
     private String finishSave(File src, String name, String mime, boolean gallery) throws IOException {
-        return finishSave(src, name, mime, gallery, 0L);
-    }
-
-    private String finishSave(File src, String name, String mime, boolean gallery,
-                              long durationMs) throws IOException {
         if (src == null || !src.exists()) throw new IOException("فایل موقت ساخته نشد");
         if (src.length() <= 0) throw new IOException("فایل خالی است");
 
@@ -523,7 +518,7 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             Exception first = null;
             try {
-                return QStorage.save(this, src, safe, m, durationMs);
+                return QStorage.save(this, src, safe, m);
             } catch (Exception e) {
                 first = e;
             }
@@ -582,11 +577,6 @@ public class MainActivity extends Activity {
     /** ذخیره با MediaStore — فقط روی اندروید ۱۰ (API 29) و بالاتر اجرا می‌شود. */
     private static class QStorage {
         static String save(Context ctx, File src, String name, String mime) throws IOException {
-            return save(ctx, src, name, mime, 0L);
-        }
-
-        static String save(Context ctx, File src, String name, String mime,
-                           long durationMs) throws IOException {
             boolean video = mime.startsWith("video/");
             boolean image = mime.startsWith("image/");
             String dirName = video ? Environment.DIRECTORY_MOVIES
@@ -603,14 +593,6 @@ public class MainActivity extends Activity {
             v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
             v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
             v.put(MediaStore.MediaColumns.RELATIVE_PATH, rel);
-            /* طولِ واقعی ویدیو از همان اول در ردیفِ رسانه نوشته می‌شود؛
-               گالری‌ها پیش از ایندکس‌شدنِ کاملِ فایل همین را نشان می‌دهند. */
-            if (video && durationMs > 0) {
-                try {
-                    v.put(MediaStore.Video.Media.DURATION, durationMs);
-                } catch (Exception ignored) {
-                }
-            }
 
             Uri item = null;
             Exception lastErr = null;
@@ -657,9 +639,6 @@ public class MainActivity extends Activity {
             try {
                 ContentValues done = new ContentValues();
                 done.put(MediaStore.MediaColumns.IS_PENDING, 0);
-                if (video && durationMs > 0) {
-                    done.put(MediaStore.Video.Media.DURATION, durationMs);
-                }
                 ctx.getContentResolver().update(item, done, null, null);
             } catch (Exception ignored) {
             }
@@ -846,31 +825,13 @@ public class MainActivity extends Activity {
         /** شروع ذخیرهٔ تکه‌تکه (برای blobهای صفحه) — مقصد: پوشهٔ دانلودها */
         @JavascriptInterface
         public String beginSave(String name, String mime) {
-            return beginSaveInternal(name, mime, "downloads", 0L);
+            return beginSaveInternal(name, mime, "downloads");
         }
 
         /** شروع ذخیرهٔ تکه‌تکه با مقصد مشخص: "gallery" یا "downloads" */
         @JavascriptInterface
         public String beginSaveTo(String name, String mime, String target) {
-            return beginSaveInternal(name, mime, target, 0L);
-        }
-
-        /**
-         * همان beginSaveTo، به‌همراهِ طولِ ویدیو (میلی‌ثانیه).
-         * طول در MediaStore.Video.Media.DURATION نوشته می‌شود؛ بعضی گالری‌ها
-         * (و Google Photos) طول را فقط از متادیتای رسانه می‌خوانند و بدونِ
-         * این مقدار، ویدیو «بدونِ طول» نشان داده می‌شود.
-         */
-        @JavascriptInterface
-        public String beginSaveToEx(String name, String mime, String target, String durationMs) {
-            long dur = 0L;
-            try {
-                if (durationMs != null && durationMs.trim().length() > 0) {
-                    dur = (long) Double.parseDouble(durationMs.trim());
-                }
-            } catch (Exception ignored) {
-            }
-            return beginSaveInternal(name, mime, target, dur);
+            return beginSaveInternal(name, mime, target);
         }
 
         @JavascriptInterface
@@ -903,17 +864,12 @@ public class MainActivity extends Activity {
             final String name = (meta != null && meta[0] != null) ? meta[0] : "output";
             final String mime = (meta != null && meta[1] != null) ? meta[1] : guessMimeFromName(name);
             final boolean gallery = meta != null && meta.length > 2 && "gallery".equals(meta[2]);
-            long durMs = 0L;
-            if (meta != null && meta.length > 3 && meta[3] != null) {
-                try { durMs = Long.parseLong(meta[3]); } catch (Exception ignored) {}
-            }
-            final long durationMs = durMs;
             new Thread(new Runnable() {
                 @Override
                 public void run() {
                     String msg;
                     try {
-                        String where = finishSave(f, name, mime, gallery, durationMs);
+                        String where = finishSave(f, name, mime, gallery);
                         msg = "✅ ذخیره شد: " + where;
                         toastUi(msg);
                         notifySave(token, true, msg);
@@ -935,7 +891,7 @@ public class MainActivity extends Activity {
             if (f != null) f.delete();
         }
 
-        private String beginSaveInternal(String name, String mime, String target, long durationMs) {
+        private String beginSaveInternal(String name, String mime, String target) {
             try {
                 File f = File.createTempFile("save_", ".part", getCacheDir());
                 String token = UUID.randomUUID().toString();
@@ -944,8 +900,7 @@ public class MainActivity extends Activity {
                 pendingMeta.put(token, new String[]{
                         sanitize(fitName(name, m)),
                         m,
-                        "gallery".equals(target) ? "gallery" : "downloads",
-                        String.valueOf(durationMs)});
+                        "gallery".equals(target) ? "gallery" : "downloads"});
                 return token;
             } catch (Exception e) {
                 toastUi("شروع ذخیره ناموفق بود: " + e.getMessage());

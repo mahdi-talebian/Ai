@@ -181,11 +181,9 @@ function tone(seconds, sr, notes) {
   check('برچسب زمانی فریم‌ها صعودی است', mono);
   check('برچسب زمانی دقیقاً i/60 ثانیه است (بدون تأخیر صوت/تصویر)', maxErr <= 1, maxErr + 'µs');
 
-  /* فریمِ کلیدی هر ۱ ثانیه: با GOP کوتاه‌تر، نرخِ بیت یکنواخت می‌شود و
-     پخش‌کنندهٔ گوشی وسطِ ویدیو «هیچ» نمی‌کند (قبلاً هر ۲ ثانیه بود). */
   const keys = enc.videoChunks.filter(c => c.keyFrame);
-  check('فریم کلیدی هر ۱ ثانیه', keys.length === Math.ceil(enc.videoChunks.length / 60),
-    keys.length + ' فریم کلیدی برای ' + enc.videoChunks.length + ' فریم');
+  check('فریم کلیدی هر ۲ ثانیه', keys.length === Math.ceil(enc.videoChunks.length / 120),
+    keys.length + ' فریم کلیدی');
 
   const audioSec = enc.audioChunks.length * 1024 / sr;
   check('صدا کامل کدگذاری شد (هم‌طول فایل)', Math.abs(audioSec - res.duration) < 0.12,

@@ -89,7 +89,7 @@
   };
 
   /* ذخیرهٔ یک Blob با ارسال تکه‌تکه (پایدار برای فایل‌های چند ده مگابایتی) */
-  function saveBlob(blob, name, target, done, durationMs) {
+  function saveBlob(blob, name, target, done) {
     var token;
     if (!blob || !blob.size) {
       toast('فایل خالی است');
@@ -97,17 +97,10 @@
       return;
     }
     var fit = fitName(name, blob.type);
-    if (target === 'gallery') fit.name = galleryName(fit.name, fit.mime);
     try {
-      /* طولِ ویدیو را هم به اندروید می‌دهیم تا در MediaStore نوشته شود؛
-         بعضی گالری‌ها طول را فقط از متادیتای رسانه می‌خوانند، نه از فایل. */
-      var dur = (durationMs && isFinite(durationMs) && durationMs > 0)
-        ? String(Math.round(durationMs)) : '';
-      token = (target === 'gallery' && typeof NA.beginSaveToEx === 'function')
-        ? NA.beginSaveToEx(fit.name, fit.mime, 'gallery', dur)
-        : (target === 'gallery' && typeof NA.beginSaveTo === 'function')
-          ? NA.beginSaveTo(fit.name, fit.mime, 'gallery')
-          : NA.beginSave(fit.name, fit.mime);
+      token = (target === 'gallery' && typeof NA.beginSaveTo === 'function')
+        ? NA.beginSaveTo(fit.name, fit.mime, 'gallery')
+        : NA.beginSave(fit.name, fit.mime);
     } catch (e) {
       toast('شروع ذخیره ناموفق بود: ' + e);
       if (typeof done === 'function') done(false, 'شروع ذخیره ناموفق بود: ' + e);
@@ -155,27 +148,6 @@
     step();
   }
 
-  /* ══════════════════════════════════════════════════════════════════════
-     نامِ یکتا برای گالری
-     ----------------------------------------------------------------------
-     اگر ویدیوی تازه دقیقاً همان نامِ قبلی را داشته باشد، بعضی گالری‌ها ردیفِ
-     قدیمیِ MediaStore را نشان می‌دهند (با طولِ ویدیوی قبلی) — یعنی فایلِ
-     درست، عددِ کهنه. با مُهرِ زمان در نام، همیشه ردیفِ تازه ساخته می‌شود.
-     ══════════════════════════════════════════════════════════════════════ */
-  function stamp() {
-    var d = new Date();
-    function p(n) { return (n < 10 ? '0' : '') + n; }
-    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' +
-      p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
-  }
-  function galleryName(name, mime) {
-    if (!/^video\//i.test(mime || '')) return name;
-    var m = String(name).match(/^(.*?)(\.[^.]+)$/);
-    var base = m ? m[1] : String(name);
-    var ext = m ? m[2] : '';
-    return base + '-' + stamp() + ext;
-  }
-
   /* ذخیره از یک آدرس: فایل سرور → دانلود مستقیم، blob/داده → تکه‌تکه */
   function isSameOrigin(url) {
     try { return new URL(url, location.href).origin === location.origin; }
@@ -210,7 +182,7 @@
     }
     if (/^https?:/i.test(url)) {
       try {
-        if (isGallery && typeof NA.saveToGallery === 'function') NA.saveToGallery(String(url), galleryName(safeName(name), 'video/mp4'));
+        if (isGallery && typeof NA.saveToGallery === 'function') NA.saveToGallery(String(url), safeName(name));
         else NA.saveUrl(String(url), safeName(name));
         toast('در حال دانلود…');
         if (typeof done === 'function') done(true, 'در حال دانلود…');
@@ -249,8 +221,8 @@
     },
 
     /** ذخیرهٔ مستقیم یک Blob در گالری (ویدیو → Movies، عکس → Pictures) */
-    saveBlobToGallery: function (blob, name, done, durationMs) {
-      saveBlob(blob, safeName(name), 'gallery', done, durationMs);
+    saveBlobToGallery: function (blob, name, done) {
+      saveBlob(blob, safeName(name), 'gallery', done);
     },
 
     /** ذخیرهٔ Blob در پوشهٔ دانلودها */
