@@ -60,6 +60,30 @@ object Json {
         sb.append("    \"center_hz\": ").append(num(r.centerHz)).append("\n")
         sb.append("  },\n")
 
+        // ── جزئیات قابل‌ردیابی محدوده (افزودنی) — هر مقدار با Hz/زمان/سنت/تداوم/کیفیت ──
+        val ri = r.rangeInfo
+        if (ri != null) {
+            sb.append("  \"range_details\": {\n")
+            sb.append("    \"stable_fallback\": ").append(ri.stableFallback).append(",\n")
+            sb.append("    \"stable_high\": ").append(extremumJson(ri.stableHigh)).append(",\n")
+            sb.append("    \"stable_low\": ").append(extremumJson(ri.stableLow)).append(",\n")
+            sb.append("    \"absolute_high\": ").append(extremumJson(ri.absoluteHigh)).append(",\n")
+            sb.append("    \"absolute_low\": ").append(extremumJson(ri.absoluteLow)).append(",\n")
+            sb.append("    \"stats\": {")
+                .append("\"frames_considered\": ").append(ri.stats.framesConsidered)
+                .append(", \"frames_used\": ").append(ri.stats.framesUsed)
+                .append(", \"invalid_excluded\": ").append(ri.stats.invalidFramesExcluded)
+                .append(", \"estimated_excluded\": ").append(ri.stats.estimatedFramesExcluded)
+                .append(", \"octave_errors_excluded\": ").append(ri.stats.octaveErrorsExcluded)
+                .append(", \"outliers_excluded\": ").append(ri.stats.outliersExcluded)
+                .append(", \"jumps_accepted\": ").append(ri.stats.jumpsAccepted)
+                .append(", \"ornament_peaks\": ").append(ri.stats.ornamentPeaks)
+                .append(", \"stable_groups\": ").append(ri.stats.stableGroups)
+                .append(", \"total_groups\": ").append(ri.stats.totalGroups)
+                .append("}\n")
+            sb.append("  },\n")
+        }
+
         sb.append("  \"quality\": {\n")
         sb.append("    \"status\": \"").append(esc(r.quality.status)).append("\",\n")
         sb.append("    \"snr_db\": ").append(num(r.quality.snrDb)).append(",\n")
@@ -141,6 +165,22 @@ object Json {
         } else {
             sb.append("  ]\n}\n")
         }
+        return sb.toString()
+    }
+
+    /** جزئیات قابل‌ردیابی یک مقدار محدوده — Hz واقعی (بدون گرد)، زمان، سنت، تداوم، کیفیت */
+    private fun extremumJson(e: ir.hamyareqari.dsp.pitch.PitchRangeAnalyzer.Extremum?): String {
+        if (e == null) return "null"
+        val sb = StringBuilder()
+        sb.append("{\"f0_hz\": ").append(num(e.f0Hz, 4)).append(", ")
+        sb.append("\"time_sec\": ").append(num(e.timestampSec, 3)).append(", ")
+        sb.append("\"note_midi\": ").append(e.noteMidi).append(", ")
+        sb.append("\"note\": \"").append(esc(e.noteName)).append("\", ")
+        sb.append("\"cents_off_note\": ").append(num(e.cents, 1)).append(", ")
+        sb.append("\"duration_sec\": ").append(num(e.durationSec, 3)).append(", ")
+        sb.append("\"quality\": ").append(num(e.qualityScore, 3)).append(", ")
+        sb.append("\"frames\": ").append(e.frameCount).append(", ")
+        sb.append("\"stable\": ").append(e.stable).append("}")
         return sb.toString()
     }
 

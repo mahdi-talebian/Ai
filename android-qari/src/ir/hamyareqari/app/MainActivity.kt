@@ -47,7 +47,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.2.0-pitchv1"
+        const val VERSION = "1.2.1-pitchv1"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -813,6 +813,16 @@ class MainActivity : Activity() {
         else -> Triple("تمام شد", 1.0, 0.0)
     }
 
+    /** خط جزئیات قابل‌ردیابی یک مقدار محدوده: Hz واقعی، لحظه، سنت، تداوم، کیفیت */
+    private fun extremumTrace(e: ir.hamyareqari.dsp.pitch.PitchRangeAnalyzer.Extremum?): String {
+        if (e == null) return "—"
+        return "${e.noteName} · ${PitchMath.faFixed(e.f0Hz, 1)} هرتز" +
+            " · در ${PitchMath.faFixed(e.timestampSec, 1)} ثانیه" +
+            " · ${if (e.cents >= 0) "+" else "−"}${PitchMath.faFixed(kotlin.math.abs(e.cents), 0)} سنت" +
+            " · تداوم ${PitchMath.faFixed(e.durationSec, 2)} ثانیه" +
+            " · کیفیت ${PitchMath.faFixed(e.qualityScore * 100.0, 0)}٪"
+    }
+
     // ───────────────────────────── نمایش نتیجه ─────────────────────────────
 
     private fun renderReport(r: Report, elapsedMs: Long) {
@@ -902,7 +912,26 @@ class MainActivity : Activity() {
         }
         stats.addView(grid)
 
-        // نت‌های لحظه‌ای خام: جدا از گسترهٔ واقعی گزارش می‌شوند
+        // جزئیات قابل‌ردیابی محدوده — Hz واقعی، لحظهٔ وقوع، سنت، تداوم، کیفیت
+        val ri = r.rangeInfo
+        if (ri != null) {
+            stats.addView(Theme.space(this, 6f))
+            stats.addView(Theme.divider(this))
+            stats.addView(Theme.text(this, "جزئیات محدودهٔ پایدار (مبنای گزارش)", 11.5f, Theme.TXT, true))
+            stats.addView(Theme.text(this, "بالاترین: ${extremumTrace(ri.stableHigh)}", 10.5f, Theme.DIM))
+            stats.addView(Theme.text(this, "پایین‌ترین: ${extremumTrace(ri.stableLow)}", 10.5f, Theme.DIM))
+            if (ri.stableFallback) {
+                stats.addView(
+                    Theme.text(
+                        this,
+                        "نت پایداری با تداوم کافی تشخیص داده نشد؛ فقط محدودهٔ لحظه‌ای معتبر است.",
+                        10.5f, Theme.GOLD2
+                    )
+                )
+            }
+        }
+
+        // محدودهٔ لحظه‌ای واقعی: جدا از محدودهٔ اصلی گزارش می‌شود
         val rh = r.rawHighest
         val rl = r.rawLowest
         if (rh != null && rl != null && (rh.name != (r.highest?.name ?: "") || rl.name != (r.lowest?.name ?: ""))) {
@@ -911,12 +940,22 @@ class MainActivity : Activity() {
             stats.addView(
                 Theme.text(
                     this,
-                    "بدون فیلتر: بالاترین ${rh.name} (${PitchMath.faFixed(rh.duration, 2)} ثانیه) · " +
+                    "محدودهٔ لحظه‌ای واقعی: بالاترین ${rh.name} (${PitchMath.faFixed(rh.duration, 2)} ثانیه) · " +
                         "پایین‌ترین ${rl.name} (${PitchMath.faFixed(rl.duration, 2)} ثانیه) — " +
-                        "این‌ها جیغ/لغزش لحظه‌ای‌اند و در گستره شمرده نشدند.",
+                        "شامل نت‌های کوتاه و تحریرها؛ محدودهٔ اصلی از نت‌های پایدار گرفته شده است.",
                     10.5f, 0x88FFFFFF.toInt()
                 )
             )
+            if (ri != null) {
+                stats.addView(
+                    Theme.text(
+                        this,
+                        "لحظه‌ای: بالاترین ${extremumTrace(ri.absoluteHigh)} · " +
+                            "پایین‌ترین ${extremumTrace(ri.absoluteLow)}",
+                        10.5f, 0x66FFFFFF.toInt()
+                    )
+                )
+            }
         }
         resultBox.addView(stats)
         resultBox.addView(Theme.space(this, 12f))
@@ -1988,18 +2027,21 @@ class MainActivity : Activity() {
         private val traceT = ArrayList<Double>(4096)
         private val traceHz = ArrayList<Double>(4096)
         private var startedAt = 0L
-        private var lastMidi = -1
-        private var stableCount = 0
-        private var highHz = 0.0
-        private var lowHz = 0.0
+        /**
+         * تحلیل‌گر محدوده — همان منطق مشترک فایل/میکروفن: نمونه‌ها انباشته می‌شوند و
+         * محدوده با بازمحاسبه از **کل داده‌های معتبر** به‌دست می‌آید (نه min/max لحظه‌ای
+         * و نه وابسته به تعداد فریم/نرخ refresh). مدت‌ها از timestamp واقعی نمونه‌ها.
+         */
+        private val rangeStream = ir.hamyareqari.dsp.pitch.PitchRangeAnalyzer.Streaming()
+        @Volatile private var lastRange: ir.hamyareqari.dsp.pitch.PitchRangeAnalyzer.RangeResult? = null
+        private var rangeFrameCounter = 0
         private val recording get() = liveRecording
 
         fun resetRecord() {
-            highHz = 0.0
-            lowHz = 0.0
-            lastMidi = -1
-            stableCount = 0
             lastF0 = 0.0
+            rangeStream.clear()
+            lastRange = null
+            rangeFrameCounter = 0
             estimator.reset()
             sampleStream.reset()
             synchronized(lock) {
@@ -2035,6 +2077,11 @@ class MainActivity : Activity() {
             capture?.stop()
             worker?.let { try { it.join(800) } catch (e: Exception) { } }
             worker = null
+            // نمونهٔ باقی‌ماندهٔ تثبیت‌کننده + بازبینی نهایی محدوده از کل داده‌های معتبر
+            sampleStream.flush()?.let { rangeStream.add(it) }
+            val res = rangeStream.current()
+            lastRange = res
+            ui.post { applyRangeLabels(res) }
             liveChart.setLive(true)
             val rec = recording
             return if (rec != null && rec.size > 0) rec.toArray() else null
@@ -2059,7 +2106,17 @@ class MainActivity : Activity() {
                     // قرارداد مشترک V1: backend → Quality Gate → Stabilizer → PitchSample
                     val raw = estimator.estimateFrame(s, 0, t)
                     val sample = sampleStream.feed(raw)
-                    if (sample != null) lastF0 = sample.stableF0Hz
+                    if (sample != null) {
+                        lastF0 = sample.stableF0Hz
+                        // انباشت برای محدوده — timestamp نمونه = زمان واقعی دیوار
+                        rangeStream.add(sample)
+                    }
+                    // بازمحاسبهٔ دوره‌ای محدوده از کل داده تاکنون (در نخ پس‌زمینه؛
+                    // وابسته به refresh رابط نیست)
+                    rangeFrameCounter++
+                    if (rangeFrameCounter % 8 == 0) {
+                        lastRange = rangeStream.current()
+                    }
                     val freq = lastF0
                     synchronized(lock) {
                         traceT.add(t)
@@ -2072,6 +2129,18 @@ class MainActivity : Activity() {
                     ui.post { onLiveFrame(t, freq) }
                 }
                 try { Thread.sleep(110) } catch (e: InterruptedException) { }
+            }
+        }
+
+        /** به‌روزرسانی برچسب‌های محدوده از نتیجهٔ تحلیل‌گر مشترک */
+        private fun applyRangeLabels(res: ir.hamyareqari.dsp.pitch.PitchRangeAnalyzer.RangeResult) {
+            val hi = res.stableHigh
+            val lo = res.stableLow
+            if (hi != null) liveHighLabel.text = PitchMath.noteName(hi.f0Hz)
+            if (lo != null) liveLowLabel.text = PitchMath.noteName(lo.f0Hz)
+            if (hi != null && lo != null) {
+                val semis = PitchMath.cents(hi.f0Hz, lo.f0Hz) / 100.0
+                liveSpanLabel.text = PitchMath.faFixed(semis, 1)
             }
         }
 
@@ -2088,21 +2157,8 @@ class MainActivity : Activity() {
                 else "${PitchMath.faFixed(-cents, 0)} سنت پایین"
                 liveNoteName.setTextColor(Theme.GOLD)
 
-                if (midi == lastMidi) stableCount++ else { lastMidi = midi; stableCount = 0 }
-                if (stableCount >= 3) {
-                    if (f0 > highHz) {
-                        highHz = f0
-                        liveHighLabel.text = PitchMath.noteName(f0)
-                    }
-                    if (lowHz == 0.0 || f0 < lowHz) {
-                        lowHz = f0
-                        liveLowLabel.text = PitchMath.noteName(f0)
-                    }
-                    if (highHz > 0 && lowHz > 0) {
-                        val semis = PitchMath.cents(highHz, lowHz) / 100.0
-                        liveSpanLabel.text = PitchMath.faFixed(semis, 1)
-                    }
-                }
+                // محدوده از تحلیل‌گر مشترک (محدودهٔ پایدار = مبنای اصلی)
+                lastRange?.let { applyRangeLabels(it) }
                 liveDurLabel.text = PitchMath.faFixed(t, 0) + " ث"
             } else {
                 liveNoteName.setTextColor(Theme.DIM)
