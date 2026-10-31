@@ -47,7 +47,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.2.2-pitchv1"
+        const val VERSION = "1.2.3-pitchv1"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -1589,9 +1589,12 @@ class MainActivity : Activity() {
 
             // نمودارِ اختصاصیِ رندر: رسم در ترد پس‌زمینه نباید با نمودارِ روی
             // صفحه (که ترد رابط کاربری هم آن را می‌کشد) قاطی شود.
+            // محدودهٔ دستی (درگ خط‌چین‌ها) باید به این نمودار هم منتقل شود
+            // وگرنه ویدیو با مقادیر خودکار رندر می‌شود.
             val renderChart = ChartView(this).apply {
                 setReport(r)
                 setPlayhead(0.0)
+                setRangeOverride(manualHighHz, manualLowHz)
             }
 
             Thread {
@@ -1723,6 +1726,8 @@ class MainActivity : Activity() {
                 "گستره: ${PitchMath.faFixed(msp?.spanSemitones ?: r.spanSemitones, 1)} نیم‌پرده (${PitchMath.faFixed(msp?.spanOctaves ?: r.spanOctaves, 2)} اکتاو)",
                 "مرکز صدا: ${msp?.centerName ?: r.centerName} · ${r.noteCount} نت · ${PitchMath.faFixed(r.durationSec, 0)} ثانیه"
             )
+            // تضمین همگامیِ محدودهٔ دستی با نمودارِ خروجی (درگ خط‌چین‌ها)
+            chart.setRangeOverride(manualHighHz, manualLowHz)
             val bmp = chart.renderToBitmap(1600, 2400, "ردِّ صدا — ${sourceName}", lines)
             val saved = Persistence.saveBitmap(this, bmp, Persistence.safeName("همیار-قاری-${baseName()}", "png"))
             toast("✅ ذخیره شد: ${saved.displayPath}")
