@@ -14,11 +14,21 @@ BUILD="$DIR/build"
 OUT="$ROOT/release"
 TOOLS="${ANDROID_TOOLS:-/tmp/android}"
 
-VERSION_NAME="${VERSION_NAME:-1.1.6}"
-VERSION_CODE="${VERSION_CODE:-8}"
+VERSION_NAME="${VERSION_NAME:-1.2.1-pitchv1}"
+VERSION_CODE="${VERSION_CODE:-10}"
 MIN_SDK="${MIN_SDK:-26}"
 TARGET_SDK="${TARGET_SDK:-34}"
 SHRINK="${SHRINK:-0}"
+
+# نگهبان هماهنگی با AndroidManifest.xml — نسخهٔ build نباید از Manifest فاصله بگیرد
+# (علت ریشهٔ ناهماهنگی قبلی: نسخهٔ پیش‌فرض اسکریپت دستی به‌روز می‌شد)
+MV_NAME="$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' "$DIR/AndroidManifest.xml" | head -1)"
+MV_CODE="$(sed -n 's/.*android:versionCode="\([^"]*\)".*/\1/p' "$DIR/AndroidManifest.xml" | head -1)"
+if [ "$MV_NAME" != "$VERSION_NAME" ] || [ "$MV_CODE" != "$VERSION_CODE" ]; then
+  echo "✖ نسخهٔ build ($VERSION_NAME/$VERSION_CODE) با AndroidManifest.xml ($MV_NAME/$MV_CODE) هماهنگ نیست." >&2
+  echo "  AndroidManifest.xml مبناست؛ هر دو را یکسان کنید." >&2
+  exit 1
+fi
 
 KS="$DIR/keystore/hamyar-qari.jks"
 KS_PASS="${KS_PASS:-hamyarqari}"
