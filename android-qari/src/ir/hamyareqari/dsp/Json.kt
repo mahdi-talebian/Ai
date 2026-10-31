@@ -27,7 +27,13 @@ object Json {
         return String.format(java.util.Locale.US, "%." + digits + "f", r)
     }
 
-    fun report(r: Report, sourceName: String, appVersion: String): String {
+    fun report(
+        r: Report,
+        sourceName: String,
+        appVersion: String,
+        /** قرارداد مشترک نمونه‌ها (مسیر V1) — اختیاری و افزودنی؛ کلیدهای قبلی دست‌نخورده */
+        samples: List<ir.hamyareqari.dsp.pitch.PitchSample>? = null
+    ): String {
         val sb = StringBuilder(8192)
         sb.append("{\n")
         sb.append("  \"app\": \"همیار قاری\",\n")
@@ -110,7 +116,31 @@ object Json {
             if (i < r.shares.size - 1) sb.append(",")
             sb.append("\n")
         }
-        sb.append("  ]\n}\n")
+        // ── قرارداد مشترک نمونه‌ها (V1) — فقط اگر داده‌شده باشد؛ افزودنی ──
+        if (samples != null && samples.isNotEmpty()) {
+            sb.append("  ],\n")
+            sb.append("  \"pitch_samples\": {\n")
+            sb.append("    \"fields\": [\"timestamp_sec\", \"raw_f0_hz\", \"stable_f0_hz\", \"note\", \"note_midi\", \"cents\", \"quality_score\", \"loudness_rms\", \"status\", \"backend\"],\n")
+            sb.append("    \"list\": [\n")
+            for ((i, s) in samples.withIndex()) {
+                sb.append("      {\"timestamp_sec\": ").append(num(s.timestampSec, 3))
+                    .append(", \"raw_f0_hz\": ").append(num(s.rawF0Hz))
+                    .append(", \"stable_f0_hz\": ").append(num(s.stableF0Hz))
+                    .append(", \"note\": \"").append(esc(s.noteName)).append('"')
+                    .append(", \"note_midi\": ").append(s.noteMidi)
+                    .append(", \"cents\": ").append(num(s.cents, 1))
+                    .append(", \"quality_score\": ").append(num(s.qualityScore, 3))
+                    .append(", \"loudness_rms\": ").append(num(s.loudnessRms, 4))
+                    .append(", \"status\": \"").append(ir.hamyareqari.dsp.pitch.FrameStatus.name(s.status)).append('"')
+                    .append(", \"backend\": \"").append(esc(s.backend)).append("\"}")
+                if (i < samples.size - 1) sb.append(",")
+                sb.append("\n")
+            }
+            sb.append("    ]\n")
+            sb.append("  }\n}\n")
+        } else {
+            sb.append("  ]\n}\n")
+        }
         return sb.toString()
     }
 

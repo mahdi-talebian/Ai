@@ -215,6 +215,22 @@ object Analyzer {
         denoise: Boolean,
         progress: ((String, Double) -> Unit)?,
         engine: Engine
+    ): Report = analyzeSignal(sigInput, denoise, progress, engine, null)
+
+    /**
+     * نسخهٔ کامل‌تر با خروجی اختیاری منحنی فریم‌ها (برای قرارداد مشترک نمونه‌ها).
+     *
+     * [onCurve] فقط در مسیر ENHANCED صدا زده می‌شود (منحنی فریم‌ها)؛ در مسیر
+     * LEGACY با null صدا زده می‌شود. رفتار تحلیل و گزارش هیچ تغییری نمی‌کند؛
+     * این فقط یک «نگاه» به دادهٔ میانی است تا مصرف‌کننده (JSON/تست) بتواند
+     * قرارداد نمونه‌ها (PitchSample) را بدون اجرای دوبارهٔ موتور بسازد.
+     */
+    fun analyzeSignal(
+        sigInput: Signal,
+        denoise: Boolean,
+        progress: ((String, Double) -> Unit)?,
+        engine: Engine,
+        onCurve: ((PitchCurve?) -> Unit)?
     ): Report {
         var sig = sigInput
         if (denoise) {
@@ -265,6 +281,9 @@ object Analyzer {
             octaveDown = corr.down
         }
         val fixed = track
+
+        // نگاه اختیاری به منحنی فریم‌ها (قرارداد مشترک نمونه‌ها) — بدون اثر روی گزارش
+        onCurve?.invoke(curve)
 
         progress?.invoke("notes", 0.74)
         var notes = Segmenter.segment(fixed)

@@ -30,6 +30,11 @@ import ir.hamyareqari.dsp.PitchTracker
 import ir.hamyareqari.dsp.Report
 import ir.hamyareqari.dsp.ShortSignal
 import ir.hamyareqari.dsp.YinTracker
+import ir.hamyareqari.dsp.pitch.EnhancedKotlinBackend
+import ir.hamyareqari.dsp.pitch.PitchBackendSelector
+import ir.hamyareqari.dsp.pitch.PitchEstimator
+import ir.hamyareqari.dsp.pitch.PitchSample
+import ir.hamyareqari.dsp.pitch.PitchSampleStream
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -42,10 +47,19 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.1.6"
+        const val VERSION = "1.2.0-pitchv1"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
+
+        /**
+         * FCPE (آزمایشی): فقط وقتی فعال می‌شود که AAR کتابخانهٔ ONNX Runtime در
+         * build باشد و فایل مدل واقعی `models/fcpe.onnx` داخل assets قرار گیرد.
+         * در غیر این صورت برنامه بدون Crash به موتور فعلی (ENHANCED) برمی‌گردد.
+         * هیچ خروجی ساختگی از FCPE ساخته نمی‌شود.
+         */
+        private const val FCPE_EXPERIMENTAL = true
+        private const val FCPE_MODEL_ASSET = "models/fcpe.onnx"
     }
 
     private val ui = Handler(Looper.getMainLooper())
@@ -56,6 +70,8 @@ class MainActivity : Activity() {
     private var sourceName = "صدا"
     private var busy = false
     private var player: AudioIo.Player? = null
+    /** قرارداد مشترک نمونه‌ها (V1) — خروجی هر دو مسیر فایل و زنده */
+    private var lastSamples: List<PitchSample>? = null
 
     // نمای‌ها
     private lateinit var pageHost: FrameLayout
@@ -749,12 +765,20 @@ class MainActivity : Activity() {
         Thread {
             try {
                 val sig = ShortSignal(dec.pcm, dec.sampleRate)
-                val rep = Analyzer.analyzeSignal(sig, denoiseCheck.isChecked) { stage, p ->
-                    ui.post {
-                        val (label, base, span) = stageInfo(stage)
-                        showProgress(base + span * p, label)
-                    }
-                }
+                var curve: ir.hamyareqari.dsp.PitchCurve? = null
+                val rep = Analyzer.analyzeSignal(
+                    sig, denoiseCheck.isChecked,
+                    { stage, p ->
+                        ui.post {
+                            val (label, base, span) = stageInfo(stage)
+                            showProgress(base + span * p, label)
+                        }
+                    },
+                    ir.hamyareqari.dsp.Engine.ENHANCED,
+                    { c -> curve = c }
+                )
+                // قرارداد مشترک نمونه‌ها (V1) از همان منحنی — بدون اجرای دوبارهٔ موتور
+                lastSamples = curve?.let { PitchSampleStream.fromCurve(it, "enhanced") }
                 val elapsed = System.currentTimeMillis() - started
                 ui.post {
                     report = rep
@@ -1551,7 +1575,7 @@ class MainActivity : Activity() {
 
     private fun doExportJson(r: Report, share: Boolean) {
         try {
-            val json = Json.report(r, sourceName, VERSION)
+            val json = Json.report(r, sourceName, VERSION, lastSamples)
             val saved = Persistence.saveJson(this, json, Persistence.safeName("همیار-قاری-${baseName()}", "json"))
             if (share) Persistence.share(this, saved) else toast("✅ ذخیره شد: ${saved.displayPath}")
         } catch (e: Exception) {
@@ -1899,12 +1923,19 @@ class MainActivity : Activity() {
                     truncated = false
                 )
                 sharePcm = prepared
-                val rep = Analyzer.analyzeSignal(ShortSignal(prepared, AudioIo.TARGET_RATE), denoiseCheck.isChecked) { stage, p ->
-                    ui.post {
-                        val info = stageInfo(stage)
-                        showProgress(info.second + info.third * p, info.first)
-                    }
-                }
+                var recCurve: ir.hamyareqari.dsp.PitchCurve? = null
+                val rep = Analyzer.analyzeSignal(
+                    ShortSignal(prepared, AudioIo.TARGET_RATE), denoiseCheck.isChecked,
+                    { stage, p ->
+                        ui.post {
+                            val info = stageInfo(stage)
+                            showProgress(info.second + info.third * p, info.first)
+                        }
+                    },
+                    ir.hamyareqari.dsp.Engine.ENHANCED,
+                    { c -> recCurve = c }
+                )
+                lastSamples = recCurve?.let { PitchSampleStream.fromCurve(it, "enhanced") }
                 ui.post {
                     busy = false
                     hideProgress()
@@ -1929,8 +1960,10 @@ class MainActivity : Activity() {
 
     /**
      * ردیابی لحظه‌ای: هر ۱۲۰ میلی‌ثانیه روی آخرین ~۵۵ میلی‌ثانیه صدا
-     * یک برآورد FRESH می‌گیرد، اصلاح سریع اکتاو می‌زند، و اگر یک نت
-     * دست‌کم ۳ فریم پایدار بماند آن را در گسترهٔ زنده حساب می‌کند.
+     * یک برآورد FRESH می‌گیرد، از Quality Gate و Stabilizer (قرارداد مشترک V1)
+     * می‌گذرد، و اگر یک نت دست‌کم ۳ فریم پایدار بماند آن را در گسترهٔ زنده
+     * حساب می‌کند. موتور از backend selector انتخاب می‌شود؛ اگر FCPE در دسترس
+     * نباشد (همان‌طور که امروز نیست) بدون Crash به موتور فعلی برمی‌گردد.
      */
     private inner class LiveEngine {
         var error: String? = null
@@ -1940,14 +1973,17 @@ class MainActivity : Activity() {
         private var worker: Thread? = null
         @Volatile private var running = false
 
-        private val yin = YinTracker(AudioIo.TARGET_RATE, 55.0, 1200.0, 0.055)
-        private val frameBuf = DoubleArray(yin.w)
-        private val fp = ir.hamyareqari.dsp.FramePitch()
-        private val fft = ir.hamyareqari.dsp.Fft(2048)
-        private val fre = DoubleArray(2048)
-        private val fim = DoubleArray(2048)
-        private val fwin = ir.hamyareqari.dsp.hann(2048)
-        private val scratch = DoubleArray(2048)
+        /** موتور انتخاب‌شده — FCPE فقط با runtime و مدل واقعی؛ وگرنه ENHANCED */
+        private val estimator: PitchEstimator = PitchBackendSelector.selectSafe(FCPE_EXPERIMENTAL) {
+            try {
+                assets.open(FCPE_MODEL_ASSET).readBytes()
+            } catch (e: Exception) {
+                null // مدل واقعی در assets نیست → fallback بدون Crash
+            }
+        }
+        /** لولهٔ مشترک V1: Quality Gate + Stabilizer → PitchSample */
+        private val sampleStream = PitchSampleStream(backendTag = estimator.backendId.tag)
+        private var lastF0 = 0.0
 
         private val traceT = ArrayList<Double>(4096)
         private val traceHz = ArrayList<Double>(4096)
@@ -1963,6 +1999,9 @@ class MainActivity : Activity() {
             lowHz = 0.0
             lastMidi = -1
             stableCount = 0
+            lastF0 = 0.0
+            estimator.reset()
+            sampleStream.reset()
             synchronized(lock) {
                 traceT.clear()
                 traceHz.clear()
@@ -1972,6 +2011,9 @@ class MainActivity : Activity() {
         fun start(): Boolean {
             startedAt = System.currentTimeMillis()
             running = true
+            lastF0 = 0.0
+            estimator.reset()
+            sampleStream.reset()
             val cap = AudioIo.MicCapture { block, count ->
                 synchronized(lock) {
                     buffer.add(block, count)
@@ -1999,7 +2041,8 @@ class MainActivity : Activity() {
         }
 
         private fun loop() {
-            val want = yin.w
+            // طول پنجره از خود موتور انتخاب‌شده گرفته می‌شود (نه مقدار ثابت UI)
+            val want = (0.055 * AudioIo.TARGET_RATE).toInt()
             while (running) {
                 val snap: ShortArray
                 synchronized(lock) {
@@ -2011,28 +2054,21 @@ class MainActivity : Activity() {
                     }
                 }
                 if (snap.isNotEmpty()) {
-                    val s = ShortSignal(snap, AudioIo.TARGET_RATE)
-                    yin.pitchAt(s, 0, fp, frameBuf)
-                    var f0 = fp.f0
-                    if (f0 > 0 && fp.clarity > 0.5) {
-                        val fixed = Harmonics.quickOctaveFix(
-                            s, AudioIo.TARGET_RATE, 0, min(want, 2048), f0,
-                            fft, fre, fim, scratch, fwin
-                        )
-                        if (fixed > 0) f0 = fixed
-                    } else {
-                        f0 = 0.0
-                    }
                     val t = (System.currentTimeMillis() - startedAt) / 1000.0
+                    val s = ShortSignal(snap, AudioIo.TARGET_RATE)
+                    // قرارداد مشترک V1: backend → Quality Gate → Stabilizer → PitchSample
+                    val raw = estimator.estimateFrame(s, 0, t)
+                    val sample = sampleStream.feed(raw)
+                    if (sample != null) lastF0 = sample.stableF0Hz
+                    val freq = lastF0
                     synchronized(lock) {
                         traceT.add(t)
-                        traceHz.add(f0)
+                        traceHz.add(freq)
                         while (traceT.isNotEmpty() && t - traceT[0] > 12.0) {
                             traceT.removeAt(0)
                             traceHz.removeAt(0)
                         }
                     }
-                    val freq = f0
                     ui.post { onLiveFrame(t, freq) }
                 }
                 try { Thread.sleep(110) } catch (e: InterruptedException) { }

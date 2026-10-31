@@ -14,6 +14,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.view.MotionEvent
 import android.view.View
+import ir.hamyareqari.dsp.PitchCurve
 import ir.hamyareqari.dsp.PitchMath
 import ir.hamyareqari.dsp.Report
 import kotlin.math.abs
@@ -36,7 +37,9 @@ class TraceSpec(
     val duration: Double,
     val highMidi: Double,
     val lowMidi: Double,
-    val spanSemitones: Double
+    val spanSemitones: Double,
+    /** وضعیت هر نقطه (PitchCurve.VALID/ESTIMATED/…) — null = رفتار قبلی */
+    val status: ByteArray? = null
 ) {
     companion object {
         fun from(r: Report): TraceSpec {
@@ -56,7 +59,8 @@ class TraceSpec(
                 duration = r.durationSec,
                 highMidi = r.highest?.let { PitchMath.hzToMidi(it.f0) } ?: Double.NaN,
                 lowMidi = r.lowest?.let { PitchMath.hzToMidi(it.f0) } ?: Double.NaN,
-                spanSemitones = r.spanSemitones
+                spanSemitones = r.spanSemitones,
+                status = r.contourStatus
             )
         }
     }
@@ -106,6 +110,7 @@ class ChartView(context: Context) : View(context) {
         const val GRID_LABEL = 0x73B4C8EB.toInt()
         const val DIM_CURVE = 0x8C6084AF.toInt()
         const val DIM_SHADOW = 0x596084AF
+        const val DIM_EST = 0x666084AF // خط‌چینِ تخمینی — کم‌رنگ‌تر از VALID
         const val NOTE_DIM = 0x61789BC3
         const val GOLD = 0xFFF7D171.toInt()
         const val NOTE_FUTURE = 0x8C8CA8CD.toInt()
@@ -143,6 +148,7 @@ class ChartView(context: Context) : View(context) {
     private var frameKey = ""
     private var frameDim: List<FloatArray> = emptyList()
     private var frameGold: List<FloatArray> = emptyList()
+    private var frameDimEst: List<FloatArray> = emptyList()
 
     private val pathDim = Path()
     private val pathGold = Path()
@@ -200,6 +206,7 @@ class ChartView(context: Context) : View(context) {
         frameKey = ""
         frameDim = emptyList()
         frameGold = emptyList()
+        frameDimEst = emptyList()
     }
 
     fun setPlayhead(sec: Double) {
@@ -563,48 +570,66 @@ class ChartView(context: Context) : View(context) {
     private var segMids: DoubleArray? = null
     private var segTimes: List<DoubleArray> = emptyList()
     private var segVals: List<DoubleArray> = emptyList()
+    private var segEst: List<Boolean> = emptyList()
 
-    private fun segmentsFor(sp: TraceSpec, mids: DoubleArray): Pair<List<DoubleArray>, List<DoubleArray>> {
-        if (segSpec === sp && segMids === mids) return segTimes to segVals
+    /** بستهٔ سگمنت‌ها: هندسه + وضعیت «تخمینی» بودن هر سگمنت */
+    private class SegBundle(
+        val times: List<DoubleArray>,
+        val vals: List<DoubleArray>,
+        val est: List<Boolean>
+    )
 
-        class Run(val pts: ArrayList<DoubleArray>, val hard: Boolean)
+    private fun segmentsFor(sp: TraceSpec, mids: DoubleArray): SegBundle {
+        if (segSpec === sp && segMids === mids) return SegBundle(segTimes, segVals, segEst)
+
+        class Run(val pts: ArrayList<DoubleArray>, val hard: Boolean, val est: Boolean)
 
         val runs = ArrayList<Run>()
         var cur = ArrayList<DoubleArray>()
         var curHard = false
+        var curEst = false
         var lastT = Double.NaN
 
-        fun flush(nextHard: Boolean) {
-            if (cur.size > 1) runs.add(Run(ArrayList(cur), curHard))
+        fun flush(nextHard: Boolean, nextEst: Boolean) {
+            if (cur.size > 1) runs.add(Run(ArrayList(cur), curHard, curEst))
             cur = ArrayList()
             curHard = nextHard
+            curEst = nextEst
         }
 
         for (i in sp.times.indices) {
             val t = sp.times[i]
             val m = mids[i]
+            // وضعیت «تخمینی»: نقاط ESTIMATED از VALID جدا رسم می‌شوند
+            val isEst = sp.status != null && sp.status!![i] == PitchCurve.ESTIMATED
             if (m.isNaN()) {
-                flush(false)
+                flush(false, isEst)
                 lastT = Double.NaN
                 continue
             }
             if (!lastT.isNaN() && t - lastT > C.GAP_BRIDGE_SEC) {
-                flush(false)
+                flush(false, isEst)
+            } else if (isEst != curEst && cur.isNotEmpty()) {
+                // مرز VALID ↔ ESTIMATED: سگمنت جدا (خط‌چین از خط پیوسته قابل تشخیص)
+                flush(false, isEst)
             } else if (cur.isNotEmpty() && !lastT.isNaN()) {
                 val prevM = cur[cur.size - 1][1]
                 // پرشِ غیرممکن (>۴ نیم‌پرده در <۵۰ms): سگمنت جدا شود
-                if (abs(m - prevM) > 4.0 && (t - lastT) < 0.05) flush(true)
+                if (abs(m - prevM) > 4.0 && (t - lastT) < 0.05) flush(true, isEst)
             }
+            if (cur.isEmpty()) curEst = isEst
             cur.add(doubleArrayOf(t, m))
             lastT = t
         }
-        if (cur.size > 1) runs.add(Run(ArrayList(cur), curHard))
+        if (cur.size > 1) runs.add(Run(ArrayList(cur), curHard, curEst))
 
-        // پل‌زدن شکاف‌های کوتاه با شیب معقول
+        // پل‌زدن شکاف‌های کوتاه با شیب معقول (فقط هم‌وضعیت‌ها)
         val merged = ArrayList<ArrayList<DoubleArray>>()
+        val mergedEst = ArrayList<Boolean>()
         for (run in runs) {
-            if (merged.isEmpty() || run.hard) {
+            if (merged.isEmpty() || run.hard || run.est != mergedEst[mergedEst.size - 1]) {
                 merged.add(ArrayList(run.pts))
+                mergedEst.add(run.est)
                 continue
             }
             val prev = merged[merged.size - 1]
@@ -622,6 +647,7 @@ class ChartView(context: Context) : View(context) {
                 prev.addAll(run.pts)
             } else {
                 merged.add(ArrayList(run.pts))
+                mergedEst.add(run.est)
             }
         }
 
@@ -648,7 +674,8 @@ class ChartView(context: Context) : View(context) {
         // جداکردن زمان و ارتفاع + سبک‌سازی زمانی (هر ۴ms یک نقطه کافی است)
         val times = ArrayList<DoubleArray>(smoothed.size)
         val vals = ArrayList<DoubleArray>(smoothed.size)
-        for (run in smoothed) {
+        val est = ArrayList<Boolean>(smoothed.size)
+        for ((si, run) in smoothed.withIndex()) {
             if (run.size < 2) continue
             val keepT = ArrayList<Double>(run.size)
             val keepM = ArrayList<Double>(run.size)
@@ -664,6 +691,7 @@ class ChartView(context: Context) : View(context) {
             if (keepT.size > 1) {
                 times.add(keepT.toDoubleArray())
                 vals.add(keepM.toDoubleArray())
+                est.add(if (si < mergedEst.size) mergedEst[si] else false)
             }
         }
 
@@ -671,7 +699,8 @@ class ChartView(context: Context) : View(context) {
         segMids = mids
         segTimes = times
         segVals = vals
-        return times to vals
+        segEst = est
+        return SegBundle(times, vals, est)
     }
 
     // ───────────────────────────── رسم ─────────────────────────────
@@ -801,9 +830,12 @@ class ChartView(context: Context) : View(context) {
         val key = "${g.t0},${g.t1},${g.loLim},${g.hiLim},${g.w},${g.h},$endT"
         if (key == frameKey) return
 
-        val (times, vals) = segmentsFor(sp, mids)
+        val segs = segmentsFor(sp, mids)
+        val times = segs.times
+        val vals = segs.vals
         val dim = ArrayList<FloatArray>(times.size)
         val gold = ArrayList<FloatArray>(times.size)
+        val dimEst = ArrayList<FloatArray>(times.size)
         val spanT = max(1e-6, g.t1 - g.t0)
         val spanM = max(1e-6, g.hiLim - g.loLim)
         val usableW = g.w - g.ml - g.mr
@@ -870,18 +902,23 @@ class ChartView(context: Context) : View(context) {
                 lastX = x
                 lastY = y
             }
-            if (dimN >= 4) dim.add(dimBuf.copyOf(dimN))
-            if (goldN >= 4) gold.add(goldBuf.copyOf(goldN))
+            if (dimN >= 4) {
+                // سگمنت‌های «تخمینی» جدا و کم‌رنگ‌تر رسم می‌شوند (قابل تشخیص از VALID)
+                if (segs.est[si]) dimEst.add(dimBuf.copyOf(dimN)) else dim.add(dimBuf.copyOf(dimN))
+            }
+            if (goldN >= 4 && !segs.est[si]) gold.add(goldBuf.copyOf(goldN))
         }
         frameDim = dim
         frameGold = gold
+        frameDimEst = dimEst
         frameKey = key
     }
 
     private fun drawDimCurve(canvas: Canvas, g: Geom) {
-        if (frameDim.isEmpty()) return
+        if (frameDim.isEmpty() && frameDimEst.isEmpty()) return
         stroke.strokeCap = Paint.Cap.ROUND
         stroke.strokeJoin = Paint.Join.ROUND
+        stroke.pathEffect = null
         for (pts in frameDim) {
             pathDim.reset()
             pathDim.moveTo(pts[0], pts[1])
@@ -896,6 +933,23 @@ class ChartView(context: Context) : View(context) {
             stroke.color = C.DIM_CURVE
             stroke.strokeWidth = 2.7f * g.k
             canvas.drawPath(pathDim, stroke)
+        }
+        // نقاط «تخمینی» (ESTIMATED): خط‌چین کم‌رنگ — از VALID قابل تشخیص
+        if (frameDimEst.isNotEmpty()) {
+            stroke.pathEffect = DashPathEffect(floatArrayOf(6f * g.k, 5f * g.k), 0f)
+            for (pts in frameDimEst) {
+                pathDim.reset()
+                pathDim.moveTo(pts[0], pts[1])
+                var i = 2
+                while (i + 1 < pts.size) {
+                    pathDim.lineTo(pts[i], pts[i + 1])
+                    i += 2
+                }
+                stroke.color = C.DIM_EST
+                stroke.strokeWidth = 2.1f * g.k
+                canvas.drawPath(pathDim, stroke)
+            }
+            stroke.pathEffect = null
         }
     }
 
