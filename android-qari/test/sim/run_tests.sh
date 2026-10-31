@@ -13,9 +13,11 @@ mkdir -p "$OUT"
 "$JAVA" -cp "$KOTLINC" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
   -no-reflect -jvm-target 1.8 -nowarn -d "$OUT" \
   "$ROOT"/src/ir/hamyareqari/dsp/*.kt \
+  "$ROOT"/src/ir/hamyareqari/dsp/pitch/*.kt \
   "$ROOT"/src/ir/hamyareqari/app/ChartView.kt \
   "$ROOT"/src/ir/hamyareqari/app/VideoMaker.kt \
-  "$DIR"/stubs/*.kt "$DIR"/VideoTest.kt "$DIR"/LongTest.kt "$DIR"/ZoomFollowTest.kt 2>&1 | grep -v '^warning:' || true
+  "$DIR"/stubs/*.kt "$DIR"/VideoTest.kt "$DIR"/LongTest.kt "$DIR"/ZoomFollowTest.kt \
+  "$DIR"/PitchV1Test.kt "$DIR"/PipelineTest.kt 2>&1 | grep -v '^warning:' || true
 
 cd "$DIR"
 echo "── تست کوتاه (چهار پروفایل دستگاه) ──"
@@ -35,3 +37,9 @@ echo "── تست بلند (کل نمونهٔ ۳۸ ثانیه‌ای) ──"
          -Dfont.bold="$DIR/../../assets/fonts/Estedad-Bold.ttf" \
          -Dfont.regular="$DIR/../../assets/fonts/Estedad-Regular.ttf" \
          -cp "$OUT:$STDLIB" LongRun
+echo
+echo "── تست‌های واحد لولهٔ V1 (gate/stabilizer/resampler/fallback) ──"
+"$JAVA" -Dstdout.encoding=UTF-8 -cp "$OUT:$STDLIB" ir.hamyareqari.dsp.pitch.PipelineTest
+echo
+echo "── آزمون سناریوهای موتور V1 (معیارهای دقت/نویز/تحریر/تأخیر) ──"
+"$JAVA" -Xmx2g -Dstdout.encoding=UTF-8 -cp "$OUT:$STDLIB" ir.hamyareqari.dsp.pitch.PitchV1Test
