@@ -84,6 +84,40 @@ class ChartView(context: Context) : View(context) {
 
     var onSeek: ((Double) -> Unit)? = null
 
+    // ── تنظیم دستی خط‌چین‌های بالاترین/پایین‌ترین (درگ روی خط) ──────────────
+
+    /** مقدار دستی خطِ بالا (NaN = خودکار) */
+    var overrideHighMidi: Double = Double.NaN
+        private set
+
+    /** مقدار دستی خطِ پایین (NaN = خودکار) */
+    var overrideLowMidi: Double = Double.NaN
+        private set
+
+    /** درگ خط‌چین‌ها فقط در نمودارِ «نتیجه» (فایل/ضبط) فعال است — نه نمودار زنده */
+    var rangesDraggable = false
+
+    /** فراخوانی هنگام درگ خط: (isHigh, hz) — مقدار آزاد بر حسب هرتز */
+    var onRangeDrag: ((Boolean, Double) -> Unit)? = null
+
+    private var dragWhich = 0 // 0=none 1=high 2=low
+
+    /** اعمال محدودهٔ دستی (هر کدام null = بازگشت به مقدار خودکارِ همان خط) */
+    fun setRangeOverride(highHz: Double?, lowHz: Double?) {
+        overrideHighMidi = if (highHz != null && highHz > 0.0) PitchMath.hzToMidi(highHz) else Double.NaN
+        overrideLowMidi = if (lowHz != null && lowHz > 0.0) PitchMath.hzToMidi(lowHz) else Double.NaN
+        invalidateFrameCaches()
+        invalidate()
+    }
+
+    /** مقدار مؤثر خطِ بالا: دستی اگر تنظیم شده باشد، وگرنه خودکار */
+    fun effHighMidi(sp: TraceSpec): Double =
+        if (!overrideHighMidi.isNaN()) overrideHighMidi else sp.highMidi
+
+    /** مقدار مؤثر خطِ پایین: دستی اگر تنظیم شده باشد، وگرنه خودکار */
+    fun effLowMidi(sp: TraceSpec): Double =
+        if (!overrideLowMidi.isNaN()) overrideLowMidi else sp.lowMidi
+
     var spec: TraceSpec? = null
         private set
     var playhead: Double = -1.0
@@ -162,6 +196,9 @@ class ChartView(context: Context) : View(context) {
     ) {
         fun xOf(t: Double): Float = ml + (((t - t0) / max(1e-6, t1 - t0)) * (w - ml - mr)).toFloat()
         fun yOf(m: Double): Float = mt + ((1.0 - (m - loLim) / max(1e-6, hiLim - loLim)) * (h - mt - mb)).toFloat()
+        /** معکوس yOf — برای درگ خط‌چین‌ها (MIDI پیوسته = هرتز آزاد) */
+        fun midiOf(y: Float): Double =
+            loLim + (1.0 - (y - mt) / max(1e-6, (h - mt - mb).toDouble())) * (hiLim - loLim)
     }
 
     init {
@@ -471,6 +508,21 @@ class ChartView(context: Context) : View(context) {
 
     /** بازهٔ ارتفاع نمایش‌داده‌شده — همان logic نسخهٔ ۱٫۳٫۹ */
     private fun pitchLimits(
+        spec: TraceSpec, mids: DoubleArray, t0: Double, t1: Double, nowT: Double
+    ): DoubleArray {
+        val lim = pitchLimitsRaw(spec, mids, t0, t1, nowT)
+        // خط‌های دستی/خودکارِ محدوده همیشه داخل دید بمانند (با کمی فاصله)
+        val eHi = effHighMidi(spec)
+        val eLo = effLowMidi(spec)
+        if (eHi.isNaN() && eLo.isNaN()) return lim
+        var lo = lim[0]
+        var hi = lim[1]
+        if (!eLo.isNaN() && eLo - 1.0 < lo) lo = eLo - 1.0
+        if (!eHi.isNaN() && eHi + 1.0 > hi) hi = eHi + 1.0
+        return doubleArrayOf(lo, hi)
+    }
+
+    private fun pitchLimitsRaw(
         spec: TraceSpec, mids: DoubleArray, t0: Double, t1: Double, nowT: Double
     ): DoubleArray {
         val all = ArrayList<Double>(mids.size)
@@ -1057,8 +1109,10 @@ class ChartView(context: Context) : View(context) {
     }
 
     private fun drawRangeGuides(canvas: Canvas, sp: TraceSpec, g: Geom, k: Float) {
-        if (!sp.highMidi.isNaN()) drawGuide(canvas, sp, g, k, sp.highMidi, true)
-        if (!sp.lowMidi.isNaN()) drawGuide(canvas, sp, g, k, sp.lowMidi, false)
+        val hi = effHighMidi(sp)
+        val lo = effLowMidi(sp)
+        if (!hi.isNaN()) drawGuide(canvas, sp, g, k, hi, true)
+        if (!lo.isNaN()) drawGuide(canvas, sp, g, k, lo, false)
     }
 
     private fun drawGuide(canvas: Canvas, sp: TraceSpec, g: Geom, k: Float, midi: Double, high: Boolean) {
@@ -1077,9 +1131,22 @@ class ChartView(context: Context) : View(context) {
         canvas.drawLine(6f * k, y, g.w - 6f * k, y, stroke)
         stroke.pathEffect = null
 
-        val deg = if (!sp.lowMidi.isNaN()) PitchMath.degreeFromLow(Math.round(midi).toInt(), Math.round(sp.lowMidi).toInt()) else 0
-        val txt = (if (high) "بالاترین " else "پایین‌ترین ") + PitchMath.solfegeWithOctave(Math.round(midi).toInt()) +
-            (if (deg > 0) " · درجهٔ ${PitchMath.faDigits(deg)}" else "")
+        val deg = run {
+            val baseLow = effLowMidi(sp)
+            if (!baseLow.isNaN()) PitchMath.degreeFromLow(Math.round(midi).toInt(), Math.round(baseLow).toInt()) else 0
+        }
+        // برای مقدار دستی: نامِ نزدیک‌ترین نت + فاصلهٔ سنتی (مقدار آزاد است، نیم‌پرده‌ای نیست)
+        val manualLine = if (high) !overrideHighMidi.isNaN() else !overrideLowMidi.isNaN()
+        val txt = if (manualLine) {
+            val hz = PitchMath.midiToHz(midi)
+            val off = PitchMath.centsOffPitch(hz)
+            val offTxt = PitchMath.faDigits(Math.round(off).toInt()).let { if (off >= 0) "+$it" else it }
+            (if (high) "بالاترین " else "پایین‌ترین ") + PitchMath.noteName(hz) +
+                " · $offTxt سنت · ${PitchMath.faFixed(hz, 1)} هرتز"
+        } else {
+            (if (high) "بالاترین " else "پایین‌ترین ") + PitchMath.solfegeWithOctave(Math.round(midi).toInt()) +
+                (if (deg > 0) " · درجهٔ ${PitchMath.faDigits(deg)}" else "")
+        }
         textPaint.typeface = Theme.font(context, true)
         textPaint.textSize = 10f * k
         textPaint.textAlign = Paint.Align.RIGHT
@@ -1243,12 +1310,17 @@ class ChartView(context: Context) : View(context) {
             "${PitchMath.faFixed(endT, 1)} / ${PitchMath.faFixed(sp.duration, 1)} ثانیه",
             g.w - 10f * k, 24f * k, textPaint
         )
-        if (!sp.highMidi.isNaN() && !sp.lowMidi.isNaN()) {
+        val eHi = effHighMidi(sp)
+        val eLo = effLowMidi(sp)
+        if (!eHi.isNaN() && !eLo.isNaN()) {
             textPaint.color = C.HINT
-            val span = PitchMath.spanInDegrees(sp.spanSemitones)
+            val spanSemis = if (!overrideHighMidi.isNaN() || !overrideLowMidi.isNaN())
+                PitchMath.cents(PitchMath.midiToHz(eHi), PitchMath.midiToHz(eLo)) / 100.0
+            else sp.spanSemitones
+            val span = PitchMath.spanInDegrees(spanSemis)
             canvas.drawText(
-                "${PitchMath.solfegeWithOctave(Math.round(sp.highMidi).toInt())} ↕ " +
-                    "${PitchMath.solfegeWithOctave(Math.round(sp.lowMidi).toInt())}  ·  ${span.text}",
+                "${PitchMath.solfegeWithOctave(Math.round(eHi).toInt())} ↕ " +
+                    "${PitchMath.solfegeWithOctave(Math.round(eLo).toInt())}  ·  ${span.text}",
                 g.w - 10f * k, h - 9f * k, textPaint
             )
         }
@@ -1260,6 +1332,61 @@ class ChartView(context: Context) : View(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (live) return false
         val sp = spec ?: return false
+
+        // ── درگ خط‌چین‌های بالاترین/پایین‌ترین (فقط وقتی rangesDraggable) ──
+        if (rangesDraggable) {
+            val gNow = geomForTouch(sp)
+            val k = (width / 700f).coerceIn(0.8f, 2.0f)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (gNow != null) {
+                        val yH = if (!effHighMidi(sp).isNaN()) gNow.yOf(effHighMidi(sp)) else Float.MAX_VALUE
+                        val yL = if (!effLowMidi(sp).isNaN()) gNow.yOf(effLowMidi(sp)) else Float.MAX_VALUE
+                        val grab = 30f * k
+                        val dH = Math.abs(event.y - yH)
+                        val dL = Math.abs(event.y - yL)
+                        dragWhich = when {
+                            dH <= grab && dH <= dL -> 1
+                            dL <= grab -> 2
+                            else -> 0
+                        }
+                        if (dragWhich != 0) {
+                            parent?.requestDisallowInterceptTouchEvent(true)
+                            return true
+                        }
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (dragWhich != 0 && gNow != null) {
+                        var midi = gNow.midiOf(event.y)
+                        // خط‌ها از هم عبور نمی‌کنند (حداقل ۰٫۲ نیم‌پرده فاصله)
+                        if (dragWhich == 1) {
+                            val loM = effLowMidi(sp)
+                            if (!loM.isNaN() && midi < loM + 0.2) midi = loM + 0.2
+                        } else {
+                            val hiM = effHighMidi(sp)
+                            if (!hiM.isNaN() && midi > hiM - 0.2) midi = hiM - 0.2
+                        }
+                        midi = midi.coerceIn(12.0, 108.0)
+                        val hz = PitchMath.midiToHz(midi)
+                        if (dragWhich == 1) overrideHighMidi = midi else overrideLowMidi = midi
+                        invalidateFrameCaches()
+                        invalidate()
+                        onRangeDrag?.invoke(dragWhich == 1, hz)
+                        return true
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (dragWhich != 0) {
+                        dragWhich = 0
+                        parent?.requestDisallowInterceptTouchEvent(false)
+                        if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
+                        return true
+                    }
+                }
+            }
+        }
+
         if (event.action == MotionEvent.ACTION_UP) {
             val k = (width / 700f).coerceIn(0.8f, 2.0f)
             val ml = Math.round(width * 0.0335f).toFloat()
@@ -1275,6 +1402,23 @@ class ChartView(context: Context) : View(context) {
             }
         }
         return true
+    }
+
+    /** هندسهٔ لحظه‌ای برای تبدیل لمس ↔ MIDI (همان فرمول drawTrace برای دیدِ جاری) */
+    private fun geomForTouch(sp: TraceSpec): Geom? {
+        if (sp.times.isEmpty() || width == 0 || height == 0) return null
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val k = (w / 700f).coerceIn(0.8f, 2.0f)
+        val ml = Math.round(w * 0.0335f).toFloat()
+        val mr = Math.round(w * 0.0215f).toFloat()
+        val mt = Math.round(h * 0.1083f).toFloat()
+        val mb = Math.round(h * 0.0889f).toFloat()
+        val total = max(0.001, sp.duration)
+        val (t0, t1) = viewWindow(total)
+        val midsClean = cleanMids(sp.times, sp.mids)
+        val lim = pitchLimits(sp, midsClean, t0, t1, if (playhead >= 0) playhead else Double.NaN)
+        return Geom(w, h, ml, mr, mt, mb, k, lim[0], lim[1], t0, t1)
     }
 
     override fun performClick(): Boolean {

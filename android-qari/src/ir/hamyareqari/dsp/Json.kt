@@ -32,8 +32,17 @@ object Json {
         sourceName: String,
         appVersion: String,
         /** قرارداد مشترک نمونه‌ها (مسیر V1) — اختیاری و افزودنی؛ کلیدهای قبلی دست‌نخورده */
-        samples: List<ir.hamyareqari.dsp.pitch.PitchSample>? = null
+        samples: List<ir.hamyareqari.dsp.pitch.PitchSample>? = null,
+        /** محدودهٔ دستیِ کاربر (درگ خط‌چین‌ها روی نمودار) — null = مقدار خودکارِ موتور */
+        manualHighHz: Double? = null,
+        manualLowHz: Double? = null
     ): String {
+        // وقتی محدودهٔ دستی اعمال شده، همهٔ مشتق‌های «range» از مقادیر دستی
+        // بازمحاسبه می‌شوند؛ ردِّ خودکارِ موتور در raw_* و range_details دست‌نخورده می‌ماند.
+        val manual = manualHighHz != null && manualLowHz != null && manualHighHz > 0.0 && manualLowHz > 0.0
+        val mspan = if (manual) RangeMath.span(manualHighHz!!, manualLowHz!!) else null
+        val hiJson = if (manual) manualExtremumJson(manualHighHz!!) else noteJson(r.highest)
+        val loJson = if (manual) manualExtremumJson(manualLowHz!!) else noteJson(r.lowest)
         val sb = StringBuilder(8192)
         sb.append("{\n")
         sb.append("  \"app\": \"همیار قاری\",\n")
@@ -45,19 +54,20 @@ object Json {
         sb.append("  \"sung_sec\": ").append(num(r.sungSec)).append(",\n")
 
         sb.append("  \"range\": {\n")
-        sb.append("    \"highest\": ").append(noteJson(r.highest)).append(",\n")
-        sb.append("    \"lowest\": ").append(noteJson(r.lowest)).append(",\n")
+        sb.append("    \"source\": \"").append(if (manual) "manual" else "auto").append("\",\n")
+        sb.append("    \"highest\": ").append(hiJson).append(",\n")
+        sb.append("    \"lowest\": ").append(loJson).append(",\n")
         sb.append("    \"raw_highest\": ").append(noteJson(r.rawHighest)).append(",\n")
         sb.append("    \"raw_lowest\": ").append(noteJson(r.rawLowest)).append(",\n")
-        sb.append("    \"span_semitones\": ").append(num(r.spanSemitones)).append(",\n")
-        sb.append("    \"span_octaves\": ").append(num(r.spanOctaves)).append(",\n")
-        sb.append("    \"span_cents\": ").append(num(r.spanCents)).append(",\n")
-        sb.append("    \"full_octaves\": ").append(r.fullOctaves).append(",\n")
-        sb.append("    \"rest_semitones\": ").append(num(r.restSemitones)).append(",\n")
-        sb.append("    \"quarter_tones\": ").append(num(r.quarterTones)).append(",\n")
-        sb.append("    \"of_octave_pct\": ").append(num(r.ofOctavePct)).append(",\n")
-        sb.append("    \"center_note\": \"").append(esc(r.centerName)).append("\",\n")
-        sb.append("    \"center_hz\": ").append(num(r.centerHz)).append("\n")
+        sb.append("    \"span_semitones\": ").append(num(mspan?.spanSemitones ?: r.spanSemitones)).append(",\n")
+        sb.append("    \"span_octaves\": ").append(num(mspan?.spanOctaves ?: r.spanOctaves)).append(",\n")
+        sb.append("    \"span_cents\": ").append(num(mspan?.spanCents ?: r.spanCents)).append(",\n")
+        sb.append("    \"full_octaves\": ").append(mspan?.fullOctaves ?: r.fullOctaves).append(",\n")
+        sb.append("    \"rest_semitones\": ").append(num(mspan?.restSemitones ?: r.restSemitones)).append(",\n")
+        sb.append("    \"quarter_tones\": ").append(num(mspan?.quarterTones ?: r.quarterTones)).append(",\n")
+        sb.append("    \"of_octave_pct\": ").append(num(mspan?.ofOctavePct ?: r.ofOctavePct)).append(",\n")
+        sb.append("    \"center_note\": \"").append(esc(mspan?.centerName ?: r.centerName)).append("\",\n")
+        sb.append("    \"center_hz\": ").append(num(mspan?.centerHz ?: r.centerHz)).append("\n")
         sb.append("  },\n")
 
         // ── جزئیات قابل‌ردیابی محدوده (افزودنی) — هر مقدار با Hz/زمان/سنت/تداوم/کیفیت ──
@@ -181,6 +191,18 @@ object Json {
         sb.append("\"quality\": ").append(num(e.qualityScore, 3)).append(", ")
         sb.append("\"frames\": ").append(e.frameCount).append(", ")
         sb.append("\"stable\": ").append(e.stable).append("}")
+        return sb.toString()
+    }
+
+    /** مقدار دستیِ کاربر: نامِ نزدیک‌ترین نت + Hz واقعی؛ چیزهایی که موتور نمی‌داند صادقانه null */
+    private fun manualExtremumJson(hz: Double): String {
+        val sb = StringBuilder()
+        sb.append("{\"note\": \"").append(esc(PitchMath.noteNameAscii(hz))).append("\", ")
+        sb.append("\"f0_hz\": ").append(num(hz, 4)).append(", ")
+        sb.append("\"note_midi\": ").append(num(PitchMath.hzToMidi(hz), 4)).append(", ")
+        sb.append("\"cents_off_note\": ").append(num(PitchMath.centsOffPitch(hz), 1)).append(", ")
+        sb.append("\"manual\": true, ")
+        sb.append("\"start\": null, \"duration\": null, \"confidence\": null}")
         return sb.toString()
     }
 

@@ -47,7 +47,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.2.1-pitchv1"
+        const val VERSION = "1.2.2-pitchv1"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -95,6 +95,11 @@ class MainActivity : Activity() {
     private var pickUri: Uri? = null
     private var videoFile: java.io.File? = null
     private var lastElapsedMs = 0L
+
+    // ── محدودهٔ دستی (درگ خط‌چین‌های بالاترین/پایین‌ترین روی نمودار) ─────
+    private var manualHighHz: Double? = null
+    private var manualLowHz: Double? = null
+    private var binds: RangeBinds? = null
     private var chartRef: ChartView? = null
     private var audioBar: AudioPlayerBar? = null
     private lateinit var fileLabel: TextView
@@ -823,17 +828,68 @@ class MainActivity : Activity() {
             " · کیفیت ${PitchMath.faFixed(e.qualityScore * 100.0, 0)}٪"
     }
 
+    /**
+     * به‌روزرسانی پویای همهٔ نماها و مقادیر مشتق، هنگام درگ خط‌چین‌ها.
+     * همه چیز از (manualHighHz, manualLowHz) بازمحاسبه می‌شود؛ آمارِ تحلیلِ
+     * خودکار (جزئیات محدوده) عمداً دست‌نخورده می‌ماند.
+     */
+    private fun applyManualRange() {
+        val b = binds ?: return
+        val rep = report ?: return
+        val hi = manualHighHz ?: rep.highest?.f0
+        val lo = manualLowHz ?: rep.lowest?.f0
+        if (hi == null || lo == null || hi <= 0 || lo <= 0 || hi <= lo) return
+        val sp = ir.hamyareqari.dsp.RangeMath.span(hi, lo)
+
+        // سلول‌های قهرمان (نامِ نزدیک‌ترین نت + Hz واقعی + سلفژ)
+        b.heroHi.nameTv.text = PitchMath.noteName(hi)
+        b.heroHi.hzTv.text = "${PitchMath.faFixed(hi, 1)} هرتز"
+        b.heroHi.solfTv.text = PitchMath.solfege(hi)
+        b.heroLo.nameTv.text = PitchMath.noteName(lo)
+        b.heroLo.hzTv.text = "${PitchMath.faFixed(lo, 1)} هرتز"
+        b.heroLo.solfTv.text = PitchMath.solfege(lo)
+
+        // گستره و مرکز
+        b.spanBig.text = PitchMath.faFixed(sp.spanSemitones, 1)
+        b.rangeText.text = if (sp.fullOctaves > 0)
+            "${PitchMath.faDigits(sp.fullOctaves)} اکتاو و ${PitchMath.faFixed(sp.restSemitones, 1)} نیم‌پرده"
+        else "${PitchMath.faFixed(sp.spanSemitones, 1)} نیم‌پرده"
+        b.centerText.text = "مرکز صدا: ${sp.centerName} (${PitchMath.faFixed(sp.centerHz, 0)} هرتز)"
+
+        // آمار مشتق (همهٔ واحدها)
+        b.statTvs["پرده"]?.text = PitchMath.faFixed(sp.spanSemitones / 2.0, 1)
+        b.statTvs["اکتاو"]?.text = PitchMath.faFixed(sp.spanOctaves, 2)
+        b.statTvs["سنت"]?.text = PitchMath.faFixed(sp.spanCents, 0)
+        b.statTvs["ربع‌پرده"]?.text = PitchMath.faFixed(sp.quarterTones, 1)
+        b.statTvs["درصد از یک اکتاو"]?.text = PitchMath.faFixed(sp.ofOctavePct, 0) + "٪"
+        b.statTvs["درجه (اکتاو = ۸ درجه)"]?.text = PitchMath.spanInDegrees(sp.spanSemitones).text
+
+        // نوار گستره
+        b.strip.lowMidi = PitchMath.nearestMidi(lo)
+        b.strip.highMidi = PitchMath.nearestMidi(hi)
+        b.strip.invalidate()
+
+        // بنر محدودهٔ دستی
+        b.manualRow.visibility = View.VISIBLE
+    }
+
     // ───────────────────────────── نمایش نتیجه ─────────────────────────────
 
     private fun renderReport(r: Report, elapsedMs: Long) {
         resultBox.removeAllViews()
+        // هر تحلیل تازه یا «بازگشت به خودکار»: محدودهٔ دستی پاک می‌شود
+        manualHighHz = null
+        manualLowHz = null
+        binds = null
 
         // کارت قهرمان: بالاترین/پایین‌ترین/گستره
         val hero = Theme.card(this)
         val topRow = Theme.row(this)
-        topRow.addView(heroCell("بالاترین نت", r.highest?.name ?: "—", r.highest?.f0, Theme.GOLD), weight(1f))
+        val heroHi = heroCell("بالاترین نت", r.highest?.name ?: "—", r.highest?.f0, Theme.GOLD)
+        val heroLo = heroCell("پایین‌ترین نت", r.lowest?.name ?: "—", r.lowest?.f0, Theme.TEAL)
+        topRow.addView(heroHi.view, weight(1f))
         topRow.addView(Theme.space(this, 8f))
-        topRow.addView(heroCell("پایین‌ترین نت", r.lowest?.name ?: "—", r.lowest?.f0, Theme.TEAL), weight(1f))
+        topRow.addView(heroLo.view, weight(1f))
         hero.addView(topRow)
         hero.addView(Theme.divider(this))
 
@@ -867,7 +923,17 @@ class MainActivity : Activity() {
         rangeRow.addView(rightCol, weight(1.4f))
         hero.addView(rangeRow)
 
-        hero.addView(Theme.space(this, 10f))
+        // بنر محدودهٔ دستی + بازگشت به حالت خودکار (فوق نوار گستره)
+        val manualRow = Theme.row(this)
+        val manualTag = Theme.text(this, "⚙ محدوده به‌صورت دستی تنظیم شده (خط‌چین‌ها را بکشید)", 11f, Theme.GOLD2, true)
+        val resetBtn = Theme.text(this, "↺ بازگشت به خودکار", 11f, Theme.TEAL, true)
+        manualRow.addView(manualTag, weight(1f))
+        manualRow.addView(resetBtn)
+        manualRow.visibility = View.GONE
+        hero.addView(manualRow)
+        hero.addView(Theme.space(this, 6f))
+
+        hero.addView(Theme.space(this, 4f))
         val strip = RangeStripView(this)
         strip.lowMidi = r.lowest?.midi ?: -1
         strip.highMidi = r.highest?.midi ?: -1
@@ -891,15 +957,20 @@ class MainActivity : Activity() {
         stats.addView(Theme.space(this, 8f))
         val grid = LinearLayout(this)
         grid.orientation = LinearLayout.VERTICAL
-        grid.addView(statLine("پرده", PitchMath.faFixed(r.spanSemitones / 2.0, 1)))
-        grid.addView(statLine("اکتاو", PitchMath.faFixed(r.spanOctaves, 2)))
-        grid.addView(statLine("سنت", PitchMath.faFixed(r.spanCents, 0)))
-        grid.addView(statLine("ربع‌پرده", PitchMath.faFixed(r.quarterTones, 1)))
-        grid.addView(statLine("درصد از یک اکتاو", PitchMath.faFixed(r.ofOctavePct, 0) + "٪"))
-        grid.addView(statLine("درجه (اکتاو = ۸ درجه)", PitchMath.spanInDegrees(r.spanSemitones).text))
-        grid.addView(statLine("نت‌های خوانده‌شده", PitchMath.faDigits(r.noteCount)))
-        grid.addView(statLine("مدت خواندن", PitchMath.faFixed(r.sungSec, 0) + " از " + PitchMath.faFixed(r.durationSec, 0) + " ثانیه"))
-        grid.addView(statLine("مکث‌ها (≥۰٫۳ ثانیه)", PitchMath.faDigits(r.pauseCount) + " · بلندترین " + PitchMath.faFixed(r.longestPause, 1) + " ثانیه"))
+        // سطرهای مشتق از محدوده — با ارجاع مقدار تا با درگ خط‌چین‌ها پویا به‌روز شوند
+        val statTvs = HashMap<String, android.widget.TextView>()
+        fun statRow(label: String, value: String, derived: Boolean) {
+            grid.addView(statLine(label, value) { tv -> if (derived) statTvs[label] = tv })
+        }
+        statRow("پرده", PitchMath.faFixed(r.spanSemitones / 2.0, 1), true)
+        statRow("اکتاو", PitchMath.faFixed(r.spanOctaves, 2), true)
+        statRow("سنت", PitchMath.faFixed(r.spanCents, 0), true)
+        statRow("ربع‌پرده", PitchMath.faFixed(r.quarterTones, 1), true)
+        statRow("درصد از یک اکتاو", PitchMath.faFixed(r.ofOctavePct, 0) + "٪", true)
+        statRow("درجه (اکتاو = ۸ درجه)", PitchMath.spanInDegrees(r.spanSemitones).text, true)
+        statRow("نت‌های خوانده‌شده", PitchMath.faDigits(r.noteCount), false)
+        statRow("مدت خواندن", PitchMath.faFixed(r.sungSec, 0) + " از " + PitchMath.faFixed(r.durationSec, 0) + " ثانیه", false)
+        statRow("مکث‌ها (≥۰٫۳ ثانیه)", PitchMath.faDigits(r.pauseCount) + " · بلندترین " + PitchMath.faFixed(r.longestPause, 1) + " ثانیه", false)
         if (r.validShare > 0.0) {
             grid.addView(
                 statLine(
@@ -964,13 +1035,30 @@ class MainActivity : Activity() {
         val chartCard = Theme.card(this)
         chartCard.addView(Theme.text(this, "ردِّ صدا", 13.5f, Theme.TXT, true))
         chartCard.addView(
-            Theme.text(this, "روی نمودار بزنید تا از همان لحظه پخش شود", 11f, Theme.DIM)
+            Theme.text(this, "روی نمودار بزنید تا از همان لحظه پخش شود · خط‌چین‌های بالا/پایین را بکشید تا محدوده دستی تنظیم شود", 11f, Theme.DIM)
         )
         chartCard.addView(Theme.space(this, 6f))
         val chart = ChartView(this)
         chart.setReport(r)
+        // درگ خط‌چین‌ها: فقط در نمودارِ نتیجه (فایل/ضبط) — نه زنده
+        chart.rangesDraggable = true
+        chart.onRangeDrag = { isHigh, hz ->
+            if (isHigh) manualHighHz = hz else manualLowHz = hz
+            applyManualRange()
+        }
         chart.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(this, 210f))
         chartCard.addView(chart)
+
+        binds = RangeBinds(
+            heroHi = heroHi, heroLo = heroLo,
+            spanBig = big, rangeText = rangeText, centerText = centerText,
+            strip = strip, statTvs = statTvs,
+            manualRow = manualRow, resetBtn = resetBtn
+        )
+        resetBtn.setOnClickListener {
+            val rep = report ?: return@setOnClickListener
+            renderReport(rep, lastElapsedMs) // شروع renderReport محدودهٔ دستی را پاک می‌کند
+        }
 
         // ══ پخش‌کنندهٔ صوتی ══
         val playerBar = AudioPlayerBar(this)
@@ -1312,7 +1400,28 @@ class MainActivity : Activity() {
         ticker = null
     }
 
-    private fun heroCell(title: String, note: String, hz: Double?, color: Int): LinearLayout {
+    /** سلول قهرمان — به‌همراه ارجاع TextViewها برای به‌روزرسانی پویای محدودهٔ دستی */
+    private class HeroCell(
+        val view: LinearLayout,
+        val nameTv: android.widget.TextView,
+        val hzTv: android.widget.TextView,
+        val solfTv: android.widget.TextView
+    )
+
+    /** ارجاع همهٔ نماهایی که با تغییر محدودهٔ دستی باید پویا به‌روز شوند */
+    private class RangeBinds(
+        val heroHi: HeroCell,
+        val heroLo: HeroCell,
+        val spanBig: android.widget.TextView,
+        val rangeText: android.widget.TextView,
+        val centerText: android.widget.TextView,
+        val strip: RangeStripView,
+        val statTvs: HashMap<String, android.widget.TextView>,
+        val manualRow: View,
+        val resetBtn: android.widget.TextView
+    )
+
+    private fun heroCell(title: String, note: String, hz: Double?, color: Int): HeroCell {
         val c = LinearLayout(this)
         c.orientation = LinearLayout.VERTICAL
         c.gravity = Gravity.CENTER_HORIZONTAL
@@ -1320,18 +1429,25 @@ class MainActivity : Activity() {
         c.background = Theme.rounded(Theme.withAlpha(color, 0.08f), Theme.dpF(this, 14f), 1, Theme.withAlpha(color, 0.30f))
         c.addView(Theme.text(this, title, 11f, Theme.DIM, false, Gravity.CENTER))
         c.addView(Theme.space(this, 2f))
-        c.addView(Theme.text(this, note, 27f, color, true, Gravity.CENTER))
-        if (hz != null && hz > 0) {
-            c.addView(Theme.text(this, "${PitchMath.faFixed(hz, 1)} هرتز", 10.5f, Theme.DIM, false, Gravity.CENTER))
-            c.addView(Theme.text(this, PitchMath.solfege(hz), 10.5f, Theme.withAlpha(color, 0.8f), true, Gravity.CENTER))
-        }
-        return c
+        val nameTv = Theme.text(this, note, 27f, color, true, Gravity.CENTER)
+        c.addView(nameTv)
+        val hzTv = Theme.text(this, if (hz != null && hz > 0) "${PitchMath.faFixed(hz, 1)} هرتز" else "", 10.5f, Theme.DIM, false, Gravity.CENTER)
+        val solfTv = Theme.text(this, if (hz != null && hz > 0) PitchMath.solfege(hz) else "", 10.5f, Theme.withAlpha(color, 0.8f), true, Gravity.CENTER)
+        c.addView(hzTv)
+        c.addView(solfTv)
+        return HeroCell(c, nameTv, hzTv, solfTv)
     }
 
-    private fun statLine(label: String, value: String): View {
+    private fun statLine(
+        label: String,
+        value: String,
+        onValue: ((android.widget.TextView) -> Unit)? = null
+    ): View {
         val r = Theme.row(this)
         r.addView(Theme.text(this, label, 12f, Theme.DIM), weight(1f))
-        r.addView(Theme.text(this, value, 12.5f, Theme.TXT, true, Gravity.END), weight(1f))
+        val v = Theme.text(this, value, 12.5f, Theme.TXT, true, Gravity.END)
+        onValue?.invoke(v)
+        r.addView(v, weight(1f))
         val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         lp.bottomMargin = Theme.dp(this, 5f)
         r.layoutParams = lp
@@ -1597,10 +1713,15 @@ class MainActivity : Activity() {
 
     private fun doExportPng(r: Report, chart: ChartView) {
         try {
+            // با محدودهٔ دستی، سربرگ تصویر هم از مقادیر دستی ساخته می‌شود
+            val msp = if (manualHighHz != null && manualLowHz != null)
+                ir.hamyareqari.dsp.RangeMath.span(manualHighHz!!, manualLowHz!!) else null
+            val hiName = manualHighHz?.let { PitchMath.noteName(it) } ?: (r.highest?.name ?: "—")
+            val loName = manualLowHz?.let { PitchMath.noteName(it) } ?: (r.lowest?.name ?: "—")
             val lines = listOf(
-                "بالاترین: ${r.highest?.name ?: "—"}   ·   پایین‌ترین: ${r.lowest?.name ?: "—"}",
-                "گستره: ${PitchMath.faFixed(r.spanSemitones, 1)} نیم‌پرده (${PitchMath.faFixed(r.spanOctaves, 2)} اکتاو)",
-                "مرکز صدا: ${r.centerName} · ${r.noteCount} نت · ${PitchMath.faFixed(r.durationSec, 0)} ثانیه"
+                "بالاترین: $hiName   ·   پایین‌ترین: $loName",
+                "گستره: ${PitchMath.faFixed(msp?.spanSemitones ?: r.spanSemitones, 1)} نیم‌پرده (${PitchMath.faFixed(msp?.spanOctaves ?: r.spanOctaves, 2)} اکتاو)",
+                "مرکز صدا: ${msp?.centerName ?: r.centerName} · ${r.noteCount} نت · ${PitchMath.faFixed(r.durationSec, 0)} ثانیه"
             )
             val bmp = chart.renderToBitmap(1600, 2400, "ردِّ صدا — ${sourceName}", lines)
             val saved = Persistence.saveBitmap(this, bmp, Persistence.safeName("همیار-قاری-${baseName()}", "png"))
@@ -1614,7 +1735,8 @@ class MainActivity : Activity() {
 
     private fun doExportJson(r: Report, share: Boolean) {
         try {
-            val json = Json.report(r, sourceName, VERSION, lastSamples)
+            // مقادیر دستی (درگ خط‌چین‌ها) در خروجی JSON هم اعمال می‌شوند
+            val json = Json.report(r, sourceName, VERSION, lastSamples, manualHighHz, manualLowHz)
             val saved = Persistence.saveJson(this, json, Persistence.safeName("همیار-قاری-${baseName()}", "json"))
             if (share) Persistence.share(this, saved) else toast("✅ ذخیره شد: ${saved.displayPath}")
         } catch (e: Exception) {

@@ -4,6 +4,7 @@ import ir.hamyareqari.dsp.Analyzer
 import ir.hamyareqari.dsp.Engine
 import ir.hamyareqari.dsp.Json
 import ir.hamyareqari.dsp.PitchMath
+import ir.hamyareqari.dsp.RangeMath
 import ir.hamyareqari.dsp.ShortSignal
 import ir.hamyareqari.dsp.Wav
 import java.io.File
@@ -542,6 +543,18 @@ object PitchRangeTest {
             js.contains("\"absolute_low\""), "JSON جزئیات قابل‌ردیابی را دارد", "keys ok")
         check(!js.contains("NaN") && !js.contains("Infinity"), "JSON بدون NaN/Infinity", "ok")
 
+        // خروجی JSON با محدودهٔ دستیِ کاربر (override درگ خط‌چین‌ها)
+        val jsManual = Json.report(rep, "demo", "test", null, 880.0, 220.0)
+        check(jsManual.contains("\"source\": \"manual\"") && jsManual.contains("\"manual\": true"),
+            "JSON محدودهٔ دستی را نشان می‌دهد", "source=manual")
+        check(jsManual.contains("\"raw_highest\"") && jsManual.contains("\"range_details\""),
+            "ردِّ خودکار موتور در کنار مقدار دستی حفظ می‌شود", "raw+details ok")
+        check(!jsManual.contains("NaN") && !jsManual.contains("Infinity"),
+            "JSON دستی بدون NaN/Infinity", "ok")
+        val jsAuto = Json.report(rep, "demo", "test", null)
+        check(jsAuto.contains("\"source\": \"auto\"") && !jsAuto.contains("\"manual\": true"),
+            "بدون override برچسب auto می‌خورد", "source=auto")
+
         // یکسانی منطق streaming (زنده) با batch (فایل) روی همان داده
         val curve = captured
         if (curve != null) {
@@ -569,6 +582,30 @@ object PitchRangeTest {
         metricLine.add("D1: demo.wav — stable=[${fa(sl?.f0Hz ?: 0.0, 1)}..${fa(sh?.f0Hz ?: 0.0, 1)}]Hz (رفتاری، بدون GT)")
     }
 
+    /** R1 — محاسبات گسترهٔ دستی (RangeMath): فرمول‌های مشتقِ محدودهٔ درگ‌شده */
+    private fun m01() {
+        println("\n── R1 محاسبات گسترهٔ دستی (RangeMath) ──")
+        val sp = RangeMath.span(440.0, 220.0)
+        check(abs(sp.spanSemitones - 12.0) < 1e-9, "۱۲ نیم‌پرده دقیق (۴۴۰/۲۲۰)", "span=${fa(sp.spanSemitones, 6)}")
+        check(sp.fullOctaves == 1 && abs(sp.restSemitones) < 1e-9,
+            "۱ اکتاو تمام + باقی‌مانده صفر", "oct=${sp.fullOctaves} rest=${fa(sp.restSemitones, 6)}")
+        check(abs(sp.spanOctaves - 1.0) < 1e-9 && abs(sp.quarterTones - 24.0) < 1e-9,
+            "اکتاو و ربع‌پرده", "oct=${fa(sp.spanOctaves, 6)} qt=${fa(sp.quarterTones, 3)}")
+        check(abs(sp.ofOctavePct - 100.0) < 1e-9, "درصد از اکتاو", "${fa(sp.ofOctavePct, 3)}")
+        check(abs(sp.centerHz - sqrt(440.0 * 220.0)) < 1e-9, "مرکز هندسی (√(hi·lo))", "${fa(sp.centerHz, 3)}")
+        // ورودی جابه‌جا (hi<lo) نباید خروجی را خراب کند
+        val sp2 = RangeMath.span(220.0, 440.0)
+        check(abs(sp2.spanSemitones - 12.0) < 1e-9, "جابه‌جایی hi/lo ایمن", "span=${fa(sp2.spanSemitones, 6)}")
+        // مقدار آزاد سنتی (درگ بدون قفل نیم‌پرده): ۵۰ سنت بالای ۲۲۰ → ۱۱٫۵ نیم‌پرده
+        val lo = 220.0 * 2.0.pow(50.0 / 1200.0)
+        val sp3 = RangeMath.span(440.0, lo)
+        check(abs(sp3.spanSemitones - 11.5) < 1e-6, "گسترهٔ سنتی آزاد (۱۱٫۵ نیم‌پرده)", "span=${fa(sp3.spanSemitones, 6)}")
+        check(sp3.fullOctaves == 0 && abs(sp3.restSemitones - 11.5) < 1e-6,
+            "باقی‌ماندهٔ ۱۱٫۵ نیم‌پرده", "rest=${fa(sp3.restSemitones, 6)}")
+        check(abs(sp3.quarterTones - 23.0) < 1e-6, "ربع‌پردهٔ ۲۳", "qt=${fa(sp3.quarterTones, 3)}")
+        metricLine.add("R1: RangeMath — 12.000s/1oct exact · 11.500s free-cents ok")
+    }
+
     private fun shortPcm(x: DoubleArray): ShortArray {
         val out = ShortArray(x.size)
         for (i in x.indices) {
@@ -586,6 +623,7 @@ object PitchRangeTest {
         s01(); s02(); s03(); s04(); s05(); s06(); s07(); s08(); s09()
         s10(); s11(); s12(); s13(); s14(); s15()
         d01()
+        m01()
 
         println("\n── جدول معیارها ──")
         for (m in metricLine) println("  • $m")
