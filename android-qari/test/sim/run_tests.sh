@@ -17,7 +17,7 @@ mkdir -p "$OUT"
   "$ROOT"/src/ir/hamyareqari/app/ChartView.kt \
   "$ROOT"/src/ir/hamyareqari/app/VideoMaker.kt \
   "$DIR"/stubs/*.kt "$DIR"/VideoTest.kt "$DIR"/LongTest.kt "$DIR"/ZoomFollowTest.kt \
-  "$DIR"/PitchV1Test.kt "$DIR"/PipelineTest.kt 2>&1 | grep -v '^warning:' || true
+  "$DIR"/PitchV1Test.kt "$DIR"/PipelineTest.kt "$DIR"/PitchRangeTest.kt 2>&1 | grep -v '^warning:' || true
 
 cd "$DIR"
 echo "── تست کوتاه (چهار پروفایل دستگاه) ──"
@@ -43,3 +43,7 @@ echo "── تست‌های واحد لولهٔ V1 (gate/stabilizer/resampler/f
 echo
 echo "── آزمون سناریوهای موتور V1 (معیارهای دقت/نویز/تحریر/تأخیر) ──"
 "$JAVA" -Xmx2g -Dstdout.encoding=UTF-8 -cp "$OUT:$STDLIB" ir.hamyareqari.dsp.pitch.PitchV1Test
+echo
+echo "── آزمون محدودهٔ صوتی (۱۵ سناریوی GT + demo.wav) ──"
+"$JAVA" -Xmx2g -Dstdout.encoding=UTF-8 -Ddemo.wav="$DIR/../../assets/demo.wav" \
+         -cp "$OUT:$STDLIB" ir.hamyareqari.dsp.pitch.PitchRangeTest
