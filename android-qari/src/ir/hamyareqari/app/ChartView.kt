@@ -510,6 +510,21 @@ class ChartView(context: Context) : View(context) {
     private fun pitchLimits(
         spec: TraceSpec, mids: DoubleArray, t0: Double, t1: Double, nowT: Double
     ): DoubleArray {
+        val lim = pitchLimitsRaw(spec, mids, t0, t1, nowT)
+        // خط‌های دستی/خودکارِ محدوده همیشه داخل دید بمانند (با کمی فاصله)
+        val eHi = effHighMidi(spec)
+        val eLo = effLowMidi(spec)
+        if (eHi.isNaN() && eLo.isNaN()) return lim
+        var lo = lim[0]
+        var hi = lim[1]
+        if (!eLo.isNaN() && eLo - 1.0 < lo) lo = eLo - 1.0
+        if (!eHi.isNaN() && eHi + 1.0 > hi) hi = eHi + 1.0
+        return doubleArrayOf(lo, hi)
+    }
+
+    private fun pitchLimitsRaw(
+        spec: TraceSpec, mids: DoubleArray, t0: Double, t1: Double, nowT: Double
+    ): DoubleArray {
         val all = ArrayList<Double>(mids.size)
         for (m in mids) if (!m.isNaN()) all.add(m)
         if (all.isEmpty()) return doubleArrayOf(48.0, 60.0)
@@ -1352,10 +1367,7 @@ class ChartView(context: Context) : View(context) {
                             val hiM = effHighMidi(sp)
                             if (!hiM.isNaN() && midi > hiM - 0.2) midi = hiM - 0.2
                         }
-                        // داخل پنجرهٔ دید نگه می‌داریم تا مقیاس Y با تغییر مقدار
-                        // دستی باز-اندازه‌گیری نشود و خط دقیقاً زیر انگشت بماند
-                        // (پنجره، همهٔ نت‌های خوانده‌شده + حاشیه را می‌پوشاند)
-                        midi = midi.coerceIn(gNow.loLim, gNow.hiLim)
+                        midi = midi.coerceIn(12.0, 108.0)
                         val hz = PitchMath.midiToHz(midi)
                         if (dragWhich == 1) overrideHighMidi = midi else overrideLowMidi = midi
                         invalidateFrameCaches()
