@@ -14,8 +14,8 @@ BUILD="$DIR/build"
 OUT="$ROOT/release"
 TOOLS="${ANDROID_TOOLS:-/tmp/android}"
 
-VERSION_NAME="${VERSION_NAME:-1.2.4-pitchv1}"
-VERSION_CODE="${VERSION_CODE:-13}"
+VERSION_NAME="${VERSION_NAME:-1.2.5-pitchv1}"
+VERSION_CODE="${VERSION_CODE:-14}"
 MIN_SDK="${MIN_SDK:-26}"
 TARGET_SDK="${TARGET_SDK:-34}"
 SHRINK="${SHRINK:-0}"
@@ -78,7 +78,7 @@ find "$DIR/src" -name '*.kt' > "$BUILD/sources.txt"
   -no-reflect -jvm-target 1.8 -nowarn \
   -classpath "$TOOLS/android.jar:$KOTLIN_STDLIB" \
   -d "$BUILD/classes" \
-  @"$BUILD/sources.txt" 2>&1 | grep -v "^warning:" | grep -v "WARNING:" || true
+  @"$BUILD/sources.txt"
 if ! find "$BUILD/classes" -name '*.class' | grep -q .; then
   echo "✖ کامپایل شکست خورد" >&2
   exit 1

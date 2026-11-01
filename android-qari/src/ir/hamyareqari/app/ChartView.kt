@@ -26,6 +26,75 @@ import kotlin.math.min
 /** یک نت برای نمایش روی نمودار */
 class TraceNote(val start: Double, val duration: Double, val midi: Double)
 
+/** Display-only evidence policy. Status VALID is measured; ESTIMATED is not
+ * independent acoustic evidence. With no status array, finite samples are the
+ * only available evidence (legacy reports). Durations are seconds, MIDI in
+ * semitones. Decisions never alter the analysis report. */
+internal object DisplayNoteValidator {
+    private const val MAX_DIFFERENCE = 1.5 // 150 cents from the measured contour
+    private const val MAX_SAMPLE_GAP = 0.09
+    private const val MIN_COVERAGE = 0.02
+    private const val MIN_FRACTION = 0.4
+    enum class Decision { SUPPORTED, PARTIALLY_SUPPORTED, UNSUPPORTED, INDETERMINATE }
+    data class Diagnostic(val note: TraceNote, val decision: Decision, val validCount: Int,
+        val medianMidi: Double?, val differenceCents: Double?, val pieces: List<TraceNote>)
+    data class Result(val notes: List<TraceNote>, val diagnostics: List<Diagnostic>)
+
+    fun validate(sp: TraceSpec, clean: DoubleArray): Result {
+        val output = ArrayList<TraceNote>()
+        val diagnostics = ArrayList<Diagnostic>()
+        for (note in sp.notes) {
+            if (!note.start.isFinite() || !note.duration.isFinite() || note.duration <= 0 ||
+                !note.midi.isFinite() || !(note.start + note.duration).isFinite()) {
+                diagnostics.add(Diagnostic(note, Decision.INDETERMINATE, 0, null, null, emptyList()))
+                continue
+            }
+            val end = note.start + note.duration
+            var lo = 0; var hi = sp.times.size
+            while (lo < hi) { val mid = (lo + hi) ushr 1; if (sp.times[mid] < note.start) lo = mid + 1 else hi = mid }
+            val reliable = ArrayList<Double>()
+            val pieces = ArrayList<TraceNote>()
+            val runTimes = ArrayList<Double>()
+            val runMidi = ArrayList<Double>()
+            fun finishRun() {
+                if (runTimes.size >= 2 && runTimes.last() - runTimes.first() >= min(MIN_COVERAGE, note.duration * MIN_FRACTION)) {
+                    val sorted = runMidi.sorted()
+                    val m = sorted[sorted.size / 2]
+                    // Bound annotations to supported frames; no bar across silence.
+                    pieces.add(TraceNote(runTimes.first(), runTimes.last() - runTimes.first(), m))
+                }
+                runTimes.clear(); runMidi.clear()
+            }
+            var i = lo
+            while (i < sp.times.size && sp.times[i] <= end) {
+                val t = sp.times[i]
+                val m = clean.getOrNull(i) ?: Double.NaN
+                val raw = sp.mids.getOrNull(i) ?: Double.NaN
+                val good = m.isFinite() && raw.isFinite() &&
+                    (sp.status == null || sp.status.getOrNull(i) == PitchCurve.VALID)
+                if (good) reliable.add(m)
+                if (good && abs(m - note.midi) <= MAX_DIFFERENCE && abs(raw - m) <= MAX_DIFFERENCE) {
+                    if (runTimes.isNotEmpty() && t - runTimes.last() > MAX_SAMPLE_GAP) finishRun()
+                    runTimes.add(t); runMidi.add(m)
+                } else finishRun()
+                i++
+            }
+            finishRun()
+            val median = if (reliable.isEmpty()) null else reliable.sorted()[reliable.size / 2]
+            val decision = when {
+                pieces.isEmpty() && reliable.size < 2 -> Decision.INDETERMINATE
+                pieces.isEmpty() -> Decision.UNSUPPORTED
+                pieces.size == 1 && pieces[0].duration >= note.duration * 0.8 -> Decision.SUPPORTED
+                else -> Decision.PARTIALLY_SUPPORTED
+            }
+            output.addAll(pieces)
+            diagnostics.add(Diagnostic(note, decision, reliable.size, median,
+                median?.let { (note.midi - it) * 100.0 }, pieces))
+        }
+        return Result(output, diagnostics)
+    }
+}
+
 /**
  * دادهٔ کامل نمودار «ردِّ صدا» — همان ورودیِ رندرر نسخهٔ ۱٫۳٫۹
  * (times / mids / notes / range / duration)
@@ -208,8 +277,34 @@ class ChartView(context: Context) : View(context) {
 
     // ───────────────────────────── ورودی داده ─────────────────────────────
 
+    /** Keep source order; never sort malformed timestamps into a fabricated melody.
+     * A bad timestamp breaks the contour instead of joining unrelated samples. */
+    private fun normalizeTrace(source: TraceSpec): TraceSpec {
+        val ts = ArrayList<Double>()
+        val ms = ArrayList<Double>()
+        val statuses = ArrayList<Byte>()
+        var broken = false
+        for (i in 0 until min(source.times.size, source.mids.size)) {
+            val t = source.times[i]
+            val m = source.mids[i]
+            if (!t.isFinite() || t < 0.0 || (ts.isNotEmpty() && t - ts.last() < 0.000001)) {
+                // Conflicting duplicate/backwards data has no defensible ordering.
+                if (ts.isNotEmpty()) ms[ms.lastIndex] = Double.NaN
+                broken = true
+                continue
+            }
+            ts.add(t)
+            ms.add(if (broken || !m.isFinite()) Double.NaN else m)
+            statuses.add(source.status?.getOrNull(i) ?: PitchCurve.VALID)
+            broken = false
+        }
+        return TraceSpec(ts.toDoubleArray(), ms.toDoubleArray(), source.notes,
+            source.duration, source.highMidi, source.lowMidi, source.spanSemitones,
+            if (source.status == null) null else statuses.toByteArray())
+    }
+
     fun setReport(r: Report) {
-        spec = TraceSpec.from(r)
+        spec = normalizeTrace(TraceSpec.from(r))
         live = false
         invalidateFrameCaches()
         invalidate()
@@ -223,11 +318,11 @@ class ChartView(context: Context) : View(context) {
             t[i] = times[i]
             m[i] = mids[i]
         }
-        spec = TraceSpec(
+        spec = normalizeTrace(TraceSpec(
             times = t, mids = m, notes = emptyList(),
-            duration = if (n > 0) t[n - 1] else 1.0,
+            duration = t.filter { it.isFinite() && it >= 0.0 }.maxOrNull() ?: 1.0,
             highMidi = Double.NaN, lowMidi = Double.NaN, spanSemitones = 0.0
-        )
+        ))
         invalidateFrameCaches()
         invalidate()
     }
@@ -293,205 +388,67 @@ class ChartView(context: Context) : View(context) {
         return max(0.5, total / timeZoom)
     }
 
+    private var displaySpec: TraceSpec? = null
+    private var displayMids: DoubleArray = doubleArrayOf()
+    private var displayResult = DisplayNoteValidator.Result(emptyList(), emptyList())
+    private fun displayData(sp: TraceSpec): Pair<DoubleArray, DisplayNoteValidator.Result> {
+        if (displaySpec !== sp) {
+            displayMids = cleanMids(sp.times, sp.mids)
+            displayResult = DisplayNoteValidator.validate(sp, displayMids)
+            displaySpec = sp
+        }
+        return displayMids to displayResult
+    }
+
     // ───────────────────────────── محاسبات ─────────────────────────────
 
     // ── پاک‌سازیِ منحنی برای «رسم» (دادهٔ گزارش دست‌نخورده می‌ماند) ──────
     // همان پنج پاسِ رندرر نسخهٔ ۱٫۳٫۹: پرشِ اکتاوی، گشتِ کوتاه، تیغِ تک‌فریمی،
     // سقفِ سرعتِ تغییر گام، و صافیِ میانه.
 
-    private fun medianOf(vals: DoubleArray): Double {
-        val a = vals.sortedArray()
-        return a[a.size / 2]
-    }
-
-    private fun rollingMedian(mids: DoubleArray, half: Int): DoubleArray {
-        val n = mids.size
-        val out = DoubleArray(n) { Double.NaN }
-        for (i in 0 until n) {
-            val vals = ArrayList<Double>(2 * half + 1)
-            for (j in max(0, i - half)..min(n - 1, i + half)) {
-                val v = mids[j]
-                if (!v.isNaN()) vals.add(v)
-            }
-            if (vals.isNotEmpty()) out[i] = medianOf(vals.toDoubleArray())
-        }
-        return out
-    }
-
+    /** Reject only an unsupported isolated excursion bracketed by matching pitches.
+     * Preserve sustained changes and short ornaments; never modify the report itself. */
     private fun cleanMids(times: DoubleArray, mids: DoubleArray): DoubleArray {
-        val n = mids.size
-        if (n == 0) return mids
-        val orig = mids.copyOf()
-        val level = rollingMedian(mids, 25)
         val out = mids.copyOf()
-
-        // ── پاس ۱: «گشتِ» کوتاه دور از سطحِ محلی حذف/درون‌یابی می‌شود ──
+        for (i in 1 until min(times.size, mids.size) - 1) {
+            val a = mids[i - 1]; val b = mids[i]; val c = mids[i + 1]
+            val dt0 = times[i] - times[i - 1]; val dt1 = times[i + 1] - times[i]
+            if (a.isFinite() && b.isFinite() && c.isFinite() &&
+                dt0 > 0 && dt1 > 0 && dt0 <= 0.08 && dt1 <= 0.08 &&
+                abs(a - c) <= 1.5 && abs(b - a) > 5.0 && abs(b - c) > 5.0) {
+                // No acoustic support for this sample: leave a gap, not invented pitch.
+                out[i] = Double.NaN
+            }
+        }
+        // A short, isolated third-harmonic island between matching measured
+        // neighbours is ambiguous, not proof of a new note. Leave a display
+        // gap; never fold it to a fabricated fundamental or alter Report.
+        // Both neighbours and the 3:1 relation are required. Genuine sustained
+        // high notes and unbracketed excursions remain untouched.
         var i = 0
+        val n = min(times.size, out.size)
         while (i < n) {
-            val m = out[i]
-            val lv = level[i]
-            if (m.isNaN() || lv.isNaN() || abs(m - lv) <= 2.6) { i++; continue }
-            var k = i
-            while (k < n && !out[k].isNaN() && !level[k].isNaN() && abs(out[k] - level[k]) > 2.6) k++
-            val runLen = k - i
-            if (runLen <= 24) {
-                var beforeV = Double.NaN
-                var afterV = Double.NaN
-                var j = i - 1
-                while (j >= 0 && j > i - 8) {
-                    if (!out[j].isNaN() && abs(out[j] - (if (level[j].isNaN()) out[j] else level[j])) <= 2.6) {
-                        beforeV = out[j]; break
-                    }
-                    j--
-                }
-                j = k
-                while (j < n && j < k + 8) {
-                    if (!out[j].isNaN() && abs(out[j] - (if (level[j].isNaN()) out[j] else level[j])) <= 2.6) {
-                        afterV = out[j]; break
-                    }
-                    j++
-                }
-                val a = if (!beforeV.isNaN()) beforeV else level[i]
-                val b = if (!afterV.isNaN()) afterV else level[min(n - 1, k)]
-                if (!a.isNaN() && !b.isNaN()) {
-                    if (runLen == 1) {
-                        out[i] = (a + b) / 2
-                    } else {
-                        for (q in 0 until runLen) {
-                            val f = (q + 1).toDouble() / (runLen + 1)
-                            out[i + q] = a + (b - a) * f
-                        }
+            if (!out[i].isFinite()) { i++; continue }
+            val start = i
+            while (i + 1 < n && out[i + 1].isFinite() &&
+                times[i + 1] - times[i] in 0.0..0.08 && abs(out[i + 1] - out[i]) < 8.0) i++
+            val end = i
+            if (end > start && times[end] - times[start] <= 0.20) {
+                var before = start - 1
+                while (before >= 0 && !out[before].isFinite()) before--
+                var after = end + 1
+                while (after < n && !out[after].isFinite()) after++
+                if (before >= 0 && after < n && times[start] - times[before] <= 0.30 &&
+                    times[after] - times[end] <= 0.30 && abs(out[before] - out[after]) <= 1.5) {
+                    val sorted = (start..end).map { out[it] }.sorted()
+                    val local = (out[before] + out[after]) / 2
+                    val interval = sorted[sorted.size / 2] - local
+                    if (abs(interval - 19.01955) <= 1.0) {
+                        for (j in start..end) out[j] = Double.NaN
                     }
                 }
             }
-            i = if (k > i) k else i + 1
-        }
-
-        // ── پاس ۲: خطای اکتاو در ران‌های کوتاه ──
-        class Run(val i0: Int, val i1: Int, val med: Double)
-        val runs = ArrayList<Run>()
-        var ri = 0
-        while (ri < n) {
-            if (out[ri].isNaN()) { ri++; continue }
-            val j0 = ri
-            while (ri < n && !out[ri].isNaN()) ri++
-            val vals = ArrayList<Double>()
-            for (j in j0 until ri) if (!orig[j].isNaN()) vals.add(orig[j])
-            if (vals.isEmpty()) for (j in j0 until ri) vals.add(out[j])
-            runs.add(Run(j0, ri - 1, medianOf(vals.toDoubleArray())))
-        }
-        if (runs.size >= 3) {
-            fun fOf(r: Run) = if (times.isNotEmpty()) times[r.i0] else r.i0 / 30.0
-            fun lOf(r: Run) = if (times.isNotEmpty()) times[r.i1] else r.i1 / 30.0
-            fun dur(r: Run) = lOf(r) - fOf(r)
-            for (a2 in runs.indices) {
-                val r = runs[a2]
-                if (dur(r) > 0.45) continue
-                var pre: Run? = null
-                var post: Run? = null
-                for (b2 in a2 - 1 downTo 0) {
-                    if (dur(runs[b2]) >= 0.25) { if (fOf(r) - lOf(runs[b2]) <= 3) pre = runs[b2]; break }
-                }
-                for (b2 in a2 + 1 until runs.size) {
-                    if (dur(runs[b2]) >= 0.25) { if (fOf(runs[b2]) - lOf(r) <= 3) post = runs[b2]; break }
-                }
-                if (pre != null && post != null && abs(pre.med - post.med) <= 2.0) {
-                    val ref = (pre.med + post.med) / 2
-                    val dev = r.med - ref
-                    val kOct = Math.round(dev / 12.0).toInt()
-                    if (abs(dev) >= 8 && kOct != 0 && abs(r.med - 12 * kOct - ref) <= 3) {
-                        for (j in r.i0..r.i1) {
-                            val rv = if (!orig[j].isNaN()) orig[j] else out[j]
-                            out[j] = rv - 12 * kOct
-                        }
-                        continue
-                    }
-                }
-                // مرجع پشتیبان: میانهٔ ران‌های نزدیک در زمان
-                val pool = ArrayList<Double>()
-                val tc = (fOf(r) + lOf(r)) / 2
-                for (b2 in runs.indices) {
-                    if (b2 == a2) continue
-                    val o2 = runs[b2]
-                    val oc = (fOf(o2) + lOf(o2)) / 2
-                    if (abs(oc - tc) > 2.5) continue
-                    val reps = min(20, o2.i1 - o2.i0 + 1)
-                    for (w in 0 until reps) pool.add(o2.med)
-                }
-                if (pool.size < 6) continue
-                val ref2 = medianOf(pool.toDoubleArray())
-                if (abs(r.med - ref2) >= 4.5) {
-                    for (j in r.i0..r.i1) out[j] = Double.NaN
-                }
-            }
-        }
-
-        // ── پاس ۴: سقفِ سرعتِ تغییرِ گام ──
-        var prevI = -1
-        for (q in 0 until n) {
-            if (out[q].isNaN()) continue
-            if (prevI >= 0) {
-                val dt = if (times.isNotEmpty()) times[q] - times[prevI] else (q - prevI) / 30.0
-                if (dt >= 0.01 && dt < 0.5) {
-                    val cap = 45.0 * dt
-                    val d = out[q] - out[prevI]
-                    if (abs(d) > cap) out[q] = out[prevI] + if (d > 0) cap else -cap
-                }
-            }
-            prevI = q
-        }
-
-        // ── پاس ۵: میانهٔ ۵ (یا ۳) برای خواباندنِ دندانه ──
-        val win = ArrayList<Pair<Int, Double>>()
-        for (q in 1 until n - 1) {
-            if (out[q].isNaN()) continue
-            var ok5 = true
-            val w5 = DoubleArray(5)
-            for (j in q - 2..q + 2) {
-                if (j < 0 || j >= n || out[j].isNaN()) { ok5 = false; break }
-                w5[j - (q - 2)] = out[j]
-            }
-            if (ok5) {
-                win.add(q to medianOf(w5))
-            } else if (!out[q - 1].isNaN() && !out[q + 1].isNaN()) {
-                val t3 = doubleArrayOf(out[q - 1], out[q], out[q + 1])
-                win.add(q to medianOf(t3))
-            }
-        }
-        for (w in win) out[w.first] = w.second
-
-        prevI = -1
-        for (q in 0 until n) {
-            if (out[q].isNaN()) continue
-            if (prevI >= 0) {
-                val dt = if (times.isNotEmpty()) times[q] - times[prevI] else (q - prevI) / 30.0
-                if (dt >= 0.01 && dt < 0.5) {
-                    val cap = 45.0 * dt
-                    val d = out[q] - out[prevI]
-                    if (abs(d) > cap) out[q] = out[prevI] + if (d > 0) cap else -cap
-                }
-            }
-            prevI = q
-        }
-
-        // ── پاس ۳: «تیغِ» تک‌فریمی ──
-        for (q in 0 until n) {
-            if (out[q].isNaN()) continue
-            var lp = -1
-            var rp = -1
-            var j = q - 1
-            while (j >= 0 && j >= q - 6) { if (!out[j].isNaN()) { lp = j; break }; j-- }
-            j = q + 1
-            while (j < n && j <= q + 6) { if (!out[j].isNaN()) { rp = j; break }; j++ }
-            if (lp < 0 || rp < 0) continue
-            if (times.isNotEmpty()) {
-                if (times[q] - times[lp] > 0.12 || times[rp] - times[q] > 0.12) continue
-            }
-            val lm = out[lp]
-            val rm = out[rp]
-            if (abs(lm - rm) > 2) continue
-            val mn = (lm + rm) / 2
-            if (abs(out[q] - mn) > 4) out[q] = mn
+            i++
         }
         return out
     }
@@ -508,9 +465,9 @@ class ChartView(context: Context) : View(context) {
 
     /** بازهٔ ارتفاع نمایش‌داده‌شده — همان logic نسخهٔ ۱٫۳٫۹ */
     private fun pitchLimits(
-        spec: TraceSpec, mids: DoubleArray, t0: Double, t1: Double, nowT: Double
+        spec: TraceSpec, mids: DoubleArray, notes: List<TraceNote>, t0: Double, t1: Double, nowT: Double
     ): DoubleArray {
-        val lim = pitchLimitsRaw(spec, mids, t0, t1, nowT)
+        val lim = pitchLimitsRaw(spec, mids, notes, t0, t1, nowT)
         // خط‌های دستی/خودکارِ محدوده همیشه داخل دید بمانند (با کمی فاصله)
         val eHi = effHighMidi(spec)
         val eLo = effLowMidi(spec)
@@ -523,7 +480,7 @@ class ChartView(context: Context) : View(context) {
     }
 
     private fun pitchLimitsRaw(
-        spec: TraceSpec, mids: DoubleArray, t0: Double, t1: Double, nowT: Double
+        spec: TraceSpec, mids: DoubleArray, notes: List<TraceNote>, t0: Double, t1: Double, nowT: Double
     ): DoubleArray {
         val all = ArrayList<Double>(mids.size)
         for (m in mids) if (!m.isNaN()) all.add(m)
@@ -534,20 +491,14 @@ class ChartView(context: Context) : View(context) {
         var gHi = if (arr.size > 40) percentile(arr, 0.98) else arr.last()
         var gCenter = arr[arr.size / 2]
 
-        // گستره از «نت‌های واقعی» (بدون پرش‌های یک‌فریمی)
-        if (spec.notes.isNotEmpty()) {
-            val nm = spec.notes.map { it.midi }.sorted()
-            if (nm.size >= 2) {
-                val nsLo = if (nm.size >= 6) percentile(nm.toDoubleArray(), 0.03) else nm.first()
-                val nsHi = if (nm.size >= 6) percentile(nm.toDoubleArray(), 0.97) else nm.last()
-                if (nsHi > nsLo) {
-                    gLo = min(nsLo, gLo + (gHi - gLo) * 0.15)
-                    gHi = max(nsHi, gHi - (gHi - gLo) * 0.15)
-                    if (gHi < nsHi) gHi = nsHi
-                    if (gLo > nsLo) gLo = nsLo
-                    gCenter = if (nm.size % 2 == 1) nm[nm.size / 2] else (nm[nm.size / 2 - 1] + nm[nm.size / 2]) / 2
-                }
-            }
+        // Only supported annotations may extend the contour-derived range.
+        // Never let the raw note list determine the axis center.
+        for (note in notes) {
+            gLo = min(gLo, note.midi)
+            gHi = max(gHi, note.midi)
+        }
+        if (gCenter - gLo > (gHi - gLo) / 2 || gHi - gCenter > (gHi - gLo) / 2) {
+            gCenter = (gLo + gHi) / 2
         }
         val base = max(gHi - gLo, 11.9) * 1.2
         val z = if (tightness > 0) tightness else 1.0
@@ -655,7 +606,7 @@ class ChartView(context: Context) : View(context) {
             // وضعیت «تخمینی»: نقاط ESTIMATED از VALID جدا رسم می‌شوند
             val isEst = sp.status != null && sp.status!![i] == PitchCurve.ESTIMATED
             if (m.isNaN()) {
-                flush(false, isEst)
+                flush(true, isEst)
                 lastT = Double.NaN
                 continue
             }
@@ -666,8 +617,14 @@ class ChartView(context: Context) : View(context) {
                 flush(false, isEst)
             } else if (cur.isNotEmpty() && !lastT.isNaN()) {
                 val prevM = cur[cur.size - 1][1]
-                // پرشِ غیرممکن (>۴ نیم‌پرده در <۵۰ms): سگمنت جدا شود
-                if (abs(m - prevM) > 4.0 && (t - lastT) < 0.05) flush(true, isEst)
+                // A large change between sparse samples has no evidence for the
+                // intervening pitches. Keep both runs, but do not invent a
+                // near-vertical transition (especially at whole-file zoom).
+                val dt = t - lastT
+                val leap = abs(m - prevM)
+                if ((leap > 4.0 && dt < 0.05) || (leap > 7.0 && dt <= 0.12)) {
+                    flush(true, isEst)
+                }
             }
             if (cur.isEmpty()) curEst = isEst
             cur.add(doubleArrayOf(t, m))
@@ -690,7 +647,7 @@ class ChartView(context: Context) : View(context) {
             val gap = b[0] - a[0]
             val leap = abs(b[1] - a[1])
             val slope = if (gap > 1e-6) leap / gap else 999.0
-            if (gap <= C.GAP_BRIDGE_SEC && leap <= 4.0 && slope <= 12.0) {
+            if (gap > 0.000001 && gap <= C.GAP_BRIDGE_SEC && leap <= 4.0 && slope <= 12.0) {
                 val steps = max(2, min(24, Math.round(gap * 40).toInt() + 2))
                 for (j in 1 until steps) {
                     val f = j.toDouble() / steps
@@ -808,8 +765,8 @@ class ChartView(context: Context) : View(context) {
             t1 = a + win
         }
 
-        val midsClean = cleanMids(sp.times, sp.mids)
-        val lim = pitchLimits(sp, midsClean, t0, t1, tNow)
+        val (midsClean, display) = displayData(sp)
+        val lim = pitchLimits(sp, midsClean, display.notes, t0, t1, tNow)
         val g = Geom(w, h, ml, mr, mt, mb, k, lim[0], lim[1], t0, t1)
 
         // هالهٔ پس‌زمینه
@@ -828,11 +785,11 @@ class ChartView(context: Context) : View(context) {
 
         drawGrid(canvas, sp, g, k)
         drawDimCurve(canvas, g)
-        drawDimNotes(canvas, sp, g, k, tNow)
+        drawDimNotes(canvas, display.notes, g, k, tNow)
         drawBorder(canvas, w, h)
 
         drawGoldCurve(canvas, g, k, endT)
-        drawPastNotes(canvas, sp, g, k, endT)
+        drawPastNotes(canvas, display.notes, g, k, endT)
         drawRangeGuides(canvas, sp, g, k)
         drawPlayhead(canvas, g, k, endT, h)
         drawGlowDot(canvas, sp, g, k, endT, midsClean)
@@ -924,6 +881,7 @@ class ChartView(context: Context) : View(context) {
             var goldN = 0
             var lastX = Float.NaN
             var lastY = Float.NaN
+            var lastTime = Double.NaN
             var goldOpen = false
             var closed = false
 
@@ -945,14 +903,16 @@ class ChartView(context: Context) : View(context) {
                 } else if (goldOpen && !closed) {
                     // نقطهٔ پایانیِ نور: میانِ این نقطه و قبلی، تا حرکت نرم بماند
                     if (goldN + 2 <= goldBuf.size) {
-                        goldBuf[goldN] = (dimBuf[dimN - 2] + x) / 2f
-                        goldBuf[goldN + 1] = (dimBuf[dimN - 1] + y) / 2f
+                        val f = ((endT - lastTime) / (ts[i] - lastTime)).coerceIn(0.0, 1.0).toFloat()
+                        goldBuf[goldN] = lastX + (x - lastX) * f
+                        goldBuf[goldN + 1] = lastY + (y - lastY) * f
                         goldN += 2
                     }
                     closed = true
                 }
                 lastX = x
                 lastY = y
+                lastTime = ts[i]
             }
             if (dimN >= 4) {
                 // سگمنت‌های «تخمینی» جدا و کم‌رنگ‌تر رسم می‌شوند (قابل تشخیص از VALID)
@@ -1005,8 +965,8 @@ class ChartView(context: Context) : View(context) {
         }
     }
 
-    private fun drawDimNotes(canvas: Canvas, sp: TraceSpec, g: Geom, k: Float, tNow: Double) {
-        for (n in sp.notes) {
+    private fun drawDimNotes(canvas: Canvas, notes: List<TraceNote>, g: Geom, k: Float, tNow: Double) {
+        for (n in notes) {
             if (n.midi.isNaN()) continue
             val centerT = n.start + n.duration / 2
             if (centerT < g.t0 || centerT > g.t1) continue
@@ -1091,8 +1051,8 @@ class ChartView(context: Context) : View(context) {
         }
     }
 
-    private fun drawPastNotes(canvas: Canvas, sp: TraceSpec, g: Geom, k: Float, endT: Double) {
-        for (n in sp.notes) {
+    private fun drawPastNotes(canvas: Canvas, notes: List<TraceNote>, g: Geom, k: Float, endT: Double) {
+        for (n in notes) {
             if (n.start > endT) continue
             if (n.start < g.t0 || n.start > g.t1) continue
             if (n.duration >= C.BAR_MIN_SEC) {
@@ -1213,8 +1173,7 @@ class ChartView(context: Context) : View(context) {
         val m0 = mids[i]
         val m1 = mids[min(i + 1, mids.size - 1)]
         if (m0.isNaN() && m1.isNaN()) return Double.NaN
-        if (m0.isNaN()) return m1
-        if (m1.isNaN()) return m0
+        if (m0.isNaN() || m1.isNaN() || times[i + 1] - times[i] > C.GAP_BRIDGE_SEC) return Double.NaN
         val t0 = times[i]
         val t1 = times[min(i + 1, times.size - 1)]
         val f = if (t1 > t0) ((t - t0) / (t1 - t0)).coerceIn(0.0, 1.0) else 0.0
@@ -1416,8 +1375,8 @@ class ChartView(context: Context) : View(context) {
         val mb = Math.round(h * 0.0889f).toFloat()
         val total = max(0.001, sp.duration)
         val (t0, t1) = viewWindow(total)
-        val midsClean = cleanMids(sp.times, sp.mids)
-        val lim = pitchLimits(sp, midsClean, t0, t1, if (playhead >= 0) playhead else Double.NaN)
+        val (midsClean, display) = displayData(sp)
+        val lim = pitchLimits(sp, midsClean, display.notes, t0, t1, if (playhead >= 0) playhead else Double.NaN)
         return Geom(w, h, ml, mr, mt, mb, k, lim[0], lim[1], t0, t1)
     }
 
