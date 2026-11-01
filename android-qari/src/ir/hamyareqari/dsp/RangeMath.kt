@@ -26,6 +26,51 @@ object RangeMath {
         val centerName: String get() = PitchMath.noteName(centerHz)
     }
 
+    /**
+     * جفتِ مؤثرِ محدوده: هر کدام از بالا/پایین مستقل انتخاب می‌شوند —
+     * مقدار دستی اگر معتبر باشد، وگرنه مقدار خودکارِ موتور.
+     * اگر جفتِ نهایی معتبر نباشد (نبودن/نامعتبربودن/کوچک‌تر بودنِ بالا از پایین)
+     * برمی‌گردد null — هرگز مقدار ساختگی ساخته نمی‌شود.
+     */
+    data class EffectiveRange(
+        val highHz: Double,
+        val lowHz: Double,
+        val manualHigh: Boolean,
+        val manualLow: Boolean,
+        val span: Span
+    )
+
+    fun effective(
+        manualHighHz: Double?,
+        manualLowHz: Double?,
+        autoHighHz: Double?,
+        autoLowHz: Double?
+    ): EffectiveRange? {
+        val mh = manualHighHz?.takeIf { it > 0.0 }
+        val ml = manualLowHz?.takeIf { it > 0.0 }
+        val hi = mh ?: autoHighHz?.takeIf { it > 0.0 } ?: return null
+        val lo = ml ?: autoLowHz?.takeIf { it > 0.0 } ?: return null
+        if (hi <= lo) return null
+        return EffectiveRange(hi, lo, mh != null, ml != null, span(hi, lo))
+    }
+
+    /**
+     * سه خطِ سربرگِ خروجیِ PNG از همان جفتِ مؤثری که خط‌چین‌ها و برچسب‌های
+     * نمودار را می‌سازند — تا سربرگ و نمودار هرگز از هم جلو نیفتند.
+     */
+    fun headerLines(eff: EffectiveRange?, noteCount: Int, durationSec: Double): List<String> {
+        if (eff == null) return listOf(
+            "بالاترین: —   ·   پایین‌ترین: —",
+            "گستره: —",
+            "مرکز صدا: —"
+        )
+        return listOf(
+            "بالاترین: ${PitchMath.noteName(eff.highHz)}   ·   پایین‌ترین: ${PitchMath.noteName(eff.lowHz)}",
+            "گستره: ${PitchMath.faFixed(eff.span.spanSemitones, 1)} نیم‌پرده (${PitchMath.faFixed(eff.span.spanOctaves, 2)} اکتاو)",
+            "مرکز صدا: ${eff.span.centerName} · $noteCount نت · ${PitchMath.faFixed(durationSec, 0)} ثانیه"
+        )
+    }
+
     /** اگر high≤low باشد، جا به‌جا محاسبه می‌شود (ورودی دستی نباید خروجی را خراب کند) */
     fun span(highHz: Double, lowHz: Double): Span {
         val hi = maxOf(highHz, lowHz)

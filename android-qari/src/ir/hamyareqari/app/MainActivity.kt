@@ -47,7 +47,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.2.2-pitchv1"
+        const val VERSION = "1.2.4-pitchv1"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
@@ -100,6 +100,13 @@ class MainActivity : Activity() {
     private var manualHighHz: Double? = null
     private var manualLowHz: Double? = null
     private var binds: RangeBinds? = null
+
+    /**
+     * عکس لحظه‌ایِ غیرقابل‌تغییر از محدودهٔ دستی — روی ترد رابط کاربری گرفته
+     * می‌شود و به ترد رندرِ خروجی منتقل می‌شود تا رندر همیشه وضعیتِ لحظهٔ
+     * درخواستِ خروجی را نشان دهد (هر کدام مستقل: null = همان خط خودکار).
+     */
+    private data class ManualRangeSnapshot(val highHz: Double?, val lowHz: Double?)
     private var chartRef: ChartView? = null
     private var audioBar: AudioPlayerBar? = null
     private lateinit var fileLabel: TextView
@@ -1589,9 +1596,13 @@ class MainActivity : Activity() {
 
             // نمودارِ اختصاصیِ رندر: رسم در ترد پس‌زمینه نباید با نمودارِ روی
             // صفحه (که ترد رابط کاربری هم آن را می‌کشد) قاطی شود.
+            // عکسِ لحظه‌ایِ محدودهٔ دستی همین‌جا (روی ترد رابط کاربری) گرفته
+            // می‌شود و به رندرر منتقل می‌شود تا ویدیو مقادیر دستی را نشان دهد.
+            val rangeSnap = ManualRangeSnapshot(manualHighHz, manualLowHz)
             val renderChart = ChartView(this).apply {
                 setReport(r)
                 setPlayhead(0.0)
+                setRangeOverride(rangeSnap.highHz, rangeSnap.lowHz)
             }
 
             Thread {
@@ -1709,20 +1720,20 @@ class MainActivity : Activity() {
         requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), REQ_WRITE)
     }
 
-    private fun exportPng(r: Report, chart: ChartView) = withWrite { doExportPng(r, chart) }
+    private fun exportPng(r: Report, chart: ChartView) =
+        withWrite { doExportPng(r, ManualRangeSnapshot(manualHighHz, manualLowHz), chart) }
 
-    private fun doExportPng(r: Report, chart: ChartView) {
+    private fun doExportPng(r: Report, snap: ManualRangeSnapshot, chart: ChartView) {
         try {
-            // با محدودهٔ دستی، سربرگ تصویر هم از مقادیر دستی ساخته می‌شود
-            val msp = if (manualHighHz != null && manualLowHz != null)
-                ir.hamyareqari.dsp.RangeMath.span(manualHighHz!!, manualLowHz!!) else null
-            val hiName = manualHighHz?.let { PitchMath.noteName(it) } ?: (r.highest?.name ?: "—")
-            val loName = manualLowHz?.let { PitchMath.noteName(it) } ?: (r.lowest?.name ?: "—")
-            val lines = listOf(
-                "بالاترین: $hiName   ·   پایین‌ترین: $loName",
-                "گستره: ${PitchMath.faFixed(msp?.spanSemitones ?: r.spanSemitones, 1)} نیم‌پرده (${PitchMath.faFixed(msp?.spanOctaves ?: r.spanOctaves, 2)} اکتاو)",
-                "مرکز صدا: ${msp?.centerName ?: r.centerName} · ${r.noteCount} نت · ${PitchMath.faFixed(r.durationSec, 0)} ثانیه"
+            // جفتِ مؤثر (دستیِ معتبر، وگرنه خودکار) — همان مقادیری که
+            // خط‌چین‌ها و برچسب‌های نمودار نشان می‌دهند؛ سربرگ هم از همین ساخته می‌شود
+            val eff = ir.hamyareqari.dsp.RangeMath.effective(
+                snap.highHz, snap.lowHz, r.highest?.f0, r.lowest?.f0
             )
+            val lines = ir.hamyareqari.dsp.RangeMath.headerLines(eff, r.noteCount, r.durationSec)
+            // تزریق صریحِ محدودهٔ دستی به رندررِ خروجی پیش از ساخت بیت‌مپ؛
+            // هر کدام مستقل (null = همان خط، خودکار)
+            chart.setRangeOverride(snap.highHz, snap.lowHz)
             val bmp = chart.renderToBitmap(1600, 2400, "ردِّ صدا — ${sourceName}", lines)
             val saved = Persistence.saveBitmap(this, bmp, Persistence.safeName("همیار-قاری-${baseName()}", "png"))
             toast("✅ ذخیره شد: ${saved.displayPath}")
