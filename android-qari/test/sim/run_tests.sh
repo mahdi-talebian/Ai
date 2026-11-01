@@ -21,10 +21,10 @@ mkdir -p "$OUT"
   "$ROOT"/src/ir/hamyareqari/app/ChartView.kt \
   "$ROOT"/src/ir/hamyareqari/app/VideoMaker.kt \
   "$DIR"/stubs/*.kt "$DIR"/VideoTest.kt "$DIR"/LongTest.kt "$DIR"/ZoomFollowTest.kt \
-  "$DIR"/PitchV1Test.kt "$DIR"/PipelineTest.kt "$DIR"/PitchRangeTest.kt "$DIR"/RangeGuideTest.kt
+  "$DIR"/ChartContourTest.kt "$DIR"/PitchV1Test.kt "$DIR"/PipelineTest.kt "$DIR"/PitchRangeTest.kt "$DIR"/RangeGuideTest.kt
 
 # همهٔ کلاس‌های لازم باید از همین کامپایل ساخته شده باشند (نه ساختِ قبلی)
-for cls in VideoTest ZoomFollowTest LongRun RangeGuideTest \
+for cls in VideoTest ZoomFollowTest LongRun RangeGuideTest ChartContourTest \
            ir/hamyareqari/dsp/pitch/PipelineTest \
            ir/hamyareqari/dsp/pitch/PitchV1Test \
            ir/hamyareqari/dsp/pitch/PitchRangeTest; do
@@ -35,6 +35,7 @@ for cls in VideoTest ZoomFollowTest LongRun RangeGuideTest \
 done
 
 cd "$DIR"
+"$JAVA" -Djava.awt.headless=true -cp "$OUT:$STDLIB" ChartContourTest
 echo "── تست کوتاه (چهار پروفایل دستگاه) ──"
 "$JAVA" -Dstdout.encoding=UTF-8 -Ddemo.wav="$DIR/../../assets/demo.wav" \
          -Dfont.bold="$DIR/../../assets/fonts/Estedad-Bold.ttf" \
