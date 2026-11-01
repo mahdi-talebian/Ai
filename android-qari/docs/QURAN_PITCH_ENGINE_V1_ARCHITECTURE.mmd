@@ -1,0 +1,60 @@
+flowchart TD
+    START(["شروع تحلیل تلاوت"]) --> SOURCE{"منبع صوت"}
+    SOURCE --> FILE["فایل صوتی"]
+    SOURCE --> MIC["میکروفن زنده"]
+
+    FILE --> DEC["MediaExtractor / MediaCodec"]
+    MIC --> CAP["AudioRecord / MicCapture"]
+
+    DEC --> PCM["PCM Mono 22050 Hz"]
+    CAP --> PCM
+    PCM --> RING["Buffer / Chunk Manager"]
+
+    RING --> BASE["Enhanced Kotlin Backend"]
+    RING --> RESAMPLE["Model-specific Resampler"]
+    RESAMPLE --> FCPE["FCPE ONNX Backend 16 kHz"]
+
+    BASE --> BASE_CAND["YIN + MPM candidates"]
+    FCPE --> FCPE_CAND["FCPE F0 candidates"]
+    RING --> QUALITY["Audio Quality Analyzer"]
+
+    BASE_CAND --> FUSION["Pitch Candidate & Quality Fusion"]
+    FCPE_CAND --> FUSION
+    QUALITY --> FUSION
+
+    FUSION --> GATE{"Quality Gate"}
+    GATE -->|"Valid"| OCTAVE["Octave / Outlier Check"]
+    GATE -->|"Uncertain"| HOLD["Short Hold / Uncertain State"]
+    GATE -->|"Invalid or silence"| GAP["No pitch / graph gap"]
+
+    OCTAVE --> TRACK["Temporal Tracking"]
+    TRACK --> SMOOTH["Adaptive Stabilizer"]
+    SMOOTH --> DATA["Timestamp + raw F0 + stable F0 + quality"]
+    HOLD --> DATA
+    GAP --> DATA
+
+    DATA --> NOTE["Hz → nearest note + cents"]
+    NOTE --> GRAPH["Existing Native Canvas Pitch Graph"]
+    DATA --> METRICS["Loudness & Quality indicator"]
+    GRAPH --> UI["Existing Android UI"]
+    METRICS --> UI
+
+    subgraph DEVICE["Android — fully on device"]
+      CAP
+      DEC
+      RING
+      BASE
+      RESAMPLE
+      FCPE
+      QUALITY
+      FUSION
+      GATE
+      TRACK
+      SMOOTH
+      DATA
+    end
+
+    UI --> TEST["Benchmark / regression / device test"]
+    TEST --> DECISION{"FCPE measurably better?"}
+    DECISION -->|"No"| BASE
+    DECISION -->|"Yes, within latency & size budget"| RELEASE["Enable hybrid/new backend by config"]

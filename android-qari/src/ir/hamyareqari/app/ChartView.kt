@@ -14,6 +14,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.view.MotionEvent
 import android.view.View
+import ir.hamyareqari.dsp.PitchCurve
 import ir.hamyareqari.dsp.PitchMath
 import ir.hamyareqari.dsp.Report
 import kotlin.math.abs
@@ -36,7 +37,9 @@ class TraceSpec(
     val duration: Double,
     val highMidi: Double,
     val lowMidi: Double,
-    val spanSemitones: Double
+    val spanSemitones: Double,
+    /** وضعیت هر نقطه (PitchCurve.VALID/ESTIMATED/…) — null = رفتار قبلی */
+    val status: ByteArray? = null
 ) {
     companion object {
         fun from(r: Report): TraceSpec {
@@ -56,7 +59,8 @@ class TraceSpec(
                 duration = r.durationSec,
                 highMidi = r.highest?.let { PitchMath.hzToMidi(it.f0) } ?: Double.NaN,
                 lowMidi = r.lowest?.let { PitchMath.hzToMidi(it.f0) } ?: Double.NaN,
-                spanSemitones = r.spanSemitones
+                spanSemitones = r.spanSemitones,
+                status = r.contourStatus
             )
         }
     }
@@ -79,6 +83,40 @@ class TraceSpec(
 class ChartView(context: Context) : View(context) {
 
     var onSeek: ((Double) -> Unit)? = null
+
+    // ── تنظیم دستی خط‌چین‌های بالاترین/پایین‌ترین (درگ روی خط) ──────────────
+
+    /** مقدار دستی خطِ بالا (NaN = خودکار) */
+    var overrideHighMidi: Double = Double.NaN
+        private set
+
+    /** مقدار دستی خطِ پایین (NaN = خودکار) */
+    var overrideLowMidi: Double = Double.NaN
+        private set
+
+    /** درگ خط‌چین‌ها فقط در نمودارِ «نتیجه» (فایل/ضبط) فعال است — نه نمودار زنده */
+    var rangesDraggable = false
+
+    /** فراخوانی هنگام درگ خط: (isHigh, hz) — مقدار آزاد بر حسب هرتز */
+    var onRangeDrag: ((Boolean, Double) -> Unit)? = null
+
+    private var dragWhich = 0 // 0=none 1=high 2=low
+
+    /** اعمال محدودهٔ دستی (هر کدام null = بازگشت به مقدار خودکارِ همان خط) */
+    fun setRangeOverride(highHz: Double?, lowHz: Double?) {
+        overrideHighMidi = if (highHz != null && highHz > 0.0) PitchMath.hzToMidi(highHz) else Double.NaN
+        overrideLowMidi = if (lowHz != null && lowHz > 0.0) PitchMath.hzToMidi(lowHz) else Double.NaN
+        invalidateFrameCaches()
+        invalidate()
+    }
+
+    /** مقدار مؤثر خطِ بالا: دستی اگر تنظیم شده باشد، وگرنه خودکار */
+    fun effHighMidi(sp: TraceSpec): Double =
+        if (!overrideHighMidi.isNaN()) overrideHighMidi else sp.highMidi
+
+    /** مقدار مؤثر خطِ پایین: دستی اگر تنظیم شده باشد، وگرنه خودکار */
+    fun effLowMidi(sp: TraceSpec): Double =
+        if (!overrideLowMidi.isNaN()) overrideLowMidi else sp.lowMidi
 
     var spec: TraceSpec? = null
         private set
@@ -106,6 +144,7 @@ class ChartView(context: Context) : View(context) {
         const val GRID_LABEL = 0x73B4C8EB.toInt()
         const val DIM_CURVE = 0x8C6084AF.toInt()
         const val DIM_SHADOW = 0x596084AF
+        const val DIM_EST = 0x666084AF // خط‌چینِ تخمینی — کم‌رنگ‌تر از VALID
         const val NOTE_DIM = 0x61789BC3
         const val GOLD = 0xFFF7D171.toInt()
         const val NOTE_FUTURE = 0x8C8CA8CD.toInt()
@@ -143,6 +182,7 @@ class ChartView(context: Context) : View(context) {
     private var frameKey = ""
     private var frameDim: List<FloatArray> = emptyList()
     private var frameGold: List<FloatArray> = emptyList()
+    private var frameDimEst: List<FloatArray> = emptyList()
 
     private val pathDim = Path()
     private val pathGold = Path()
@@ -156,6 +196,9 @@ class ChartView(context: Context) : View(context) {
     ) {
         fun xOf(t: Double): Float = ml + (((t - t0) / max(1e-6, t1 - t0)) * (w - ml - mr)).toFloat()
         fun yOf(m: Double): Float = mt + ((1.0 - (m - loLim) / max(1e-6, hiLim - loLim)) * (h - mt - mb)).toFloat()
+        /** معکوس yOf — برای درگ خط‌چین‌ها (MIDI پیوسته = هرتز آزاد) */
+        fun midiOf(y: Float): Double =
+            loLim + (1.0 - (y - mt) / max(1e-6, (h - mt - mb).toDouble())) * (hiLim - loLim)
     }
 
     init {
@@ -200,6 +243,7 @@ class ChartView(context: Context) : View(context) {
         frameKey = ""
         frameDim = emptyList()
         frameGold = emptyList()
+        frameDimEst = emptyList()
     }
 
     fun setPlayhead(sec: Double) {
@@ -466,6 +510,21 @@ class ChartView(context: Context) : View(context) {
     private fun pitchLimits(
         spec: TraceSpec, mids: DoubleArray, t0: Double, t1: Double, nowT: Double
     ): DoubleArray {
+        val lim = pitchLimitsRaw(spec, mids, t0, t1, nowT)
+        // خط‌های دستی/خودکارِ محدوده همیشه داخل دید بمانند (با کمی فاصله)
+        val eHi = effHighMidi(spec)
+        val eLo = effLowMidi(spec)
+        if (eHi.isNaN() && eLo.isNaN()) return lim
+        var lo = lim[0]
+        var hi = lim[1]
+        if (!eLo.isNaN() && eLo - 1.0 < lo) lo = eLo - 1.0
+        if (!eHi.isNaN() && eHi + 1.0 > hi) hi = eHi + 1.0
+        return doubleArrayOf(lo, hi)
+    }
+
+    private fun pitchLimitsRaw(
+        spec: TraceSpec, mids: DoubleArray, t0: Double, t1: Double, nowT: Double
+    ): DoubleArray {
         val all = ArrayList<Double>(mids.size)
         for (m in mids) if (!m.isNaN()) all.add(m)
         if (all.isEmpty()) return doubleArrayOf(48.0, 60.0)
@@ -563,48 +622,66 @@ class ChartView(context: Context) : View(context) {
     private var segMids: DoubleArray? = null
     private var segTimes: List<DoubleArray> = emptyList()
     private var segVals: List<DoubleArray> = emptyList()
+    private var segEst: List<Boolean> = emptyList()
 
-    private fun segmentsFor(sp: TraceSpec, mids: DoubleArray): Pair<List<DoubleArray>, List<DoubleArray>> {
-        if (segSpec === sp && segMids === mids) return segTimes to segVals
+    /** بستهٔ سگمنت‌ها: هندسه + وضعیت «تخمینی» بودن هر سگمنت */
+    private class SegBundle(
+        val times: List<DoubleArray>,
+        val vals: List<DoubleArray>,
+        val est: List<Boolean>
+    )
 
-        class Run(val pts: ArrayList<DoubleArray>, val hard: Boolean)
+    private fun segmentsFor(sp: TraceSpec, mids: DoubleArray): SegBundle {
+        if (segSpec === sp && segMids === mids) return SegBundle(segTimes, segVals, segEst)
+
+        class Run(val pts: ArrayList<DoubleArray>, val hard: Boolean, val est: Boolean)
 
         val runs = ArrayList<Run>()
         var cur = ArrayList<DoubleArray>()
         var curHard = false
+        var curEst = false
         var lastT = Double.NaN
 
-        fun flush(nextHard: Boolean) {
-            if (cur.size > 1) runs.add(Run(ArrayList(cur), curHard))
+        fun flush(nextHard: Boolean, nextEst: Boolean) {
+            if (cur.size > 1) runs.add(Run(ArrayList(cur), curHard, curEst))
             cur = ArrayList()
             curHard = nextHard
+            curEst = nextEst
         }
 
         for (i in sp.times.indices) {
             val t = sp.times[i]
             val m = mids[i]
+            // وضعیت «تخمینی»: نقاط ESTIMATED از VALID جدا رسم می‌شوند
+            val isEst = sp.status != null && sp.status!![i] == PitchCurve.ESTIMATED
             if (m.isNaN()) {
-                flush(false)
+                flush(false, isEst)
                 lastT = Double.NaN
                 continue
             }
             if (!lastT.isNaN() && t - lastT > C.GAP_BRIDGE_SEC) {
-                flush(false)
+                flush(false, isEst)
+            } else if (isEst != curEst && cur.isNotEmpty()) {
+                // مرز VALID ↔ ESTIMATED: سگمنت جدا (خط‌چین از خط پیوسته قابل تشخیص)
+                flush(false, isEst)
             } else if (cur.isNotEmpty() && !lastT.isNaN()) {
                 val prevM = cur[cur.size - 1][1]
                 // پرشِ غیرممکن (>۴ نیم‌پرده در <۵۰ms): سگمنت جدا شود
-                if (abs(m - prevM) > 4.0 && (t - lastT) < 0.05) flush(true)
+                if (abs(m - prevM) > 4.0 && (t - lastT) < 0.05) flush(true, isEst)
             }
+            if (cur.isEmpty()) curEst = isEst
             cur.add(doubleArrayOf(t, m))
             lastT = t
         }
-        if (cur.size > 1) runs.add(Run(ArrayList(cur), curHard))
+        if (cur.size > 1) runs.add(Run(ArrayList(cur), curHard, curEst))
 
-        // پل‌زدن شکاف‌های کوتاه با شیب معقول
+        // پل‌زدن شکاف‌های کوتاه با شیب معقول (فقط هم‌وضعیت‌ها)
         val merged = ArrayList<ArrayList<DoubleArray>>()
+        val mergedEst = ArrayList<Boolean>()
         for (run in runs) {
-            if (merged.isEmpty() || run.hard) {
+            if (merged.isEmpty() || run.hard || run.est != mergedEst[mergedEst.size - 1]) {
                 merged.add(ArrayList(run.pts))
+                mergedEst.add(run.est)
                 continue
             }
             val prev = merged[merged.size - 1]
@@ -622,6 +699,7 @@ class ChartView(context: Context) : View(context) {
                 prev.addAll(run.pts)
             } else {
                 merged.add(ArrayList(run.pts))
+                mergedEst.add(run.est)
             }
         }
 
@@ -648,7 +726,8 @@ class ChartView(context: Context) : View(context) {
         // جداکردن زمان و ارتفاع + سبک‌سازی زمانی (هر ۴ms یک نقطه کافی است)
         val times = ArrayList<DoubleArray>(smoothed.size)
         val vals = ArrayList<DoubleArray>(smoothed.size)
-        for (run in smoothed) {
+        val est = ArrayList<Boolean>(smoothed.size)
+        for ((si, run) in smoothed.withIndex()) {
             if (run.size < 2) continue
             val keepT = ArrayList<Double>(run.size)
             val keepM = ArrayList<Double>(run.size)
@@ -664,6 +743,7 @@ class ChartView(context: Context) : View(context) {
             if (keepT.size > 1) {
                 times.add(keepT.toDoubleArray())
                 vals.add(keepM.toDoubleArray())
+                est.add(if (si < mergedEst.size) mergedEst[si] else false)
             }
         }
 
@@ -671,7 +751,8 @@ class ChartView(context: Context) : View(context) {
         segMids = mids
         segTimes = times
         segVals = vals
-        return times to vals
+        segEst = est
+        return SegBundle(times, vals, est)
     }
 
     // ───────────────────────────── رسم ─────────────────────────────
@@ -801,9 +882,12 @@ class ChartView(context: Context) : View(context) {
         val key = "${g.t0},${g.t1},${g.loLim},${g.hiLim},${g.w},${g.h},$endT"
         if (key == frameKey) return
 
-        val (times, vals) = segmentsFor(sp, mids)
+        val segs = segmentsFor(sp, mids)
+        val times = segs.times
+        val vals = segs.vals
         val dim = ArrayList<FloatArray>(times.size)
         val gold = ArrayList<FloatArray>(times.size)
+        val dimEst = ArrayList<FloatArray>(times.size)
         val spanT = max(1e-6, g.t1 - g.t0)
         val spanM = max(1e-6, g.hiLim - g.loLim)
         val usableW = g.w - g.ml - g.mr
@@ -870,18 +954,23 @@ class ChartView(context: Context) : View(context) {
                 lastX = x
                 lastY = y
             }
-            if (dimN >= 4) dim.add(dimBuf.copyOf(dimN))
-            if (goldN >= 4) gold.add(goldBuf.copyOf(goldN))
+            if (dimN >= 4) {
+                // سگمنت‌های «تخمینی» جدا و کم‌رنگ‌تر رسم می‌شوند (قابل تشخیص از VALID)
+                if (segs.est[si]) dimEst.add(dimBuf.copyOf(dimN)) else dim.add(dimBuf.copyOf(dimN))
+            }
+            if (goldN >= 4 && !segs.est[si]) gold.add(goldBuf.copyOf(goldN))
         }
         frameDim = dim
         frameGold = gold
+        frameDimEst = dimEst
         frameKey = key
     }
 
     private fun drawDimCurve(canvas: Canvas, g: Geom) {
-        if (frameDim.isEmpty()) return
+        if (frameDim.isEmpty() && frameDimEst.isEmpty()) return
         stroke.strokeCap = Paint.Cap.ROUND
         stroke.strokeJoin = Paint.Join.ROUND
+        stroke.pathEffect = null
         for (pts in frameDim) {
             pathDim.reset()
             pathDim.moveTo(pts[0], pts[1])
@@ -896,6 +985,23 @@ class ChartView(context: Context) : View(context) {
             stroke.color = C.DIM_CURVE
             stroke.strokeWidth = 2.7f * g.k
             canvas.drawPath(pathDim, stroke)
+        }
+        // نقاط «تخمینی» (ESTIMATED): خط‌چین کم‌رنگ — از VALID قابل تشخیص
+        if (frameDimEst.isNotEmpty()) {
+            stroke.pathEffect = DashPathEffect(floatArrayOf(6f * g.k, 5f * g.k), 0f)
+            for (pts in frameDimEst) {
+                pathDim.reset()
+                pathDim.moveTo(pts[0], pts[1])
+                var i = 2
+                while (i + 1 < pts.size) {
+                    pathDim.lineTo(pts[i], pts[i + 1])
+                    i += 2
+                }
+                stroke.color = C.DIM_EST
+                stroke.strokeWidth = 2.1f * g.k
+                canvas.drawPath(pathDim, stroke)
+            }
+            stroke.pathEffect = null
         }
     }
 
@@ -1003,8 +1109,10 @@ class ChartView(context: Context) : View(context) {
     }
 
     private fun drawRangeGuides(canvas: Canvas, sp: TraceSpec, g: Geom, k: Float) {
-        if (!sp.highMidi.isNaN()) drawGuide(canvas, sp, g, k, sp.highMidi, true)
-        if (!sp.lowMidi.isNaN()) drawGuide(canvas, sp, g, k, sp.lowMidi, false)
+        val hi = effHighMidi(sp)
+        val lo = effLowMidi(sp)
+        if (!hi.isNaN()) drawGuide(canvas, sp, g, k, hi, true)
+        if (!lo.isNaN()) drawGuide(canvas, sp, g, k, lo, false)
     }
 
     private fun drawGuide(canvas: Canvas, sp: TraceSpec, g: Geom, k: Float, midi: Double, high: Boolean) {
@@ -1023,9 +1131,22 @@ class ChartView(context: Context) : View(context) {
         canvas.drawLine(6f * k, y, g.w - 6f * k, y, stroke)
         stroke.pathEffect = null
 
-        val deg = if (!sp.lowMidi.isNaN()) PitchMath.degreeFromLow(Math.round(midi).toInt(), Math.round(sp.lowMidi).toInt()) else 0
-        val txt = (if (high) "بالاترین " else "پایین‌ترین ") + PitchMath.solfegeWithOctave(Math.round(midi).toInt()) +
-            (if (deg > 0) " · درجهٔ ${PitchMath.faDigits(deg)}" else "")
+        val deg = run {
+            val baseLow = effLowMidi(sp)
+            if (!baseLow.isNaN()) PitchMath.degreeFromLow(Math.round(midi).toInt(), Math.round(baseLow).toInt()) else 0
+        }
+        // برای مقدار دستی: نامِ نزدیک‌ترین نت + فاصلهٔ سنتی (مقدار آزاد است، نیم‌پرده‌ای نیست)
+        val manualLine = if (high) !overrideHighMidi.isNaN() else !overrideLowMidi.isNaN()
+        val txt = if (manualLine) {
+            val hz = PitchMath.midiToHz(midi)
+            val off = PitchMath.centsOffPitch(hz)
+            val offTxt = PitchMath.faDigits(Math.round(off).toInt()).let { if (off >= 0) "+$it" else it }
+            (if (high) "بالاترین " else "پایین‌ترین ") + PitchMath.noteName(hz) +
+                " · $offTxt سنت · ${PitchMath.faFixed(hz, 1)} هرتز"
+        } else {
+            (if (high) "بالاترین " else "پایین‌ترین ") + PitchMath.solfegeWithOctave(Math.round(midi).toInt()) +
+                (if (deg > 0) " · درجهٔ ${PitchMath.faDigits(deg)}" else "")
+        }
         textPaint.typeface = Theme.font(context, true)
         textPaint.textSize = 10f * k
         textPaint.textAlign = Paint.Align.RIGHT
@@ -1189,12 +1310,17 @@ class ChartView(context: Context) : View(context) {
             "${PitchMath.faFixed(endT, 1)} / ${PitchMath.faFixed(sp.duration, 1)} ثانیه",
             g.w - 10f * k, 24f * k, textPaint
         )
-        if (!sp.highMidi.isNaN() && !sp.lowMidi.isNaN()) {
+        val eHi = effHighMidi(sp)
+        val eLo = effLowMidi(sp)
+        if (!eHi.isNaN() && !eLo.isNaN()) {
             textPaint.color = C.HINT
-            val span = PitchMath.spanInDegrees(sp.spanSemitones)
+            val spanSemis = if (!overrideHighMidi.isNaN() || !overrideLowMidi.isNaN())
+                PitchMath.cents(PitchMath.midiToHz(eHi), PitchMath.midiToHz(eLo)) / 100.0
+            else sp.spanSemitones
+            val span = PitchMath.spanInDegrees(spanSemis)
             canvas.drawText(
-                "${PitchMath.solfegeWithOctave(Math.round(sp.highMidi).toInt())} ↕ " +
-                    "${PitchMath.solfegeWithOctave(Math.round(sp.lowMidi).toInt())}  ·  ${span.text}",
+                "${PitchMath.solfegeWithOctave(Math.round(eHi).toInt())} ↕ " +
+                    "${PitchMath.solfegeWithOctave(Math.round(eLo).toInt())}  ·  ${span.text}",
                 g.w - 10f * k, h - 9f * k, textPaint
             )
         }
@@ -1206,6 +1332,61 @@ class ChartView(context: Context) : View(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (live) return false
         val sp = spec ?: return false
+
+        // ── درگ خط‌چین‌های بالاترین/پایین‌ترین (فقط وقتی rangesDraggable) ──
+        if (rangesDraggable) {
+            val gNow = geomForTouch(sp)
+            val k = (width / 700f).coerceIn(0.8f, 2.0f)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (gNow != null) {
+                        val yH = if (!effHighMidi(sp).isNaN()) gNow.yOf(effHighMidi(sp)) else Float.MAX_VALUE
+                        val yL = if (!effLowMidi(sp).isNaN()) gNow.yOf(effLowMidi(sp)) else Float.MAX_VALUE
+                        val grab = 30f * k
+                        val dH = Math.abs(event.y - yH)
+                        val dL = Math.abs(event.y - yL)
+                        dragWhich = when {
+                            dH <= grab && dH <= dL -> 1
+                            dL <= grab -> 2
+                            else -> 0
+                        }
+                        if (dragWhich != 0) {
+                            parent?.requestDisallowInterceptTouchEvent(true)
+                            return true
+                        }
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (dragWhich != 0 && gNow != null) {
+                        var midi = gNow.midiOf(event.y)
+                        // خط‌ها از هم عبور نمی‌کنند (حداقل ۰٫۲ نیم‌پرده فاصله)
+                        if (dragWhich == 1) {
+                            val loM = effLowMidi(sp)
+                            if (!loM.isNaN() && midi < loM + 0.2) midi = loM + 0.2
+                        } else {
+                            val hiM = effHighMidi(sp)
+                            if (!hiM.isNaN() && midi > hiM - 0.2) midi = hiM - 0.2
+                        }
+                        midi = midi.coerceIn(12.0, 108.0)
+                        val hz = PitchMath.midiToHz(midi)
+                        if (dragWhich == 1) overrideHighMidi = midi else overrideLowMidi = midi
+                        invalidateFrameCaches()
+                        invalidate()
+                        onRangeDrag?.invoke(dragWhich == 1, hz)
+                        return true
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (dragWhich != 0) {
+                        dragWhich = 0
+                        parent?.requestDisallowInterceptTouchEvent(false)
+                        if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
+                        return true
+                    }
+                }
+            }
+        }
+
         if (event.action == MotionEvent.ACTION_UP) {
             val k = (width / 700f).coerceIn(0.8f, 2.0f)
             val ml = Math.round(width * 0.0335f).toFloat()
@@ -1221,6 +1402,23 @@ class ChartView(context: Context) : View(context) {
             }
         }
         return true
+    }
+
+    /** هندسهٔ لحظه‌ای برای تبدیل لمس ↔ MIDI (همان فرمول drawTrace برای دیدِ جاری) */
+    private fun geomForTouch(sp: TraceSpec): Geom? {
+        if (sp.times.isEmpty() || width == 0 || height == 0) return null
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val k = (w / 700f).coerceIn(0.8f, 2.0f)
+        val ml = Math.round(w * 0.0335f).toFloat()
+        val mr = Math.round(w * 0.0215f).toFloat()
+        val mt = Math.round(h * 0.1083f).toFloat()
+        val mb = Math.round(h * 0.0889f).toFloat()
+        val total = max(0.001, sp.duration)
+        val (t0, t1) = viewWindow(total)
+        val midsClean = cleanMids(sp.times, sp.mids)
+        val lim = pitchLimits(sp, midsClean, t0, t1, if (playhead >= 0) playhead else Double.NaN)
+        return Geom(w, h, ml, mr, mt, mb, k, lim[0], lim[1], t0, t1)
     }
 
     override fun performClick(): Boolean {

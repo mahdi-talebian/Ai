@@ -20,6 +20,6 @@ mkdir -p "$OUT"
 
 "$JAVA" -Xmx1g -cp "$KOTLINC" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
   -no-reflect -jvm-target 1.8 -nowarn -d "$OUT" \
-  "$ROOT"/src/ir/hamyareqari/dsp/*.kt "$ROOT"/tools/PitchBench.kt 2>&1 | grep -v '^warning:' || true
+  "$ROOT"/src/ir/hamyareqari/dsp/*.kt "$ROOT"/src/ir/hamyareqari/dsp/pitch/*.kt "$ROOT"/tools/PitchBench.kt 2>&1 | grep -v '^warning:' || true
 
 "$JAVA" -Xmx2g -Dstdout.encoding=UTF-8 -cp "$OUT:$STDLIB" ir.hamyareqari.tools.PitchBench "$@"

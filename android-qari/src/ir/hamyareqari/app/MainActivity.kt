@@ -30,6 +30,11 @@ import ir.hamyareqari.dsp.PitchTracker
 import ir.hamyareqari.dsp.Report
 import ir.hamyareqari.dsp.ShortSignal
 import ir.hamyareqari.dsp.YinTracker
+import ir.hamyareqari.dsp.pitch.EnhancedKotlinBackend
+import ir.hamyareqari.dsp.pitch.PitchBackendSelector
+import ir.hamyareqari.dsp.pitch.PitchEstimator
+import ir.hamyareqari.dsp.pitch.PitchSample
+import ir.hamyareqari.dsp.pitch.PitchSampleStream
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -42,10 +47,19 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     companion object {
-        const val VERSION = "1.1.6"
+        const val VERSION = "1.2.4-pitchv1"
         private const val REQ_PICK = 1001
         private const val REQ_MIC = 1002
         private const val REQ_WRITE = 1003
+
+        /**
+         * FCPE (آزمایشی): فقط وقتی فعال می‌شود که AAR کتابخانهٔ ONNX Runtime در
+         * build باشد و فایل مدل واقعی `models/fcpe.onnx` داخل assets قرار گیرد.
+         * در غیر این صورت برنامه بدون Crash به موتور فعلی (ENHANCED) برمی‌گردد.
+         * هیچ خروجی ساختگی از FCPE ساخته نمی‌شود.
+         */
+        private const val FCPE_EXPERIMENTAL = true
+        private const val FCPE_MODEL_ASSET = "models/fcpe.onnx"
     }
 
     private val ui = Handler(Looper.getMainLooper())
@@ -56,6 +70,8 @@ class MainActivity : Activity() {
     private var sourceName = "صدا"
     private var busy = false
     private var player: AudioIo.Player? = null
+    /** قرارداد مشترک نمونه‌ها (V1) — خروجی هر دو مسیر فایل و زنده */
+    private var lastSamples: List<PitchSample>? = null
 
     // نمای‌ها
     private lateinit var pageHost: FrameLayout
@@ -79,6 +95,18 @@ class MainActivity : Activity() {
     private var pickUri: Uri? = null
     private var videoFile: java.io.File? = null
     private var lastElapsedMs = 0L
+
+    // ── محدودهٔ دستی (درگ خط‌چین‌های بالاترین/پایین‌ترین روی نمودار) ─────
+    private var manualHighHz: Double? = null
+    private var manualLowHz: Double? = null
+    private var binds: RangeBinds? = null
+
+    /**
+     * عکس لحظه‌ایِ غیرقابل‌تغییر از محدودهٔ دستی — روی ترد رابط کاربری گرفته
+     * می‌شود و به ترد رندرِ خروجی منتقل می‌شود تا رندر همیشه وضعیتِ لحظهٔ
+     * درخواستِ خروجی را نشان دهد (هر کدام مستقل: null = همان خط خودکار).
+     */
+    private data class ManualRangeSnapshot(val highHz: Double?, val lowHz: Double?)
     private var chartRef: ChartView? = null
     private var audioBar: AudioPlayerBar? = null
     private lateinit var fileLabel: TextView
@@ -749,12 +777,20 @@ class MainActivity : Activity() {
         Thread {
             try {
                 val sig = ShortSignal(dec.pcm, dec.sampleRate)
-                val rep = Analyzer.analyzeSignal(sig, denoiseCheck.isChecked) { stage, p ->
-                    ui.post {
-                        val (label, base, span) = stageInfo(stage)
-                        showProgress(base + span * p, label)
-                    }
-                }
+                var curve: ir.hamyareqari.dsp.PitchCurve? = null
+                val rep = Analyzer.analyzeSignal(
+                    sig, denoiseCheck.isChecked,
+                    { stage, p ->
+                        ui.post {
+                            val (label, base, span) = stageInfo(stage)
+                            showProgress(base + span * p, label)
+                        }
+                    },
+                    ir.hamyareqari.dsp.Engine.ENHANCED,
+                    { c -> curve = c }
+                )
+                // قرارداد مشترک نمونه‌ها (V1) از همان منحنی — بدون اجرای دوبارهٔ موتور
+                lastSamples = curve?.let { PitchSampleStream.fromCurve(it, "enhanced") }
                 val elapsed = System.currentTimeMillis() - started
                 ui.post {
                     report = rep
@@ -789,17 +825,78 @@ class MainActivity : Activity() {
         else -> Triple("تمام شد", 1.0, 0.0)
     }
 
+    /** خط جزئیات قابل‌ردیابی یک مقدار محدوده: Hz واقعی، لحظه، سنت، تداوم، کیفیت */
+    private fun extremumTrace(e: ir.hamyareqari.dsp.pitch.PitchRangeAnalyzer.Extremum?): String {
+        if (e == null) return "—"
+        return "${e.noteName} · ${PitchMath.faFixed(e.f0Hz, 1)} هرتز" +
+            " · در ${PitchMath.faFixed(e.timestampSec, 1)} ثانیه" +
+            " · ${if (e.cents >= 0) "+" else "−"}${PitchMath.faFixed(kotlin.math.abs(e.cents), 0)} سنت" +
+            " · تداوم ${PitchMath.faFixed(e.durationSec, 2)} ثانیه" +
+            " · کیفیت ${PitchMath.faFixed(e.qualityScore * 100.0, 0)}٪"
+    }
+
+    /**
+     * به‌روزرسانی پویای همهٔ نماها و مقادیر مشتق، هنگام درگ خط‌چین‌ها.
+     * همه چیز از (manualHighHz, manualLowHz) بازمحاسبه می‌شود؛ آمارِ تحلیلِ
+     * خودکار (جزئیات محدوده) عمداً دست‌نخورده می‌ماند.
+     */
+    private fun applyManualRange() {
+        val b = binds ?: return
+        val rep = report ?: return
+        val hi = manualHighHz ?: rep.highest?.f0
+        val lo = manualLowHz ?: rep.lowest?.f0
+        if (hi == null || lo == null || hi <= 0 || lo <= 0 || hi <= lo) return
+        val sp = ir.hamyareqari.dsp.RangeMath.span(hi, lo)
+
+        // سلول‌های قهرمان (نامِ نزدیک‌ترین نت + Hz واقعی + سلفژ)
+        b.heroHi.nameTv.text = PitchMath.noteName(hi)
+        b.heroHi.hzTv.text = "${PitchMath.faFixed(hi, 1)} هرتز"
+        b.heroHi.solfTv.text = PitchMath.solfege(hi)
+        b.heroLo.nameTv.text = PitchMath.noteName(lo)
+        b.heroLo.hzTv.text = "${PitchMath.faFixed(lo, 1)} هرتز"
+        b.heroLo.solfTv.text = PitchMath.solfege(lo)
+
+        // گستره و مرکز
+        b.spanBig.text = PitchMath.faFixed(sp.spanSemitones, 1)
+        b.rangeText.text = if (sp.fullOctaves > 0)
+            "${PitchMath.faDigits(sp.fullOctaves)} اکتاو و ${PitchMath.faFixed(sp.restSemitones, 1)} نیم‌پرده"
+        else "${PitchMath.faFixed(sp.spanSemitones, 1)} نیم‌پرده"
+        b.centerText.text = "مرکز صدا: ${sp.centerName} (${PitchMath.faFixed(sp.centerHz, 0)} هرتز)"
+
+        // آمار مشتق (همهٔ واحدها)
+        b.statTvs["پرده"]?.text = PitchMath.faFixed(sp.spanSemitones / 2.0, 1)
+        b.statTvs["اکتاو"]?.text = PitchMath.faFixed(sp.spanOctaves, 2)
+        b.statTvs["سنت"]?.text = PitchMath.faFixed(sp.spanCents, 0)
+        b.statTvs["ربع‌پرده"]?.text = PitchMath.faFixed(sp.quarterTones, 1)
+        b.statTvs["درصد از یک اکتاو"]?.text = PitchMath.faFixed(sp.ofOctavePct, 0) + "٪"
+        b.statTvs["درجه (اکتاو = ۸ درجه)"]?.text = PitchMath.spanInDegrees(sp.spanSemitones).text
+
+        // نوار گستره
+        b.strip.lowMidi = PitchMath.nearestMidi(lo)
+        b.strip.highMidi = PitchMath.nearestMidi(hi)
+        b.strip.invalidate()
+
+        // بنر محدودهٔ دستی
+        b.manualRow.visibility = View.VISIBLE
+    }
+
     // ───────────────────────────── نمایش نتیجه ─────────────────────────────
 
     private fun renderReport(r: Report, elapsedMs: Long) {
         resultBox.removeAllViews()
+        // هر تحلیل تازه یا «بازگشت به خودکار»: محدودهٔ دستی پاک می‌شود
+        manualHighHz = null
+        manualLowHz = null
+        binds = null
 
         // کارت قهرمان: بالاترین/پایین‌ترین/گستره
         val hero = Theme.card(this)
         val topRow = Theme.row(this)
-        topRow.addView(heroCell("بالاترین نت", r.highest?.name ?: "—", r.highest?.f0, Theme.GOLD), weight(1f))
+        val heroHi = heroCell("بالاترین نت", r.highest?.name ?: "—", r.highest?.f0, Theme.GOLD)
+        val heroLo = heroCell("پایین‌ترین نت", r.lowest?.name ?: "—", r.lowest?.f0, Theme.TEAL)
+        topRow.addView(heroHi.view, weight(1f))
         topRow.addView(Theme.space(this, 8f))
-        topRow.addView(heroCell("پایین‌ترین نت", r.lowest?.name ?: "—", r.lowest?.f0, Theme.TEAL), weight(1f))
+        topRow.addView(heroLo.view, weight(1f))
         hero.addView(topRow)
         hero.addView(Theme.divider(this))
 
@@ -833,7 +930,17 @@ class MainActivity : Activity() {
         rangeRow.addView(rightCol, weight(1.4f))
         hero.addView(rangeRow)
 
-        hero.addView(Theme.space(this, 10f))
+        // بنر محدودهٔ دستی + بازگشت به حالت خودکار (فوق نوار گستره)
+        val manualRow = Theme.row(this)
+        val manualTag = Theme.text(this, "⚙ محدوده به‌صورت دستی تنظیم شده (خط‌چین‌ها را بکشید)", 11f, Theme.GOLD2, true)
+        val resetBtn = Theme.text(this, "↺ بازگشت به خودکار", 11f, Theme.TEAL, true)
+        manualRow.addView(manualTag, weight(1f))
+        manualRow.addView(resetBtn)
+        manualRow.visibility = View.GONE
+        hero.addView(manualRow)
+        hero.addView(Theme.space(this, 6f))
+
+        hero.addView(Theme.space(this, 4f))
         val strip = RangeStripView(this)
         strip.lowMidi = r.lowest?.midi ?: -1
         strip.highMidi = r.highest?.midi ?: -1
@@ -857,15 +964,20 @@ class MainActivity : Activity() {
         stats.addView(Theme.space(this, 8f))
         val grid = LinearLayout(this)
         grid.orientation = LinearLayout.VERTICAL
-        grid.addView(statLine("پرده", PitchMath.faFixed(r.spanSemitones / 2.0, 1)))
-        grid.addView(statLine("اکتاو", PitchMath.faFixed(r.spanOctaves, 2)))
-        grid.addView(statLine("سنت", PitchMath.faFixed(r.spanCents, 0)))
-        grid.addView(statLine("ربع‌پرده", PitchMath.faFixed(r.quarterTones, 1)))
-        grid.addView(statLine("درصد از یک اکتاو", PitchMath.faFixed(r.ofOctavePct, 0) + "٪"))
-        grid.addView(statLine("درجه (اکتاو = ۸ درجه)", PitchMath.spanInDegrees(r.spanSemitones).text))
-        grid.addView(statLine("نت‌های خوانده‌شده", PitchMath.faDigits(r.noteCount)))
-        grid.addView(statLine("مدت خواندن", PitchMath.faFixed(r.sungSec, 0) + " از " + PitchMath.faFixed(r.durationSec, 0) + " ثانیه"))
-        grid.addView(statLine("مکث‌ها (≥۰٫۳ ثانیه)", PitchMath.faDigits(r.pauseCount) + " · بلندترین " + PitchMath.faFixed(r.longestPause, 1) + " ثانیه"))
+        // سطرهای مشتق از محدوده — با ارجاع مقدار تا با درگ خط‌چین‌ها پویا به‌روز شوند
+        val statTvs = HashMap<String, android.widget.TextView>()
+        fun statRow(label: String, value: String, derived: Boolean) {
+            grid.addView(statLine(label, value) { tv -> if (derived) statTvs[label] = tv })
+        }
+        statRow("پرده", PitchMath.faFixed(r.spanSemitones / 2.0, 1), true)
+        statRow("اکتاو", PitchMath.faFixed(r.spanOctaves, 2), true)
+        statRow("سنت", PitchMath.faFixed(r.spanCents, 0), true)
+        statRow("ربع‌پرده", PitchMath.faFixed(r.quarterTones, 1), true)
+        statRow("درصد از یک اکتاو", PitchMath.faFixed(r.ofOctavePct, 0) + "٪", true)
+        statRow("درجه (اکتاو = ۸ درجه)", PitchMath.spanInDegrees(r.spanSemitones).text, true)
+        statRow("نت‌های خوانده‌شده", PitchMath.faDigits(r.noteCount), false)
+        statRow("مدت خواندن", PitchMath.faFixed(r.sungSec, 0) + " از " + PitchMath.faFixed(r.durationSec, 0) + " ثانیه", false)
+        statRow("مکث‌ها (≥۰٫۳ ثانیه)", PitchMath.faDigits(r.pauseCount) + " · بلندترین " + PitchMath.faFixed(r.longestPause, 1) + " ثانیه", false)
         if (r.validShare > 0.0) {
             grid.addView(
                 statLine(
@@ -878,7 +990,26 @@ class MainActivity : Activity() {
         }
         stats.addView(grid)
 
-        // نت‌های لحظه‌ای خام: جدا از گسترهٔ واقعی گزارش می‌شوند
+        // جزئیات قابل‌ردیابی محدوده — Hz واقعی، لحظهٔ وقوع، سنت، تداوم، کیفیت
+        val ri = r.rangeInfo
+        if (ri != null) {
+            stats.addView(Theme.space(this, 6f))
+            stats.addView(Theme.divider(this))
+            stats.addView(Theme.text(this, "جزئیات محدودهٔ پایدار (مبنای گزارش)", 11.5f, Theme.TXT, true))
+            stats.addView(Theme.text(this, "بالاترین: ${extremumTrace(ri.stableHigh)}", 10.5f, Theme.DIM))
+            stats.addView(Theme.text(this, "پایین‌ترین: ${extremumTrace(ri.stableLow)}", 10.5f, Theme.DIM))
+            if (ri.stableFallback) {
+                stats.addView(
+                    Theme.text(
+                        this,
+                        "نت پایداری با تداوم کافی تشخیص داده نشد؛ فقط محدودهٔ لحظه‌ای معتبر است.",
+                        10.5f, Theme.GOLD2
+                    )
+                )
+            }
+        }
+
+        // محدودهٔ لحظه‌ای واقعی: جدا از محدودهٔ اصلی گزارش می‌شود
         val rh = r.rawHighest
         val rl = r.rawLowest
         if (rh != null && rl != null && (rh.name != (r.highest?.name ?: "") || rl.name != (r.lowest?.name ?: ""))) {
@@ -887,12 +1018,22 @@ class MainActivity : Activity() {
             stats.addView(
                 Theme.text(
                     this,
-                    "بدون فیلتر: بالاترین ${rh.name} (${PitchMath.faFixed(rh.duration, 2)} ثانیه) · " +
+                    "محدودهٔ لحظه‌ای واقعی: بالاترین ${rh.name} (${PitchMath.faFixed(rh.duration, 2)} ثانیه) · " +
                         "پایین‌ترین ${rl.name} (${PitchMath.faFixed(rl.duration, 2)} ثانیه) — " +
-                        "این‌ها جیغ/لغزش لحظه‌ای‌اند و در گستره شمرده نشدند.",
+                        "شامل نت‌های کوتاه و تحریرها؛ محدودهٔ اصلی از نت‌های پایدار گرفته شده است.",
                     10.5f, 0x88FFFFFF.toInt()
                 )
             )
+            if (ri != null) {
+                stats.addView(
+                    Theme.text(
+                        this,
+                        "لحظه‌ای: بالاترین ${extremumTrace(ri.absoluteHigh)} · " +
+                            "پایین‌ترین ${extremumTrace(ri.absoluteLow)}",
+                        10.5f, 0x66FFFFFF.toInt()
+                    )
+                )
+            }
         }
         resultBox.addView(stats)
         resultBox.addView(Theme.space(this, 12f))
@@ -901,13 +1042,30 @@ class MainActivity : Activity() {
         val chartCard = Theme.card(this)
         chartCard.addView(Theme.text(this, "ردِّ صدا", 13.5f, Theme.TXT, true))
         chartCard.addView(
-            Theme.text(this, "روی نمودار بزنید تا از همان لحظه پخش شود", 11f, Theme.DIM)
+            Theme.text(this, "روی نمودار بزنید تا از همان لحظه پخش شود · خط‌چین‌های بالا/پایین را بکشید تا محدوده دستی تنظیم شود", 11f, Theme.DIM)
         )
         chartCard.addView(Theme.space(this, 6f))
         val chart = ChartView(this)
         chart.setReport(r)
+        // درگ خط‌چین‌ها: فقط در نمودارِ نتیجه (فایل/ضبط) — نه زنده
+        chart.rangesDraggable = true
+        chart.onRangeDrag = { isHigh, hz ->
+            if (isHigh) manualHighHz = hz else manualLowHz = hz
+            applyManualRange()
+        }
         chart.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Theme.dp(this, 210f))
         chartCard.addView(chart)
+
+        binds = RangeBinds(
+            heroHi = heroHi, heroLo = heroLo,
+            spanBig = big, rangeText = rangeText, centerText = centerText,
+            strip = strip, statTvs = statTvs,
+            manualRow = manualRow, resetBtn = resetBtn
+        )
+        resetBtn.setOnClickListener {
+            val rep = report ?: return@setOnClickListener
+            renderReport(rep, lastElapsedMs) // شروع renderReport محدودهٔ دستی را پاک می‌کند
+        }
 
         // ══ پخش‌کنندهٔ صوتی ══
         val playerBar = AudioPlayerBar(this)
@@ -1249,7 +1407,28 @@ class MainActivity : Activity() {
         ticker = null
     }
 
-    private fun heroCell(title: String, note: String, hz: Double?, color: Int): LinearLayout {
+    /** سلول قهرمان — به‌همراه ارجاع TextViewها برای به‌روزرسانی پویای محدودهٔ دستی */
+    private class HeroCell(
+        val view: LinearLayout,
+        val nameTv: android.widget.TextView,
+        val hzTv: android.widget.TextView,
+        val solfTv: android.widget.TextView
+    )
+
+    /** ارجاع همهٔ نماهایی که با تغییر محدودهٔ دستی باید پویا به‌روز شوند */
+    private class RangeBinds(
+        val heroHi: HeroCell,
+        val heroLo: HeroCell,
+        val spanBig: android.widget.TextView,
+        val rangeText: android.widget.TextView,
+        val centerText: android.widget.TextView,
+        val strip: RangeStripView,
+        val statTvs: HashMap<String, android.widget.TextView>,
+        val manualRow: View,
+        val resetBtn: android.widget.TextView
+    )
+
+    private fun heroCell(title: String, note: String, hz: Double?, color: Int): HeroCell {
         val c = LinearLayout(this)
         c.orientation = LinearLayout.VERTICAL
         c.gravity = Gravity.CENTER_HORIZONTAL
@@ -1257,18 +1436,25 @@ class MainActivity : Activity() {
         c.background = Theme.rounded(Theme.withAlpha(color, 0.08f), Theme.dpF(this, 14f), 1, Theme.withAlpha(color, 0.30f))
         c.addView(Theme.text(this, title, 11f, Theme.DIM, false, Gravity.CENTER))
         c.addView(Theme.space(this, 2f))
-        c.addView(Theme.text(this, note, 27f, color, true, Gravity.CENTER))
-        if (hz != null && hz > 0) {
-            c.addView(Theme.text(this, "${PitchMath.faFixed(hz, 1)} هرتز", 10.5f, Theme.DIM, false, Gravity.CENTER))
-            c.addView(Theme.text(this, PitchMath.solfege(hz), 10.5f, Theme.withAlpha(color, 0.8f), true, Gravity.CENTER))
-        }
-        return c
+        val nameTv = Theme.text(this, note, 27f, color, true, Gravity.CENTER)
+        c.addView(nameTv)
+        val hzTv = Theme.text(this, if (hz != null && hz > 0) "${PitchMath.faFixed(hz, 1)} هرتز" else "", 10.5f, Theme.DIM, false, Gravity.CENTER)
+        val solfTv = Theme.text(this, if (hz != null && hz > 0) PitchMath.solfege(hz) else "", 10.5f, Theme.withAlpha(color, 0.8f), true, Gravity.CENTER)
+        c.addView(hzTv)
+        c.addView(solfTv)
+        return HeroCell(c, nameTv, hzTv, solfTv)
     }
 
-    private fun statLine(label: String, value: String): View {
+    private fun statLine(
+        label: String,
+        value: String,
+        onValue: ((android.widget.TextView) -> Unit)? = null
+    ): View {
         val r = Theme.row(this)
         r.addView(Theme.text(this, label, 12f, Theme.DIM), weight(1f))
-        r.addView(Theme.text(this, value, 12.5f, Theme.TXT, true, Gravity.END), weight(1f))
+        val v = Theme.text(this, value, 12.5f, Theme.TXT, true, Gravity.END)
+        onValue?.invoke(v)
+        r.addView(v, weight(1f))
         val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         lp.bottomMargin = Theme.dp(this, 5f)
         r.layoutParams = lp
@@ -1410,9 +1596,13 @@ class MainActivity : Activity() {
 
             // نمودارِ اختصاصیِ رندر: رسم در ترد پس‌زمینه نباید با نمودارِ روی
             // صفحه (که ترد رابط کاربری هم آن را می‌کشد) قاطی شود.
+            // عکسِ لحظه‌ایِ محدودهٔ دستی همین‌جا (روی ترد رابط کاربری) گرفته
+            // می‌شود و به رندرر منتقل می‌شود تا ویدیو مقادیر دستی را نشان دهد.
+            val rangeSnap = ManualRangeSnapshot(manualHighHz, manualLowHz)
             val renderChart = ChartView(this).apply {
                 setReport(r)
                 setPlayhead(0.0)
+                setRangeOverride(rangeSnap.highHz, rangeSnap.lowHz)
             }
 
             Thread {
@@ -1530,15 +1720,20 @@ class MainActivity : Activity() {
         requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), REQ_WRITE)
     }
 
-    private fun exportPng(r: Report, chart: ChartView) = withWrite { doExportPng(r, chart) }
+    private fun exportPng(r: Report, chart: ChartView) =
+        withWrite { doExportPng(r, ManualRangeSnapshot(manualHighHz, manualLowHz), chart) }
 
-    private fun doExportPng(r: Report, chart: ChartView) {
+    private fun doExportPng(r: Report, snap: ManualRangeSnapshot, chart: ChartView) {
         try {
-            val lines = listOf(
-                "بالاترین: ${r.highest?.name ?: "—"}   ·   پایین‌ترین: ${r.lowest?.name ?: "—"}",
-                "گستره: ${PitchMath.faFixed(r.spanSemitones, 1)} نیم‌پرده (${PitchMath.faFixed(r.spanOctaves, 2)} اکتاو)",
-                "مرکز صدا: ${r.centerName} · ${r.noteCount} نت · ${PitchMath.faFixed(r.durationSec, 0)} ثانیه"
+            // جفتِ مؤثر (دستیِ معتبر، وگرنه خودکار) — همان مقادیری که
+            // خط‌چین‌ها و برچسب‌های نمودار نشان می‌دهند؛ سربرگ هم از همین ساخته می‌شود
+            val eff = ir.hamyareqari.dsp.RangeMath.effective(
+                snap.highHz, snap.lowHz, r.highest?.f0, r.lowest?.f0
             )
+            val lines = ir.hamyareqari.dsp.RangeMath.headerLines(eff, r.noteCount, r.durationSec)
+            // تزریق صریحِ محدودهٔ دستی به رندررِ خروجی پیش از ساخت بیت‌مپ؛
+            // هر کدام مستقل (null = همان خط، خودکار)
+            chart.setRangeOverride(snap.highHz, snap.lowHz)
             val bmp = chart.renderToBitmap(1600, 2400, "ردِّ صدا — ${sourceName}", lines)
             val saved = Persistence.saveBitmap(this, bmp, Persistence.safeName("همیار-قاری-${baseName()}", "png"))
             toast("✅ ذخیره شد: ${saved.displayPath}")
@@ -1551,7 +1746,8 @@ class MainActivity : Activity() {
 
     private fun doExportJson(r: Report, share: Boolean) {
         try {
-            val json = Json.report(r, sourceName, VERSION)
+            // مقادیر دستی (درگ خط‌چین‌ها) در خروجی JSON هم اعمال می‌شوند
+            val json = Json.report(r, sourceName, VERSION, lastSamples, manualHighHz, manualLowHz)
             val saved = Persistence.saveJson(this, json, Persistence.safeName("همیار-قاری-${baseName()}", "json"))
             if (share) Persistence.share(this, saved) else toast("✅ ذخیره شد: ${saved.displayPath}")
         } catch (e: Exception) {
@@ -1899,12 +2095,19 @@ class MainActivity : Activity() {
                     truncated = false
                 )
                 sharePcm = prepared
-                val rep = Analyzer.analyzeSignal(ShortSignal(prepared, AudioIo.TARGET_RATE), denoiseCheck.isChecked) { stage, p ->
-                    ui.post {
-                        val info = stageInfo(stage)
-                        showProgress(info.second + info.third * p, info.first)
-                    }
-                }
+                var recCurve: ir.hamyareqari.dsp.PitchCurve? = null
+                val rep = Analyzer.analyzeSignal(
+                    ShortSignal(prepared, AudioIo.TARGET_RATE), denoiseCheck.isChecked,
+                    { stage, p ->
+                        ui.post {
+                            val info = stageInfo(stage)
+                            showProgress(info.second + info.third * p, info.first)
+                        }
+                    },
+                    ir.hamyareqari.dsp.Engine.ENHANCED,
+                    { c -> recCurve = c }
+                )
+                lastSamples = recCurve?.let { PitchSampleStream.fromCurve(it, "enhanced") }
                 ui.post {
                     busy = false
                     hideProgress()
@@ -1929,8 +2132,10 @@ class MainActivity : Activity() {
 
     /**
      * ردیابی لحظه‌ای: هر ۱۲۰ میلی‌ثانیه روی آخرین ~۵۵ میلی‌ثانیه صدا
-     * یک برآورد FRESH می‌گیرد، اصلاح سریع اکتاو می‌زند، و اگر یک نت
-     * دست‌کم ۳ فریم پایدار بماند آن را در گسترهٔ زنده حساب می‌کند.
+     * یک برآورد FRESH می‌گیرد، از Quality Gate و Stabilizer (قرارداد مشترک V1)
+     * می‌گذرد، و اگر یک نت دست‌کم ۳ فریم پایدار بماند آن را در گسترهٔ زنده
+     * حساب می‌کند. موتور از backend selector انتخاب می‌شود؛ اگر FCPE در دسترس
+     * نباشد (همان‌طور که امروز نیست) بدون Crash به موتور فعلی برمی‌گردد.
      */
     private inner class LiveEngine {
         var error: String? = null
@@ -1940,29 +2145,38 @@ class MainActivity : Activity() {
         private var worker: Thread? = null
         @Volatile private var running = false
 
-        private val yin = YinTracker(AudioIo.TARGET_RATE, 55.0, 1200.0, 0.055)
-        private val frameBuf = DoubleArray(yin.w)
-        private val fp = ir.hamyareqari.dsp.FramePitch()
-        private val fft = ir.hamyareqari.dsp.Fft(2048)
-        private val fre = DoubleArray(2048)
-        private val fim = DoubleArray(2048)
-        private val fwin = ir.hamyareqari.dsp.hann(2048)
-        private val scratch = DoubleArray(2048)
+        /** موتور انتخاب‌شده — FCPE فقط با runtime و مدل واقعی؛ وگرنه ENHANCED */
+        private val estimator: PitchEstimator = PitchBackendSelector.selectSafe(FCPE_EXPERIMENTAL) {
+            try {
+                assets.open(FCPE_MODEL_ASSET).readBytes()
+            } catch (e: Exception) {
+                null // مدل واقعی در assets نیست → fallback بدون Crash
+            }
+        }
+        /** لولهٔ مشترک V1: Quality Gate + Stabilizer → PitchSample */
+        private val sampleStream = PitchSampleStream(backendTag = estimator.backendId.tag)
+        private var lastF0 = 0.0
 
         private val traceT = ArrayList<Double>(4096)
         private val traceHz = ArrayList<Double>(4096)
         private var startedAt = 0L
-        private var lastMidi = -1
-        private var stableCount = 0
-        private var highHz = 0.0
-        private var lowHz = 0.0
+        /**
+         * تحلیل‌گر محدوده — همان منطق مشترک فایل/میکروفن: نمونه‌ها انباشته می‌شوند و
+         * محدوده با بازمحاسبه از **کل داده‌های معتبر** به‌دست می‌آید (نه min/max لحظه‌ای
+         * و نه وابسته به تعداد فریم/نرخ refresh). مدت‌ها از timestamp واقعی نمونه‌ها.
+         */
+        private val rangeStream = ir.hamyareqari.dsp.pitch.PitchRangeAnalyzer.Streaming()
+        @Volatile private var lastRange: ir.hamyareqari.dsp.pitch.PitchRangeAnalyzer.RangeResult? = null
+        private var rangeFrameCounter = 0
         private val recording get() = liveRecording
 
         fun resetRecord() {
-            highHz = 0.0
-            lowHz = 0.0
-            lastMidi = -1
-            stableCount = 0
+            lastF0 = 0.0
+            rangeStream.clear()
+            lastRange = null
+            rangeFrameCounter = 0
+            estimator.reset()
+            sampleStream.reset()
             synchronized(lock) {
                 traceT.clear()
                 traceHz.clear()
@@ -1972,6 +2186,9 @@ class MainActivity : Activity() {
         fun start(): Boolean {
             startedAt = System.currentTimeMillis()
             running = true
+            lastF0 = 0.0
+            estimator.reset()
+            sampleStream.reset()
             val cap = AudioIo.MicCapture { block, count ->
                 synchronized(lock) {
                     buffer.add(block, count)
@@ -1993,13 +2210,19 @@ class MainActivity : Activity() {
             capture?.stop()
             worker?.let { try { it.join(800) } catch (e: Exception) { } }
             worker = null
+            // نمونهٔ باقی‌ماندهٔ تثبیت‌کننده + بازبینی نهایی محدوده از کل داده‌های معتبر
+            sampleStream.flush()?.let { rangeStream.add(it) }
+            val res = rangeStream.current()
+            lastRange = res
+            ui.post { applyRangeLabels(res) }
             liveChart.setLive(true)
             val rec = recording
             return if (rec != null && rec.size > 0) rec.toArray() else null
         }
 
         private fun loop() {
-            val want = yin.w
+            // طول پنجره از خود موتور انتخاب‌شده گرفته می‌شود (نه مقدار ثابت UI)
+            val want = (0.055 * AudioIo.TARGET_RATE).toInt()
             while (running) {
                 val snap: ShortArray
                 synchronized(lock) {
@@ -2011,31 +2234,46 @@ class MainActivity : Activity() {
                     }
                 }
                 if (snap.isNotEmpty()) {
-                    val s = ShortSignal(snap, AudioIo.TARGET_RATE)
-                    yin.pitchAt(s, 0, fp, frameBuf)
-                    var f0 = fp.f0
-                    if (f0 > 0 && fp.clarity > 0.5) {
-                        val fixed = Harmonics.quickOctaveFix(
-                            s, AudioIo.TARGET_RATE, 0, min(want, 2048), f0,
-                            fft, fre, fim, scratch, fwin
-                        )
-                        if (fixed > 0) f0 = fixed
-                    } else {
-                        f0 = 0.0
-                    }
                     val t = (System.currentTimeMillis() - startedAt) / 1000.0
+                    val s = ShortSignal(snap, AudioIo.TARGET_RATE)
+                    // قرارداد مشترک V1: backend → Quality Gate → Stabilizer → PitchSample
+                    val raw = estimator.estimateFrame(s, 0, t)
+                    val sample = sampleStream.feed(raw)
+                    if (sample != null) {
+                        lastF0 = sample.stableF0Hz
+                        // انباشت برای محدوده — timestamp نمونه = زمان واقعی دیوار
+                        rangeStream.add(sample)
+                    }
+                    // بازمحاسبهٔ دوره‌ای محدوده از کل داده تاکنون (در نخ پس‌زمینه؛
+                    // وابسته به refresh رابط نیست)
+                    rangeFrameCounter++
+                    if (rangeFrameCounter % 8 == 0) {
+                        lastRange = rangeStream.current()
+                    }
+                    val freq = lastF0
                     synchronized(lock) {
                         traceT.add(t)
-                        traceHz.add(f0)
+                        traceHz.add(freq)
                         while (traceT.isNotEmpty() && t - traceT[0] > 12.0) {
                             traceT.removeAt(0)
                             traceHz.removeAt(0)
                         }
                     }
-                    val freq = f0
                     ui.post { onLiveFrame(t, freq) }
                 }
                 try { Thread.sleep(110) } catch (e: InterruptedException) { }
+            }
+        }
+
+        /** به‌روزرسانی برچسب‌های محدوده از نتیجهٔ تحلیل‌گر مشترک */
+        private fun applyRangeLabels(res: ir.hamyareqari.dsp.pitch.PitchRangeAnalyzer.RangeResult) {
+            val hi = res.stableHigh
+            val lo = res.stableLow
+            if (hi != null) liveHighLabel.text = PitchMath.noteName(hi.f0Hz)
+            if (lo != null) liveLowLabel.text = PitchMath.noteName(lo.f0Hz)
+            if (hi != null && lo != null) {
+                val semis = PitchMath.cents(hi.f0Hz, lo.f0Hz) / 100.0
+                liveSpanLabel.text = PitchMath.faFixed(semis, 1)
             }
         }
 
@@ -2052,21 +2290,8 @@ class MainActivity : Activity() {
                 else "${PitchMath.faFixed(-cents, 0)} سنت پایین"
                 liveNoteName.setTextColor(Theme.GOLD)
 
-                if (midi == lastMidi) stableCount++ else { lastMidi = midi; stableCount = 0 }
-                if (stableCount >= 3) {
-                    if (f0 > highHz) {
-                        highHz = f0
-                        liveHighLabel.text = PitchMath.noteName(f0)
-                    }
-                    if (lowHz == 0.0 || f0 < lowHz) {
-                        lowHz = f0
-                        liveLowLabel.text = PitchMath.noteName(f0)
-                    }
-                    if (highHz > 0 && lowHz > 0) {
-                        val semis = PitchMath.cents(highHz, lowHz) / 100.0
-                        liveSpanLabel.text = PitchMath.faFixed(semis, 1)
-                    }
-                }
+                // محدوده از تحلیل‌گر مشترک (محدودهٔ پایدار = مبنای اصلی)
+                lastRange?.let { applyRangeLabels(it) }
                 liveDurLabel.text = PitchMath.faFixed(t, 0) + " ث"
             } else {
                 liveNoteName.setTextColor(Theme.DIM)

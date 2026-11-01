@@ -27,7 +27,22 @@ object Json {
         return String.format(java.util.Locale.US, "%." + digits + "f", r)
     }
 
-    fun report(r: Report, sourceName: String, appVersion: String): String {
+    fun report(
+        r: Report,
+        sourceName: String,
+        appVersion: String,
+        /** قرارداد مشترک نمونه‌ها (مسیر V1) — اختیاری و افزودنی؛ کلیدهای قبلی دست‌نخورده */
+        samples: List<ir.hamyareqari.dsp.pitch.PitchSample>? = null,
+        /** محدودهٔ دستیِ کاربر (درگ خط‌چین‌ها روی نمودار) — null = مقدار خودکارِ موتور */
+        manualHighHz: Double? = null,
+        manualLowHz: Double? = null
+    ): String {
+        // وقتی محدودهٔ دستی اعمال شده، همهٔ مشتق‌های «range» از مقادیر دستی
+        // بازمحاسبه می‌شوند؛ ردِّ خودکارِ موتور در raw_* و range_details دست‌نخورده می‌ماند.
+        val manual = manualHighHz != null && manualLowHz != null && manualHighHz > 0.0 && manualLowHz > 0.0
+        val mspan = if (manual) RangeMath.span(manualHighHz!!, manualLowHz!!) else null
+        val hiJson = if (manual) manualExtremumJson(manualHighHz!!) else noteJson(r.highest)
+        val loJson = if (manual) manualExtremumJson(manualLowHz!!) else noteJson(r.lowest)
         val sb = StringBuilder(8192)
         sb.append("{\n")
         sb.append("  \"app\": \"همیار قاری\",\n")
@@ -39,20 +54,45 @@ object Json {
         sb.append("  \"sung_sec\": ").append(num(r.sungSec)).append(",\n")
 
         sb.append("  \"range\": {\n")
-        sb.append("    \"highest\": ").append(noteJson(r.highest)).append(",\n")
-        sb.append("    \"lowest\": ").append(noteJson(r.lowest)).append(",\n")
+        sb.append("    \"source\": \"").append(if (manual) "manual" else "auto").append("\",\n")
+        sb.append("    \"highest\": ").append(hiJson).append(",\n")
+        sb.append("    \"lowest\": ").append(loJson).append(",\n")
         sb.append("    \"raw_highest\": ").append(noteJson(r.rawHighest)).append(",\n")
         sb.append("    \"raw_lowest\": ").append(noteJson(r.rawLowest)).append(",\n")
-        sb.append("    \"span_semitones\": ").append(num(r.spanSemitones)).append(",\n")
-        sb.append("    \"span_octaves\": ").append(num(r.spanOctaves)).append(",\n")
-        sb.append("    \"span_cents\": ").append(num(r.spanCents)).append(",\n")
-        sb.append("    \"full_octaves\": ").append(r.fullOctaves).append(",\n")
-        sb.append("    \"rest_semitones\": ").append(num(r.restSemitones)).append(",\n")
-        sb.append("    \"quarter_tones\": ").append(num(r.quarterTones)).append(",\n")
-        sb.append("    \"of_octave_pct\": ").append(num(r.ofOctavePct)).append(",\n")
-        sb.append("    \"center_note\": \"").append(esc(r.centerName)).append("\",\n")
-        sb.append("    \"center_hz\": ").append(num(r.centerHz)).append("\n")
+        sb.append("    \"span_semitones\": ").append(num(mspan?.spanSemitones ?: r.spanSemitones)).append(",\n")
+        sb.append("    \"span_octaves\": ").append(num(mspan?.spanOctaves ?: r.spanOctaves)).append(",\n")
+        sb.append("    \"span_cents\": ").append(num(mspan?.spanCents ?: r.spanCents)).append(",\n")
+        sb.append("    \"full_octaves\": ").append(mspan?.fullOctaves ?: r.fullOctaves).append(",\n")
+        sb.append("    \"rest_semitones\": ").append(num(mspan?.restSemitones ?: r.restSemitones)).append(",\n")
+        sb.append("    \"quarter_tones\": ").append(num(mspan?.quarterTones ?: r.quarterTones)).append(",\n")
+        sb.append("    \"of_octave_pct\": ").append(num(mspan?.ofOctavePct ?: r.ofOctavePct)).append(",\n")
+        sb.append("    \"center_note\": \"").append(esc(mspan?.centerName ?: r.centerName)).append("\",\n")
+        sb.append("    \"center_hz\": ").append(num(mspan?.centerHz ?: r.centerHz)).append("\n")
         sb.append("  },\n")
+
+        // ── جزئیات قابل‌ردیابی محدوده (افزودنی) — هر مقدار با Hz/زمان/سنت/تداوم/کیفیت ──
+        val ri = r.rangeInfo
+        if (ri != null) {
+            sb.append("  \"range_details\": {\n")
+            sb.append("    \"stable_fallback\": ").append(ri.stableFallback).append(",\n")
+            sb.append("    \"stable_high\": ").append(extremumJson(ri.stableHigh)).append(",\n")
+            sb.append("    \"stable_low\": ").append(extremumJson(ri.stableLow)).append(",\n")
+            sb.append("    \"absolute_high\": ").append(extremumJson(ri.absoluteHigh)).append(",\n")
+            sb.append("    \"absolute_low\": ").append(extremumJson(ri.absoluteLow)).append(",\n")
+            sb.append("    \"stats\": {")
+                .append("\"frames_considered\": ").append(ri.stats.framesConsidered)
+                .append(", \"frames_used\": ").append(ri.stats.framesUsed)
+                .append(", \"invalid_excluded\": ").append(ri.stats.invalidFramesExcluded)
+                .append(", \"estimated_excluded\": ").append(ri.stats.estimatedFramesExcluded)
+                .append(", \"octave_errors_excluded\": ").append(ri.stats.octaveErrorsExcluded)
+                .append(", \"outliers_excluded\": ").append(ri.stats.outliersExcluded)
+                .append(", \"jumps_accepted\": ").append(ri.stats.jumpsAccepted)
+                .append(", \"ornament_peaks\": ").append(ri.stats.ornamentPeaks)
+                .append(", \"stable_groups\": ").append(ri.stats.stableGroups)
+                .append(", \"total_groups\": ").append(ri.stats.totalGroups)
+                .append("}\n")
+            sb.append("  },\n")
+        }
 
         sb.append("  \"quality\": {\n")
         sb.append("    \"status\": \"").append(esc(r.quality.status)).append("\",\n")
@@ -110,7 +150,59 @@ object Json {
             if (i < r.shares.size - 1) sb.append(",")
             sb.append("\n")
         }
-        sb.append("  ]\n}\n")
+        // ── قرارداد مشترک نمونه‌ها (V1) — فقط اگر داده‌شده باشد؛ افزودنی ──
+        if (samples != null && samples.isNotEmpty()) {
+            sb.append("  ],\n")
+            sb.append("  \"pitch_samples\": {\n")
+            sb.append("    \"fields\": [\"timestamp_sec\", \"raw_f0_hz\", \"stable_f0_hz\", \"note\", \"note_midi\", \"cents\", \"quality_score\", \"loudness_rms\", \"status\", \"backend\"],\n")
+            sb.append("    \"list\": [\n")
+            for ((i, s) in samples.withIndex()) {
+                sb.append("      {\"timestamp_sec\": ").append(num(s.timestampSec, 3))
+                    .append(", \"raw_f0_hz\": ").append(num(s.rawF0Hz))
+                    .append(", \"stable_f0_hz\": ").append(num(s.stableF0Hz))
+                    .append(", \"note\": \"").append(esc(s.noteName)).append('"')
+                    .append(", \"note_midi\": ").append(s.noteMidi)
+                    .append(", \"cents\": ").append(num(s.cents, 1))
+                    .append(", \"quality_score\": ").append(num(s.qualityScore, 3))
+                    .append(", \"loudness_rms\": ").append(num(s.loudnessRms, 4))
+                    .append(", \"status\": \"").append(ir.hamyareqari.dsp.pitch.FrameStatus.name(s.status)).append('"')
+                    .append(", \"backend\": \"").append(esc(s.backend)).append("\"}")
+                if (i < samples.size - 1) sb.append(",")
+                sb.append("\n")
+            }
+            sb.append("    ]\n")
+            sb.append("  }\n}\n")
+        } else {
+            sb.append("  ]\n}\n")
+        }
+        return sb.toString()
+    }
+
+    /** جزئیات قابل‌ردیابی یک مقدار محدوده — Hz واقعی (بدون گرد)، زمان، سنت، تداوم، کیفیت */
+    private fun extremumJson(e: ir.hamyareqari.dsp.pitch.PitchRangeAnalyzer.Extremum?): String {
+        if (e == null) return "null"
+        val sb = StringBuilder()
+        sb.append("{\"f0_hz\": ").append(num(e.f0Hz, 4)).append(", ")
+        sb.append("\"time_sec\": ").append(num(e.timestampSec, 3)).append(", ")
+        sb.append("\"note_midi\": ").append(e.noteMidi).append(", ")
+        sb.append("\"note\": \"").append(esc(e.noteName)).append("\", ")
+        sb.append("\"cents_off_note\": ").append(num(e.cents, 1)).append(", ")
+        sb.append("\"duration_sec\": ").append(num(e.durationSec, 3)).append(", ")
+        sb.append("\"quality\": ").append(num(e.qualityScore, 3)).append(", ")
+        sb.append("\"frames\": ").append(e.frameCount).append(", ")
+        sb.append("\"stable\": ").append(e.stable).append("}")
+        return sb.toString()
+    }
+
+    /** مقدار دستیِ کاربر: نامِ نزدیک‌ترین نت + Hz واقعی؛ چیزهایی که موتور نمی‌داند صادقانه null */
+    private fun manualExtremumJson(hz: Double): String {
+        val sb = StringBuilder()
+        sb.append("{\"note\": \"").append(esc(PitchMath.noteNameAscii(hz))).append("\", ")
+        sb.append("\"f0_hz\": ").append(num(hz, 4)).append(", ")
+        sb.append("\"note_midi\": ").append(num(PitchMath.hzToMidi(hz), 4)).append(", ")
+        sb.append("\"cents_off_note\": ").append(num(PitchMath.centsOffPitch(hz), 1)).append(", ")
+        sb.append("\"manual\": true, ")
+        sb.append("\"start\": null, \"duration\": null, \"confidence\": null}")
         return sb.toString()
     }
 

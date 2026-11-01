@@ -1,5 +1,7 @@
 package ir.hamyareqari.dsp
 
+import ir.hamyareqari.dsp.pitch.PitchRangeAnalyzer
+import ir.hamyareqari.dsp.pitch.PitchSampleStream
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -55,7 +57,13 @@ class Report(
     /** سهم فریم‌های درون‌یابی‌شده (تخمینی) */
     val estimatedShare: Double = 0.0,
     /** نام موتور F0 که این گزارش با آن ساخته شده */
-    val engineName: String = "legacy"
+    val engineName: String = "legacy",
+    /**
+     * نتیجهٔ تحلیل‌گر محدوده (اختیاری) — محدودهٔ پایدار (Stable) و لحظه‌ای
+     * (Absolute) با جزئیات قابل‌ردیابی (Hz، زمان، نام نت، سنت، تداوم، کیفیت).
+     * null = دادهٔ کافی برای محاسبهٔ محدوده وجود نداشته (با مقدار ساختگی پر نشده).
+     */
+    val rangeInfo: PitchRangeAnalyzer.RangeResult? = null
 ) {
     val centerName: String get() = PitchMath.noteName(centerHz)
     val noteCount: Int get() = notes.size
@@ -215,6 +223,22 @@ object Analyzer {
         denoise: Boolean,
         progress: ((String, Double) -> Unit)?,
         engine: Engine
+    ): Report = analyzeSignal(sigInput, denoise, progress, engine, null)
+
+    /**
+     * نسخهٔ کامل‌تر با خروجی اختیاری منحنی فریم‌ها (برای قرارداد مشترک نمونه‌ها).
+     *
+     * [onCurve] فقط در مسیر ENHANCED صدا زده می‌شود (منحنی فریم‌ها)؛ در مسیر
+     * LEGACY با null صدا زده می‌شود. رفتار تحلیل و گزارش هیچ تغییری نمی‌کند؛
+     * این فقط یک «نگاه» به دادهٔ میانی است تا مصرف‌کننده (JSON/تست) بتواند
+     * قرارداد نمونه‌ها (PitchSample) را بدون اجرای دوبارهٔ موتور بسازد.
+     */
+    fun analyzeSignal(
+        sigInput: Signal,
+        denoise: Boolean,
+        progress: ((String, Double) -> Unit)?,
+        engine: Engine,
+        onCurve: ((PitchCurve?) -> Unit)?
     ): Report {
         var sig = sigInput
         if (denoise) {
@@ -266,6 +290,9 @@ object Analyzer {
         }
         val fixed = track
 
+        // نگاه اختیاری به منحنی فریم‌ها (قرارداد مشترک نمونه‌ها) — بدون اثر روی گزارش
+        onCurve?.invoke(curve)
+
         progress?.invoke("notes", 0.74)
         var notes = Segmenter.segment(fixed)
         val sungAll = Segmenter.sungSeconds(notes)
@@ -291,10 +318,46 @@ object Analyzer {
         progress?.invoke("stats", 0.88)
         val sungSec = Segmenter.sungSeconds(notes)
         val real = Segmenter.realNotes(notes, sungSec)
-        val highest = real.maxByOrNull { it.f0 }
-        val lowest = real.minByOrNull { it.f0 }
-        val rawHighest = notes.maxByOrNull { it.f0 }
-        val rawLowest = notes.minByOrNull { it.f0 }
+
+        // ── محدودهٔ صوتی با تحلیل‌گر اختصاصی (یک منطق مشترک برای فایل و میکروفن) ──
+        // ورودی: خروجی همان زنجیرهٔ مشترک (گیت کیفیت + تثبیت‌کننده) — نه min/max خام.
+        val rangeInfo: PitchRangeAnalyzer.RangeResult? = try {
+            val samples = if (curve != null) {
+                // نرخ کامل (maxPoints=0 → بدون نازک‌سازی) — همهٔ فریم‌های معتبر وارد محدوده شوند
+                PitchSampleStream.fromCurve(curve, maxPoints = 0)
+            } else {
+                val stream = PitchSampleStream(backendTag = ir.hamyareqari.dsp.pitch.BackendId.ENHANCED.tag)
+                val raws = ArrayList<ir.hamyareqari.dsp.pitch.RawPitchFrame>(fixed.size)
+                for (i in 0 until fixed.size) {
+                    raws.add(
+                        ir.hamyareqari.dsp.pitch.RawPitchFrame(
+                            timestampSec = fixed.t[i],
+                            f0Hz = fixed.f0[i],
+                            confidence = fixed.clarity[i],
+                            loudnessRms = fixed.rms[i],
+                            snrDb = 0.0,
+                            periodicity = fixed.clarity[i]
+                        )
+                    )
+                }
+                stream.feedAll(raws)
+            }
+            PitchRangeAnalyzer().analyzeSamples(samples)
+        } catch (t: Throwable) {
+            null
+        }
+
+        // نگاشت به NoteHit برای نمایش — محدودهٔ پایدار = محدودهٔ اصلی، لحظه‌ای = تکمیلی
+        fun extremumHit(e: PitchRangeAnalyzer.Extremum?): NoteHit? = e?.let {
+            NoteHit(
+                it.timestampSec, it.timestampSec + it.durationSec, it.durationSec,
+                it.f0Hz, 0.0, it.qualityScore, 0.0, it.frameCount, 0
+            )
+        }
+        val highest = extremumHit(rangeInfo?.stableHigh) ?: real.maxByOrNull { it.f0 }
+        val lowest = extremumHit(rangeInfo?.stableLow) ?: real.minByOrNull { it.f0 }
+        val rawHighest = extremumHit(rangeInfo?.absoluteHigh) ?: notes.maxByOrNull { it.f0 }
+        val rawLowest = extremumHit(rangeInfo?.absoluteLow) ?: notes.minByOrNull { it.f0 }
 
         val spanSemis = if (highest != null && lowest != null)
             PitchMath.cents(highest.f0, lowest.f0) / 100.0 else 0.0
@@ -465,7 +528,8 @@ object Analyzer {
             validShare = validShare,
             uncertainShare = uncertainShare,
             estimatedShare = estimatedShare,
-            engineName = if (engine == Engine.ENHANCED) "enhanced" else "legacy"
+            engineName = if (engine == Engine.ENHANCED) "enhanced" else "legacy",
+            rangeInfo = rangeInfo
         )
     }
 

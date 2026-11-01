@@ -1,0 +1,62 @@
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by org.fusesource.jansi.internal.JansiLoader in an unnamed module (file:/tmp/android/kotlin/lib/kotlin-compiler.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::invokeCleaner has been called by org.jetbrains.kotlin.cli.jvm.compiler.jarfs.FastJarFileSystemKt (file:/tmp/android/kotlin/lib/kotlin-compiler.jar)
+WARNING: Please consider reporting this to the maintainers of class org.jetbrains.kotlin.cli.jvm.compiler.jarfs.FastJarFileSystemKt
+WARNING: sun.misc.Unsafe::invokeCleaner will be removed in a future release
+═══ بنچمارک موتور F0 «همیار قاری» ═══
+همهٔ نمونه‌ها مصنوعی‌اند؛ اعداد، خطای نسبی دو مسیر و رگرسیون را می‌سنجند.
+
+نمونه                  موتور         رد% میانه‌سنت     p95  اکتاو%   فاحش%   پذیرش%      نت   آواز  onsetms offsetms  زمانms
+scale_clean            legacy       0.0%     1.98     3.2    0.0%    0.0%     0.0%      8    7.5       31       30     279
+scale_clean            enhanced     0.0%     1.29     2.2    0.0%    0.0%     0.0%      8    7.3       31       30     240
+tarjeeh_fast           legacy       0.0%     8.32    13.5    0.0%    0.0%     0.0%     59    6.9       33       30     127
+tarjeeh_fast           enhanced     0.0%     5.79     9.3    0.0%    0.0%     0.0%     61    6.7       33       30     162
+range_low_high         legacy       0.0%     1.56     3.7    0.0%    0.0%     0.0%      2    5.5       31       30      74
+range_low_high         enhanced     0.0%     1.10     2.6    0.0%    0.0%     0.0%      2    5.5       31       30     114
+steps_fast             legacy       0.0%     0.31   157.3    1.6%    7.3%     0.0%      9    1.3       31       30      22
+steps_fast             enhanced     3.6%     0.20     4.2    0.0%    1.7%     0.0%      9    1.3       31       30      31
+silence_digital        legacy       0.0%     0.00     0.0    0.0%    0.0%     0.0%      0    0.0        0        0       2
+silence_digital        enhanced     0.0%     0.00     0.0    0.0%    0.0%     0.0%      0    0.0        0        0       8
+silence_hiss           legacy       0.0%     0.00     0.0    0.0%    0.0%     0.0%      0    0.0        0        0      66
+silence_hiss           enhanced     0.0%     0.00     0.0    0.0%    0.0%     0.0%      0    0.0        0        0     127
+white_noise            legacy       0.0%     0.00     0.0    0.0%    0.0%     0.0%      0    0.0        0        0      67
+white_noise            enhanced     0.0%     0.00     0.0    0.0%    0.0%     0.0%      0    0.0        0        0     126
+wind                   legacy       0.0%     0.00     0.0    0.0%    0.0%    59.5%      5    0.6        0        0      72
+wind                   enhanced     0.0%     0.00     0.0    0.0%    0.0%     3.7%      0    0.0        0        0     120
+applause               legacy       0.0%     0.00     0.0    0.0%    0.0%     0.0%      0    0.0        0        0      68
+applause               enhanced     0.0%     0.00     0.0    0.0%    0.0%     0.0%      0    0.0        0        0     137
+babble                 legacy       0.0%     0.00     0.0    0.0%    0.0%    96.9%     11    1.3        0        0     104
+babble                 enhanced     0.0%     0.00     0.0    0.0%    0.0%    20.1%      2    0.2        0        0     119
+voice_snr20            legacy       0.0%     4.67     7.1    0.0%    0.0%     0.0%      6    5.9       32       31      70
+voice_snr20            enhanced     0.0%     3.08     4.9    0.0%    0.0%     0.0%     10    6.0       32       31     132
+voice_snr10            legacy       0.0%     4.72     7.6    0.0%    0.0%     0.0%      8    5.9       32       31      76
+voice_snr10            enhanced     0.0%     3.04     5.6    0.0%    0.0%     0.0%     10    6.0       32       31     117
+voice_snr05            legacy       0.0%     4.60     9.5    0.1%    0.1%     0.0%      8    5.9       32       31      72
+voice_snr05            enhanced     0.0%     3.28     7.9    0.0%    0.0%     0.0%     11    6.0       32       31      82
+voice_echo             legacy       0.0%    10.63    25.6    1.6%    1.6%     0.0%      4    4.9       32       29      59
+voice_echo             enhanced     0.8%     9.56    24.5    0.4%    0.4%     0.0%      3    4.9       32       29      76
+voice_clipped          legacy       0.0%     2.61     4.4    0.0%    0.0%     0.0%      1    4.9       32       29      60
+voice_clipped          enhanced     0.0%     1.81     3.2    0.0%    0.0%     0.0%      1    5.0       32       29      73
+voice_plus_babble      legacy       0.0%     3.57     5.9    0.0%    0.0%     0.0%      1    5.9       32       31      70
+voice_plus_babble      enhanced     0.0%     2.28     4.3    0.0%    0.0%     0.0%      1    6.0       32       31      84
+tarjeeh_wide           legacy       0.0%    17.66    30.3    0.0%    0.0%     0.0%      0    0.0       32       29      57
+tarjeeh_wide           enhanced     0.4%    12.77    20.9    0.0%    0.0%     0.0%      0    0.0       32       49      76
+falsetto_high          legacy       0.0%     3.91     6.1    0.0%    0.0%     0.0%      1    3.4       32       30      46
+falsetto_high          enhanced     0.1%     2.73     4.3    0.4%    0.4%     0.0%      1    3.4       32       30      56
+weak_fundamental_100   legacy       0.0%     0.03     0.1    0.0%    0.0%     0.0%      1    3.9       32       31      48
+weak_fundamental_100   enhanced     0.0%     0.03     0.1    0.0%    0.0%     0.0%      1    4.0       32       31      56
+rate_16000             legacy       0.0%     2.68     4.2    0.0%    0.0%     0.0%      1    4.0       33       33      49
+rate_16000             enhanced     0.0%     1.81     2.8    0.0%    0.0%     0.0%      1    4.0       33       33      32
+rate_44100             legacy       0.0%     2.72     4.0    0.0%    0.0%     0.0%      1    3.9       32       31     116
+rate_44100             enhanced     0.0%     1.79     2.9    0.0%    0.0%     0.0%      1    4.0       32       31     152
+
+خلاصهٔ «legacy»: میانهٔ خطا=3.57 سنت · بدترین p95=157.3 سنت · اکتاو=0.2% · فاحش=0.6% · رد اشتباه=0.0% · پذیرش اشتباهِ نویز=26.1%
+   حفظ تحریر (دامنهٔ ارتعاش خروجی/ورودی): 0.92 0.88 0.88 0.87 0.87 0.59 0.88 0.92 0.86 0.87 0.89 0.89
+خلاصهٔ «enhanced»: میانهٔ خطا=2.28 سنت · بدترین p95=24.5 سنت · اکتاو=0.1% · فاحش=0.2% · رد اشتباه=0.3% · پذیرش اشتباهِ نویز=4.0%
+   حفظ تحریر (دامنهٔ ارتعاش خروجی/ورودی): 0.94 0.93 0.93 0.94 0.92 0.59 0.92 0.94 0.91 0.91 0.94 0.91
+
+✅ هیچ رگرسیونی نسبت به مسیر فعلی دیده نشد
