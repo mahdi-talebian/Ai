@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#071021" />
+    <title>Basmala practice</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <style>
+@import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+
+:root { color-scheme: dark; --ink: #f0e8d5; --muted: #a8abc0; --gold: #e8d477; --gold-soft: #9d9565; --navy: #071021; --deep: #050b19; --line: rgba(220, 208, 142, .45); }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; background: var(--deep); }
+body { margin: 0; background: var(--deep); color: var(--ink); font-family: 'DM Sans', system-ui, sans-serif; }
+button { font: inherit; color: inherit; cursor: pointer; }
+.practice-shell { min-height: 100vh; overflow: hidden; background: radial-gradient(ellipse at 50% -15%, #20365c 0, #0b1730 36%, #050b19 74%); position: relative; }
+.practice-shell::before { content: ''; position: fixed; inset: 0; pointer-events: none; opacity: .8; background-image: radial-gradient(circle at 16% 21%, rgba(255,255,255,.7) 0 1px, transparent 1.8px), radial-gradient(circle at 77% 12%, rgba(255,255,255,.5) 0 1px, transparent 1.7px), radial-gradient(circle at 65% 44%, rgba(255,255,255,.4) 0 1px, transparent 1.7px), radial-gradient(circle at 38% 72%, rgba(255,255,255,.45) 0 1px, transparent 1.7px), radial-gradient(circle at 88% 78%, rgba(255,255,255,.4) 0 1px, transparent 1.7px); background-size: 290px 230px, 370px 310px, 250px 280px, 410px 290px, 330px 390px; mix-blend-mode: screen; }
+.topbar { position: fixed; z-index: 10; top: 0; left: 0; right: 0; min-height: 70px; display: flex; align-items: center; justify-content: space-between; padding: 13px clamp(18px, 4vw, 58px); border-bottom: 1px solid rgba(192, 194, 203, .11); background: linear-gradient(180deg, rgba(6,13,30,.9), rgba(6,13,30,.28)); backdrop-filter: blur(10px); }
+.reciter-pill, .text-button, .language-button, .skip-link { border: 0; background: transparent; }
+.reciter-pill { display: flex; gap: 10px; align-items: center; text-align: left; color: var(--ink); }
+.mini-mark { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--gold); color: var(--gold); transform: rotate(45deg); font-size: 18px; border-radius: 7px; }
+.mini-mark::first-letter { transform: rotate(-45deg); }
+.reciter-pill strong, .reciter-pill small { display: block; line-height: 1.1; }
+.reciter-pill strong { font-size: 13px; font-weight: 600; letter-spacing: .01em; }
+.reciter-pill small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.beta { margin-left: 4px; padding: 2px 5px; border: 1px solid rgba(232,212,119,.65); border-radius: 999px; color: var(--gold); font-size: 8px; letter-spacing: .1em; }
+.top-actions { display: flex; align-items: center; gap: clamp(12px, 2.6vw, 33px); }
+.text-button { color: var(--muted); font-size: 12px; transition: color .2s; }
+.text-button:hover, .text-button:focus-visible { color: var(--ink); }
+.language-button { display: flex; gap: 8px; border: 1px solid rgba(232,212,119,.45); padding: 6px 10px; border-radius: 999px; color: var(--ink); font-size: 11px; }
+.language-button i { color: var(--muted); font-style: normal; }
+.skip-link { position: fixed; top: 92px; left: clamp(18px, 4vw, 58px); z-index: 9; padding: 7px 13px; border: 1px solid rgba(232,212,119,.55); border-radius: 99px; color: var(--gold); font-size: 11px; }
+.side-dots { position: fixed; z-index: 8; right: 13px; top: 50%; transform: translateY(-50%); display: grid; gap: 9px; }
+.side-dots span { width: 5px; height: 5px; border-radius: 50%; background: rgba(192,194,203,.35); transition: all .3s; }
+.side-dots span.active { background: var(--gold); box-shadow: 0 0 10px var(--gold); }
+.lesson { position: relative; min-height: 100vh; scroll-snap-align: start; display: grid; place-items: center; padding: 110px clamp(24px, 8vw, 130px) 70px; }
+.practice-shell { scroll-snap-type: y proximity; }
+.lesson-intro { grid-template-columns: minmax(320px, 1.05fr) minmax(280px, .95fr); column-gap: clamp(30px, 8vw, 140px); align-content: center; }
+.intro-copy { position: relative; z-index: 2; max-width: 460px; }
+.verse-display { display: grid; gap: 0; margin-bottom: 46px; color: #efe5c9; font-family: 'Amiri', serif; font-size: clamp(38px, 5.6vw, 75px); line-height: .92; text-shadow: 0 3px 26px rgba(231,213,131,.15); }
+.instruction { max-width: 280px; color: var(--muted); font-size: 14px; line-height: 1.65; }
+.button-row { display: flex; gap: 14px; margin-top: 27px; }
+.round-action { display: inline-flex; gap: 8px; align-items: center; border: 1px solid rgba(220,208,142,.52); padding: 10px 15px; border-radius: 999px; background: rgba(15,25,51,.5); color: var(--ink); font-size: 12px; }
+.round-action span { color: var(--gold); }
+.round-action:hover { background: rgba(232,212,119,.1); }
+.hero-wave { align-self: center; width: min(100%, 480px); height: 220px; opacity: .9; }
+.split-verse { position: absolute; bottom: 21%; left: clamp(24px, 8vw, 130px); right: clamp(24px, 8vw, 130px); display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid rgba(232,212,119,.22); }
+.split-verse button { background: transparent; border: 0; padding: 11px 8px; color: var(--muted); font: 24px 'Amiri', serif; border-top: 1px solid rgba(232,212,119,.12); }
+.split-verse button:hover { color: var(--gold); }
+.scroll-cue { position: absolute; bottom: 31px; left: 50%; transform: translateX(-50%); display: grid; gap: 5px; place-items: center; border: 0; background: transparent; color: var(--muted); font-size: 10px; }
+.scroll-cue b { color: var(--gold); font-size: 24px; font-weight: 400; animation: drift 1.8s ease-in-out infinite; }
+@keyframes drift { 50% { transform: translateY(5px); } }
+.choice-section { min-height: 80vh; }
+.section-narrow { width: min(780px, 100%); position: relative; z-index: 2; }
+h1, h2 { margin: 0; max-width: 620px; font-family: Georgia, 'Times New Roman', serif; font-weight: 400; color: #e5dfca; letter-spacing: -.035em; }
+h1 { font-size: clamp(32px, 5vw, 64px); line-height: 1.12; }
+h2 { font-size: clamp(30px, 4.5vw, 58px); line-height: 1.03; }
+.section-narrow p { max-width: 470px; color: var(--muted); line-height: 1.7; font-size: 14px; }
+.choice-row { display: flex; gap: 12px; margin-top: 42px; }
+.choice-button, .primary-button, .ghost-button { border-radius: 999px; padding: 12px 21px; border: 1px solid rgba(232,212,119,.52); background: transparent; color: var(--ink); font-size: 12px; }
+.choice-button.selected, .primary-button { color: #182039; border-color: var(--gold); background: var(--gold); }
+.choice-button:hover, .ghost-button:hover { border-color: var(--gold); }
+.pitch-section, .compare-section { grid-template-columns: 1fr; align-content: center; }
+.split-heading { display: flex; justify-content: space-between; align-items: start; }
+.split-heading p { max-width: 410px; margin-top: 25px; }
+.chapter-index, .eyebrow { color: var(--gold); font-size: 11px; letter-spacing: .18em; }
+.pitch-stage { width: min(900px, 100%); margin-top: 56px; }
+.pitch-stage canvas { display: block; width: 100%; height: 160px; }
+.pitch-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+.pitch-controls { display: flex; justify-content: space-between; margin-top: 38px; }
+.pitch-controls button { border: 0; padding: 0; background: transparent; color: var(--muted); font-size: 12px; }
+.pitch-controls button:hover { color: var(--gold); }
+.range-section { align-content: center; overflow: hidden; }
+.range-wave { position: absolute; bottom: 16%; left: 0; width: 100%; height: 160px; opacity: .5; }
+.primary-button { margin-top: 32px; min-width: 130px; }
+.listen-section, .record-section { align-content: center; }
+.audio-line { display: flex; align-items: center; gap: 14px; width: min(720px, 100%); margin-top: 43px; padding: 13px 0; border: 0; border-bottom: 1px solid rgba(232,212,119,.4); background: transparent; color: var(--ink); font-size: 13px; }
+.play-icon { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--gold); border-radius: 50%; color: var(--gold); font-size: 10px; }
+.line { flex: 1; height: 1px; background: rgba(232,212,119,.35); }
+.duration { color: var(--muted); font-size: 11px; }
+.arabic-line { margin-top: 47px; font: clamp(31px, 4vw, 52px) 'Amiri', serif; color: #e7e0c9; text-align: right; }
+.dots-wave { display: flex; align-items: center; gap: 6px; height: 58px; margin-top: 38px; opacity: .7; }
+.dots-wave i { width: 2px; background: var(--gold); animation: pulse 1.2s ease-in-out infinite alternate; animation-delay: var(--delay); }
+@keyframes pulse { to { transform: scaleY(.4); opacity: .35; } }
+.record-section { background: radial-gradient(circle at 50% 55%, rgba(30,57,94,.18), transparent 45%); }
+.permission-note { margin: 18px 0 0; }
+.record-big { display: inline-flex; align-items: center; gap: 8px; }
+.record-big span:first-child { color: #a94659; }
+.recording-status { min-height: 20px; margin-top: 18px; color: var(--gold); font-size: 12px; }
+.record-canvas { display: block; width: 100%; height: 130px; margin-top: 20px; }
+.record-actions { display: flex; gap: 12px; margin-top: 4px; }
+.ghost-button { color: var(--muted); }
+.analysis-panel { margin-top: 28px; padding-top: 18px; border-top: 1px solid rgba(232,212,119,.18); }
+.analysis-heading { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 12px; }
+.analysis-heading .eyebrow { font-size: 9px; }
+.metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 15px; }
+.metric-grid div { padding: 12px 9px; border: 1px solid rgba(232,212,119,.17); border-radius: 7px; background: rgba(8, 17, 38, .38); }
+.metric-grid strong, .metric-grid small { display: block; }
+.metric-grid strong { color: var(--gold); font-size: 15px; font-weight: 500; }
+.metric-grid small { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.3; }
+.compare-card { width: min(760px, 100%); }
+.compare-rows { display: grid; gap: 22px; margin-top: 54px; }
+.compare-rows > div { display: grid; grid-template-columns: 130px 1fr; align-items: center; gap: 20px; }
+.row-label { color: var(--muted); font-size: 12px; }
+.compare-rows canvas { width: 100%; height: 64px; }
+.practice-footer { display: flex; justify-content: space-between; align-items: center; padding: 27px clamp(24px, 8vw, 130px); border-top: 1px solid rgba(192,194,203,.1); color: var(--muted); font-size: 11px; }
+.practice-footer button { border: 0; background: transparent; color: var(--muted); }
+.modal { width: min(460px, calc(100% - 32px)); border: 1px solid rgba(232,212,119,.38); border-radius: 12px; padding: 0; background: #0c1830; color: var(--ink); box-shadow: 0 25px 80px rgba(0,0,0,.45); }
+.modal::backdrop { background: rgba(1,4,12,.72); backdrop-filter: blur(5px); }
+.modal-content { position: relative; padding: 34px; }
+.modal-close { position: absolute; top: 13px; right: 15px; border: 0; background: transparent; color: var(--muted); font-size: 24px; }
+.modal h2 { margin-top: 12px; font-size: 34px; }
+.modal p { color: var(--muted); line-height: 1.7; }
+.modal-actions { display: flex; gap: 10px; }
+
+@media (max-width: 760px) {
+  .topbar { padding: 12px 18px; }
+  .reciter-pill small, .reciter-pill .beta, .top-actions .text-button:nth-child(-n+2) { display: none; }
+  .lesson { min-height: 100svh; padding: 105px 26px 74px; }
+  .lesson-intro { display: block; padding-top: 145px; }
+  .intro-copy { margin: 0 auto; text-align: center; }
+  .verse-display { font-size: clamp(48px, 14vw, 70px); text-align: right; width: fit-content; margin: 0 auto 35px; }
+  .instruction { margin: 0 auto; }
+  .button-row { justify-content: center; }
+  .hero-wave { display: block; width: 100%; height: 120px; margin-top: 30px; }
+  .split-verse { bottom: 16%; left: 26px; right: 26px; }
+  .split-verse button { font-size: 19px; }
+  .side-dots { display: none; }
+  .section-narrow { width: 100%; }
+  .split-heading { display: block; }
+  .chapter-index { position: absolute; top: 0; right: 0; }
+  .pitch-stage { margin-top: 40px; }
+  .pitch-stage canvas { height: 110px; }
+  .range-wave { bottom: 10%; }
+  .compare-rows > div { grid-template-columns: 87px 1fr; gap: 12px; }
+  .metric-grid { grid-template-columns: repeat(2, 1fr); }
+  .practice-footer { padding: 24px 26px; }
+}
+
+</style>
+<script>
+
+const verse = 'بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ';
+const arVerse = 'بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ';
+const state = {
+  lang: 'en',
+  sound: true,
+  recording: false,
+  recordedUrl: '',
+  stream: null,
+  recorder: null,
+  chunks: [],
+  audioContext: null,
+  analyser: null,
+  animation: 0,
+  currentLesson: 0,
+  pitchFrames: [],
+  analysis: null
+};
+
+const copy = {
+  en: {
+    reciter: 'Abdul Basit Abdul Samad',
+    crumb: 'Al-Faatiha · verse 1 · Bismillah',
+    feedback: 'Feedback',
+    signIn: 'Sign in',
+    more: 'More',
+    instruction: 'Hear the reciter, then press Record and recite the basmala.',
+    hear: 'Hear him',
+    record: 'Record',
+    stop: 'Stop',
+    skip: 'Skip',
+    audioQuestion: 'Would you like an audio journey, or would you rather go through it silently?',
+    withSound: 'With sound',
+    silently: 'Silently',
+    rising: 'A voice goes up and comes down',
+    risingBody: 'In one minute you will see how a reciter’s voice rises and falls, and then you will see your own.',
+    pitch: 'Pitch',
+    pitchBody: 'A higher voice and a lower voice',
+    lower: 'A lower voice',
+    higher: 'A higher voice',
+    range: 'Every voice has a range',
+    rangeBody: 'Let us find your range',
+    begin: 'Let us begin',
+    listenTitle: 'Listen to the basmala',
+    listen: 'Listen',
+    turn: 'Now it is your turn',
+    scroll: 'Scroll down',
+    playMine: 'Play my recording',
+    playBoth: 'Play both',
+    compare: 'Compare your voice with his',
+    permission: 'Allow microphone access to record your recitation.',
+    recorded: 'Recording ready. You can listen or record again.',
+    recording: 'Listening…',
+    noRecording: 'Record your voice first to hear it here.',
+    analysisTitle: 'Your recording',
+    voiced: 'Voiced',
+    medianPitch: 'Middle pitch',
+    rangeMetric: 'Range',
+    steadiness: 'Steadiness',
+    noVoice: 'No voiced frames were detected. Try moving closer to the microphone.',
+    feedbackTitle: 'Tell us',
+    feedbackText: 'What helped you most on this page?',
+    send: 'Send',
+    close: 'Close',
+    moreTitle: 'More',
+    reset: 'Reset practice',
+    rangeDone: 'Your vocal range',
+  },
+  ar: {
+    reciter: 'عبد الباسط عبد الصمد',
+    crumb: 'الفاتحة · الآية ١ · البسملة',
+    feedback: 'ملاحظات',
+    signIn: 'تسجيل الدخول',
+    more: 'المزيد',
+    instruction: 'استمع إلى القارئ، ثم اضغط على «سجّل» وردّد البسملة.',
+    hear: 'استمع إليه',
+    record: 'سجّل',
+    stop: 'إيقاف',
+    skip: 'تخطَّ',
+    audioQuestion: 'هل تودّ رحلةً صوتية، أم تفضّل أن تمرّ بها بصمت؟',
+    withSound: 'مع الصوت',
+    silently: 'بصمت',
+    rising: 'الصوت يصعد ويهبط',
+    risingBody: 'خلال دقيقة سترى كيف يرتفع صوت القارئ وينخفض، ثم سترى صوتك.',
+    pitch: 'الطبقة الصوتية',
+    pitchBody: 'صوت أعلى وصوت أخفض',
+    lower: 'صوت أخفض',
+    higher: 'صوت أعلى',
+    range: 'لكل صوت مجاله',
+    rangeBody: 'لنعرف مجالك الصوتي',
+    begin: 'لنبدأ',
+    listenTitle: 'استمع إلى البسملة',
+    listen: 'استمع',
+    turn: 'الآن دورك',
+    scroll: 'مرّر إلى الأسفل',
+    playMine: 'شغّل تسجيلي',
+    playBoth: 'شغّل التسجيلين',
+    compare: 'قارن صوتك بصوته',
+    permission: 'اسمح بالوصول إلى الميكروفون لتسجيل تلاوتك.',
+    recorded: 'التسجيل جاهز. يمكنك الاستماع أو التسجيل مرة أخرى.',
+    recording: 'جارٍ الاستماع…',
+    noRecording: 'سجّل صوتك أولاً لتسمعه هنا.',
+    analysisTitle: 'تسجيلك',
+    voiced: 'الصوت المنطوق',
+    medianPitch: 'الطبقة الوسطى',
+    rangeMetric: 'المجال',
+    steadiness: 'الثبات',
+    noVoice: 'لم يتم اكتشاف مقاطع صوتية منطوقة. حاول الاقتراب من الميكروفون.',
+    feedbackTitle: 'أخبرنا برأيك',
+    feedbackText: 'ما أكثر ما ساعدك في هذه الصفحة؟',
+    send: 'إرسال',
+    close: 'إغلاق',
+    moreTitle: 'المزيد',
+    reset: 'إعادة التدريب',
+    rangeDone: 'مجالك الصوتي',
+  }
+};
+
+const app = document.querySelector('#root');
+app.innerHTML = `
+  <main class="practice-shell">
+    <header class="topbar">
+      <button class="reciter-pill" data-action="reciter" aria-label="Select reciter">
+        <span class="mini-mark">✺</span><span><strong data-copy="reciter"></strong><small data-copy="crumb"></small></span><b class="beta">BETA</b>
+      </button>
+      <div class="top-actions">
+        <button class="text-button" data-action="feedback" data-copy="feedback"></button>
+        <button class="text-button" data-action="signin" data-copy="signIn"></button>
+        <button class="text-button" data-action="more" data-copy="more"></button>
+        <button class="language-button" data-action="language"><span>English</span><i>العربية</i></button>
+      </div>
+    </header>
+
+    <div class="side-dots" aria-hidden="true"><span class="active"></span><span></span><span></span><span></span><span></span></div>
+    <button class="skip-link" data-action="skip" data-copy="skip"></button>
+
+    <section class="lesson lesson-intro snap" id="intro">
+      <div class="intro-copy">
+        <div class="verse-display" dir="rtl"><span>بِسۡمِ ٱللَّهِ</span><span>ٱلرَّحۡمَٰنِ</span><span>ٱلرَّحِيمِ</span></div>
+        <p class="instruction" data-copy="instruction"></p>
+        <div class="button-row">
+          <button class="round-action" data-action="hear"><span>▶</span><em data-copy="hear"></em></button>
+          <button class="round-action record-action" data-action="record"><span>●</span><em data-copy="record"></em></button>
+        </div>
+      </div>
+      <canvas class="hero-wave" data-chart="hero"></canvas>
+      <div class="split-verse" dir="rtl"><button aria-label="Part 1">بِسۡمِ</button><button aria-label="Part 2">ٱللَّهِ</button><button aria-label="Part 3">ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ</button></div>
+      <button class="scroll-cue" data-action="next"><span data-copy="scroll"></span><b>↓</b></button>
+    </section>
+
+    <section class="lesson choice-section snap" id="choice">
+      <div class="section-narrow">
+        <h1 data-copy="audioQuestion"></h1>
+        <div class="choice-row"><button class="choice-button selected" data-action="sound" data-copy="withSound"></button><button class="choice-button" data-action="silent" data-copy="silently"></button></div>
+      </div>
+    </section>
+
+    <section class="lesson pitch-section snap" id="pitch">
+      <div class="section-narrow split-heading"><div><h2 data-copy="rising"></h2><p data-copy="risingBody"></p></div><span class="chapter-index">01</span></div>
+      <div class="pitch-stage"><canvas data-chart="pitch"></canvas><div class="pitch-labels"><span data-copy="pitch"></span><span data-copy="pitchBody"></span></div><div class="pitch-controls"><button data-action="lower" data-copy="lower"></button><button data-action="higher" data-copy="higher"></button></div></div>
+    </section>
+
+    <section class="lesson range-section snap" id="range">
+      <div class="section-narrow"><span class="eyebrow">02</span><h2 data-copy="range"></h2><p data-copy="rangeBody"></p><button class="primary-button" data-action="begin" data-copy="begin"></button></div>
+      <canvas class="range-wave" data-chart="range"></canvas>
+    </section>
+
+    <section class="lesson listen-section snap" id="listen">
+      <div class="section-narrow"><span class="eyebrow">03</span><h2 data-copy="listenTitle"></h2><button class="audio-line" data-action="listen"><span class="play-icon">▶</span><span data-copy="listen"></span><span class="line"></span><span class="duration">0:12</span></button><div class="arabic-line" dir="rtl">${arVerse}</div><div class="dots-wave" data-chart="dots"></div></div>
+    </section>
+
+    <section class="lesson record-section snap" id="record">
+      <div class="section-narrow"><span class="eyebrow">04</span><h2 data-copy="turn"></h2><p class="permission-note" data-copy="permission"></p><button class="primary-button record-big" data-action="record"><span>●</span><span data-copy="record"></span></button><div class="recording-status" role="status"></div><canvas class="record-canvas" data-chart="record"></canvas><div class="record-actions"><button class="ghost-button" data-action="playMine" data-copy="playMine"></button><button class="ghost-button" data-action="playBoth" data-copy="playBoth"></button></div><div class="analysis-panel" aria-live="polite"><div class="analysis-heading"><span class="eyebrow">ANALYSIS</span><span data-copy="analysisTitle"></span></div><div class="metric-grid"><div><strong data-metric="voiced">—</strong><small data-copy="voiced"></small></div><div><strong data-metric="median">—</strong><small data-copy="medianPitch"></small></div><div><strong data-metric="range">—</strong><small data-copy="rangeMetric"></small></div><div><strong data-metric="steady">—</strong><small data-copy="steadiness"></small></div></div></div></div>
+    </section>
+
+    <section class="lesson compare-section snap" id="compare">
+      <div class="section-narrow compare-card"><span class="eyebrow">05</span><h2 data-copy="compare"></h2><div class="compare-rows"><div><span class="row-label">Abdul Basit</span><canvas data-chart="master"></canvas></div><div><span class="row-label">You</span><canvas data-chart="you"></canvas></div></div><button class="primary-button" data-action="playBoth" data-copy="playBoth"></button></div>
+    </section>
+
+    <footer class="practice-footer"><span>Maqamat</span><button data-action="language">English / العربية</button><span>© 2026</span></footer>
+  </main>
+  <dialog class="modal" id="modal"><div class="modal-content"><button class="modal-close" data-action="close">×</button><span class="eyebrow" id="modalEyebrow"></span><h2 id="modalTitle"></h2><p id="modalText"></p><div class="modal-actions"><button class="primary-button" data-action="close" data-copy="close"></button><button class="ghost-button" data-action="send" data-copy="send"></button></div></div></dialog>
+`;
+
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const t = (key) => copy[state.lang][key];
+
+function applyLanguage() {
+  document.documentElement.lang = state.lang;
+  document.documentElement.dir = state.lang === 'ar' ? 'rtl' : 'ltr';
+  $$('[data-copy]').forEach((node) => { node.textContent = t(node.dataset.copy); });
+  $('.language-button span').textContent = state.lang === 'en' ? 'English' : 'العربية';
+  $('.language-button i').textContent = state.lang === 'en' ? 'العربية' : 'English';
+  $('.permission-note').hidden = state.lang !== 'en' && false;
+}
+
+function scrollToId(id) { document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }); }
+
+function showModal(kind) {
+  const modal = $('#modal');
+  $('#modalEyebrow').textContent = kind === 'feedback' ? 'FEEDBACK' : 'MORE';
+  $('#modalTitle').textContent = kind === 'feedback' ? t('feedbackTitle') : t('moreTitle');
+  $('#modalText').textContent = kind === 'feedback' ? t('feedbackText') : `${t('rangeDone')} · ${t('reset')}`;
+  modal.showModal();
+}
+
+function tone(seconds = 1.1, start = 330) {
+  if (!state.sound) return;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  const ctx = new Ctx();
+  const osc = ctx.createOscillator(); const gain = ctx.createGain();
+  osc.type = 'sine'; osc.frequency.setValueAtTime(start, ctx.currentTime); osc.frequency.exponentialRampToValueAtTime(start * 1.5, ctx.currentTime + seconds * .75);
+  gain.gain.setValueAtTime(.0001, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(.07, ctx.currentTime + .04); gain.gain.exponentialRampToValueAtTime(.0001, ctx.currentTime + seconds);
+  osc.connect(gain).connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime + seconds + .05);
+}
+
+function drawWave(canvas, variant = 0, liveData = null) {
+  if (!canvas) return;
+  const ratio = Math.max(1, window.devicePixelRatio || 1); const rect = canvas.getBoundingClientRect();
+  const w = Math.max(20, rect.width); const h = Math.max(20, rect.height); canvas.width = w * ratio; canvas.height = h * ratio;
+  const ctx = canvas.getContext('2d'); ctx.scale(ratio, ratio); ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = 'rgba(221, 203, 132, .82)'; ctx.lineWidth = 1.4; ctx.beginPath();
+  const data = liveData || [];
+  for (let x = 0; x < w; x += 3) {
+    let y;
+    if (data.length) { const i = Math.floor((x / w) * data.length); y = h / 2 + (data[i] || 0) * h * .42; }
+    else { const n = Math.sin(x * .024 + variant) * .15 + Math.sin(x * .065 + variant * 2) * .08 + Math.sin(x * .16 + variant) * .035; y = h / 2 + n * h; }
+    if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function drawDots() {
+  $$('.dots-wave').forEach((node) => { node.innerHTML = ''; for (let i = 0; i < 44; i++) { const dot = document.createElement('i'); dot.style.setProperty('--delay', `${i * 22}ms`); dot.style.height = `${8 + Math.round(Math.abs(Math.sin(i * .75)) * 22)}px`; node.append(dot); } });
+}
+
+function renderCharts() {
+  drawWave($('[data-chart="hero"]'), 1); drawWave($('[data-chart="pitch"]'), 2); drawWave($('[data-chart="range"]'), 4); drawWave($('[data-chart="master"]'), 2); drawWave($('[data-chart="you"]'), 7);
+  drawDots();
+}
+
+function updateRecordStatus(message = '') { $('.recording-status').textContent = message; }
+
+function detectPitch(buffer, sampleRate) {
+  let rms = 0;
+  for (const value of buffer) rms += value * value;
+  rms = Math.sqrt(rms / buffer.length);
+  if (rms < 0.018) return null;
+  const minLag = Math.floor(sampleRate / 1000);
+  const maxLag = Math.min(Math.floor(sampleRate / 65), buffer.length - 1);
+  let bestLag = -1; let bestCorrelation = 0;
+  for (let lag = minLag; lag <= maxLag; lag += 1) {
+    let correlation = 0;
+    for (let i = 0; i < buffer.length - lag; i += 1) correlation += buffer[i] * buffer[i + lag];
+    correlation /= buffer.length - lag;
+    if (correlation > bestCorrelation) { bestCorrelation = correlation; bestLag = lag; }
+  }
+  if (bestLag < 0 || bestCorrelation < 0.01) return null;
+  return sampleRate / bestLag;
+}
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+}
+
+function analysePitchFrames() {
+  const voiced = state.pitchFrames.filter((frame) => frame.hz);
+  if (!voiced.length) { state.analysis = null; updateRecordStatus(t('noVoice')); updateMetrics(); return; }
+  const pitches = voiced.map((frame) => frame.hz); const middle = median(pitches);
+  const average = pitches.reduce((sum, hz) => sum + hz, 0) / pitches.length;
+  const deviation = Math.sqrt(pitches.reduce((sum, hz) => sum + ((hz - average) ** 2), 0) / pitches.length);
+  state.analysis = { voiced: voiced.length / Math.max(1, state.pitchFrames.length), middle, low: Math.min(...pitches), high: Math.max(...pitches), steady: Math.max(0, Math.min(100, 100 - (deviation / middle) * 100)) };
+  updateMetrics();
+  drawPitchTrack($('[data-chart="you"]'), pitches);
+}
+
+function updateMetrics() {
+  const values = state.analysis;
+  $('[data-metric="voiced"]').textContent = values ? `${Math.round(values.voiced * 100)}%` : '—';
+  $('[data-metric="median"]').textContent = values ? `${Math.round(values.middle)} Hz` : '—';
+  $('[data-metric="range"]').textContent = values ? `${Math.round(values.low)}–${Math.round(values.high)} Hz` : '—';
+  $('[data-metric="steady"]').textContent = values ? `${Math.round(values.steady)}%` : '—';
+}
+
+function drawPitchTrack(canvas, pitches) {
+  if (!canvas || !pitches?.length) return;
+  const ratio = Math.max(1, window.devicePixelRatio || 1); const rect = canvas.getBoundingClientRect(); const w = Math.max(20, rect.width); const h = Math.max(20, rect.height);
+  canvas.width = w * ratio; canvas.height = h * ratio; const ctx = canvas.getContext('2d'); ctx.scale(ratio, ratio); ctx.clearRect(0, 0, w, h);
+  const low = Math.max(50, Math.min(...pitches) - 20); const high = Math.max(...pitches) + 20;
+  ctx.strokeStyle = 'rgba(221, 203, 132, .9)'; ctx.lineWidth = 1.6; ctx.beginPath();
+  pitches.forEach((pitch, index) => { const x = (index / Math.max(1, pitches.length - 1)) * w; const y = h - ((pitch - low) / Math.max(1, high - low)) * h; index ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+}
+
+async function toggleRecording() {
+  if (state.recording) { state.recorder?.stop(); return; }
+  if (!navigator.mediaDevices?.getUserMedia) { updateRecordStatus('Microphone recording is not supported in this browser.'); return; }
+  try {
+    state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const source = state.audioContext.createMediaStreamSource(state.stream); state.analyser = state.audioContext.createAnalyser(); state.analyser.fftSize = 256; source.connect(state.analyser);
+    state.pitchFrames = []; state.analysis = null; updateMetrics();
+    state.recorder = new MediaRecorder(state.stream); state.chunks = [];
+    state.recorder.ondataavailable = (event) => event.data.size && state.chunks.push(event.data);
+    state.recorder.onstop = () => {
+      const blob = new Blob(state.chunks, { type: state.recorder.mimeType || 'audio/webm' });
+      if (state.recordedUrl) URL.revokeObjectURL(state.recordedUrl); state.recordedUrl = URL.createObjectURL(blob);
+      state.stream?.getTracks().forEach((track) => track.stop()); state.recording = false; analysePitchFrames(); if (state.analysis) updateRecordStatus(t('recorded')); updateRecordingButtons(); drawWave($('[data-chart="record"]'), 8);
+    };
+    state.recorder.start(); state.recording = true; updateRecordStatus(t('recording')); updateRecordingButtons(); animateRecording();
+  } catch (error) { updateRecordStatus(`${t('permission')} (${error.name})`); }
+}
+
+function animateRecording() {
+  if (!state.recording || !state.analyser) return;
+  const values = new Float32Array(state.analyser.fftSize); state.analyser.getFloatTimeDomainData(values);
+  const pitch = detectPitch(values, state.audioContext.sampleRate); state.pitchFrames.push({ hz: pitch });
+  drawWave($('[data-chart="record"]'), 8, [...values]); state.animation = requestAnimationFrame(animateRecording);
+}
+
+function updateRecordingButtons() { $$('[data-action="record"]').forEach((button) => { const text = button.querySelector('em,[data-copy="record"]'); if (text) text.textContent = state.recording ? t('stop') : t('record'); }); }
+
+function playMine() {
+  if (!state.recordedUrl) { updateRecordStatus(t('noRecording')); return; }
+  new Audio(state.recordedUrl).play();
+}
+
+function handleAction(action) {
+  if (action === 'language') { state.lang = state.lang === 'en' ? 'ar' : 'en'; applyLanguage(); return; }
+  if (action === 'skip') { scrollToId('choice'); return; }
+  if (action === 'next') { scrollToId('choice'); return; }
+  if (action === 'feedback' || action === 'more') { showModal(action); return; }
+  if (action === 'close') { $('#modal').close(); return; }
+  if (action === 'send') { $('#modalText').textContent = 'Thank you.'; return; }
+  if (action === 'hear' || action === 'listen') { tone(action === 'listen' ? 1.7 : 1.2, action === 'listen' ? 280 : 390); return; }
+  if (action === 'record') { toggleRecording(); return; }
+  if (action === 'sound') { state.sound = true; $$('.choice-button').forEach((b) => b.classList.remove('selected')); $('[data-action="sound"]').classList.add('selected'); tone(); return; }
+  if (action === 'silent') { state.sound = false; $$('.choice-button').forEach((b) => b.classList.remove('selected')); $('[data-action="silent"]').classList.add('selected'); return; }
+  if (action === 'begin') { scrollToId('listen'); return; }
+  if (action === 'playMine') { playMine(); return; }
+  if (action === 'playBoth') { tone(1.2, 340); setTimeout(playMine, 1300); return; }
+  if (action === 'reciter') { showModal('more'); return; }
+}
+
+document.addEventListener('click', (event) => { const target = event.target.closest('[data-action]'); if (target) handleAction(target.dataset.action); });
+window.addEventListener('resize', renderCharts);
+const observer = new IntersectionObserver((entries) => entries.forEach((entry) => { if (entry.isIntersecting) { $$('.side-dots span').forEach((dot, index) => dot.classList.toggle('active', index === Math.min(4, Math.round(entry.target.offsetTop / window.innerHeight)))); } }), { threshold: .55 });
+$$('.lesson').forEach((section) => observer.observe(section));
+applyLanguage(); renderCharts(); updateRecordStatus('');
+
+</script>
+  </body>
+</html>
