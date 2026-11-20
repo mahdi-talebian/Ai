@@ -13,7 +13,9 @@ const state = {
   audioContext: null,
   analyser: null,
   animation: 0,
-  currentLesson: 0
+  currentLesson: 0,
+  pitchFrames: [],
+  analysis: null
 };
 
 const copy = {
@@ -51,6 +53,12 @@ const copy = {
     recorded: 'Recording ready. You can listen or record again.',
     recording: 'Listening…',
     noRecording: 'Record your voice first to hear it here.',
+    analysisTitle: 'Your recording',
+    voiced: 'Voiced',
+    medianPitch: 'Middle pitch',
+    rangeMetric: 'Range',
+    steadiness: 'Steadiness',
+    noVoice: 'No voiced frames were detected. Try moving closer to the microphone.',
     feedbackTitle: 'Tell us',
     feedbackText: 'What helped you most on this page?',
     send: 'Send',
@@ -93,6 +101,12 @@ const copy = {
     recorded: 'التسجيل جاهز. يمكنك الاستماع أو التسجيل مرة أخرى.',
     recording: 'جارٍ الاستماع…',
     noRecording: 'سجّل صوتك أولاً لتسمعه هنا.',
+    analysisTitle: 'تسجيلك',
+    voiced: 'الصوت المنطوق',
+    medianPitch: 'الطبقة الوسطى',
+    rangeMetric: 'المجال',
+    steadiness: 'الثبات',
+    noVoice: 'لم يتم اكتشاف مقاطع صوتية منطوقة. حاول الاقتراب من الميكروفون.',
     feedbackTitle: 'أخبرنا برأيك',
     feedbackText: 'ما أكثر ما ساعدك في هذه الصفحة؟',
     send: 'إرسال',
@@ -157,7 +171,7 @@ app.innerHTML = `
     </section>
 
     <section class="lesson record-section snap" id="record">
-      <div class="section-narrow"><span class="eyebrow">04</span><h2 data-copy="turn"></h2><p class="permission-note" data-copy="permission"></p><button class="primary-button record-big" data-action="record"><span>●</span><span data-copy="record"></span></button><div class="recording-status" role="status"></div><canvas class="record-canvas" data-chart="record"></canvas><div class="record-actions"><button class="ghost-button" data-action="playMine" data-copy="playMine"></button><button class="ghost-button" data-action="playBoth" data-copy="playBoth"></button></div></div>
+      <div class="section-narrow"><span class="eyebrow">04</span><h2 data-copy="turn"></h2><p class="permission-note" data-copy="permission"></p><button class="primary-button record-big" data-action="record"><span>●</span><span data-copy="record"></span></button><div class="recording-status" role="status"></div><canvas class="record-canvas" data-chart="record"></canvas><div class="record-actions"><button class="ghost-button" data-action="playMine" data-copy="playMine"></button><button class="ghost-button" data-action="playBoth" data-copy="playBoth"></button></div><div class="analysis-panel" aria-live="polite"><div class="analysis-heading"><span class="eyebrow">ANALYSIS</span><span data-copy="analysisTitle"></span></div><div class="metric-grid"><div><strong data-metric="voiced">—</strong><small data-copy="voiced"></small></div><div><strong data-metric="median">—</strong><small data-copy="medianPitch"></small></div><div><strong data-metric="range">—</strong><small data-copy="rangeMetric"></small></div><div><strong data-metric="steady">—</strong><small data-copy="steadiness"></small></div></div></div></div>
     </section>
 
     <section class="lesson compare-section snap" id="compare">
@@ -230,6 +244,57 @@ function renderCharts() {
 
 function updateRecordStatus(message = '') { $('.recording-status').textContent = message; }
 
+function detectPitch(buffer, sampleRate) {
+  let rms = 0;
+  for (const value of buffer) rms += value * value;
+  rms = Math.sqrt(rms / buffer.length);
+  if (rms < 0.018) return null;
+  const minLag = Math.floor(sampleRate / 1000);
+  const maxLag = Math.min(Math.floor(sampleRate / 65), buffer.length - 1);
+  let bestLag = -1; let bestCorrelation = 0;
+  for (let lag = minLag; lag <= maxLag; lag += 1) {
+    let correlation = 0;
+    for (let i = 0; i < buffer.length - lag; i += 1) correlation += buffer[i] * buffer[i + lag];
+    correlation /= buffer.length - lag;
+    if (correlation > bestCorrelation) { bestCorrelation = correlation; bestLag = lag; }
+  }
+  if (bestLag < 0 || bestCorrelation < 0.01) return null;
+  return sampleRate / bestLag;
+}
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+}
+
+function analysePitchFrames() {
+  const voiced = state.pitchFrames.filter((frame) => frame.hz);
+  if (!voiced.length) { state.analysis = null; updateRecordStatus(t('noVoice')); updateMetrics(); return; }
+  const pitches = voiced.map((frame) => frame.hz); const middle = median(pitches);
+  const average = pitches.reduce((sum, hz) => sum + hz, 0) / pitches.length;
+  const deviation = Math.sqrt(pitches.reduce((sum, hz) => sum + ((hz - average) ** 2), 0) / pitches.length);
+  state.analysis = { voiced: voiced.length / Math.max(1, state.pitchFrames.length), middle, low: Math.min(...pitches), high: Math.max(...pitches), steady: Math.max(0, Math.min(100, 100 - (deviation / middle) * 100)) };
+  updateMetrics();
+  drawPitchTrack($('[data-chart="you"]'), pitches);
+}
+
+function updateMetrics() {
+  const values = state.analysis;
+  $('[data-metric="voiced"]').textContent = values ? `${Math.round(values.voiced * 100)}%` : '—';
+  $('[data-metric="median"]').textContent = values ? `${Math.round(values.middle)} Hz` : '—';
+  $('[data-metric="range"]').textContent = values ? `${Math.round(values.low)}–${Math.round(values.high)} Hz` : '—';
+  $('[data-metric="steady"]').textContent = values ? `${Math.round(values.steady)}%` : '—';
+}
+
+function drawPitchTrack(canvas, pitches) {
+  if (!canvas || !pitches?.length) return;
+  const ratio = Math.max(1, window.devicePixelRatio || 1); const rect = canvas.getBoundingClientRect(); const w = Math.max(20, rect.width); const h = Math.max(20, rect.height);
+  canvas.width = w * ratio; canvas.height = h * ratio; const ctx = canvas.getContext('2d'); ctx.scale(ratio, ratio); ctx.clearRect(0, 0, w, h);
+  const low = Math.max(50, Math.min(...pitches) - 20); const high = Math.max(...pitches) + 20;
+  ctx.strokeStyle = 'rgba(221, 203, 132, .9)'; ctx.lineWidth = 1.6; ctx.beginPath();
+  pitches.forEach((pitch, index) => { const x = (index / Math.max(1, pitches.length - 1)) * w; const y = h - ((pitch - low) / Math.max(1, high - low)) * h; index ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+}
+
 async function toggleRecording() {
   if (state.recording) { state.recorder?.stop(); return; }
   if (!navigator.mediaDevices?.getUserMedia) { updateRecordStatus('Microphone recording is not supported in this browser.'); return; }
@@ -237,12 +302,13 @@ async function toggleRecording() {
     state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const source = state.audioContext.createMediaStreamSource(state.stream); state.analyser = state.audioContext.createAnalyser(); state.analyser.fftSize = 256; source.connect(state.analyser);
+    state.pitchFrames = []; state.analysis = null; updateMetrics();
     state.recorder = new MediaRecorder(state.stream); state.chunks = [];
     state.recorder.ondataavailable = (event) => event.data.size && state.chunks.push(event.data);
     state.recorder.onstop = () => {
       const blob = new Blob(state.chunks, { type: state.recorder.mimeType || 'audio/webm' });
       if (state.recordedUrl) URL.revokeObjectURL(state.recordedUrl); state.recordedUrl = URL.createObjectURL(blob);
-      state.stream?.getTracks().forEach((track) => track.stop()); state.recording = false; updateRecordStatus(t('recorded')); updateRecordingButtons(); drawWave($('[data-chart="record"]'), 8);
+      state.stream?.getTracks().forEach((track) => track.stop()); state.recording = false; analysePitchFrames(); if (state.analysis) updateRecordStatus(t('recorded')); updateRecordingButtons(); drawWave($('[data-chart="record"]'), 8);
     };
     state.recorder.start(); state.recording = true; updateRecordStatus(t('recording')); updateRecordingButtons(); animateRecording();
   } catch (error) { updateRecordStatus(`${t('permission')} (${error.name})`); }
@@ -250,8 +316,9 @@ async function toggleRecording() {
 
 function animateRecording() {
   if (!state.recording || !state.analyser) return;
-  const values = new Uint8Array(state.analyser.fftSize); state.analyser.getByteTimeDomainData(values);
-  drawWave($('[data-chart="record"]'), 8, [...values].map((value) => value / 128 - 1)); state.animation = requestAnimationFrame(animateRecording);
+  const values = new Float32Array(state.analyser.fftSize); state.analyser.getFloatTimeDomainData(values);
+  const pitch = detectPitch(values, state.audioContext.sampleRate); state.pitchFrames.push({ hz: pitch });
+  drawWave($('[data-chart="record"]'), 8, [...values]); state.animation = requestAnimationFrame(animateRecording);
 }
 
 function updateRecordingButtons() { $$('[data-action="record"]').forEach((button) => { const text = button.querySelector('em,[data-copy="record"]'); if (text) text.textContent = state.recording ? t('stop') : t('record'); }); }
